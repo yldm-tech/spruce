@@ -1,11 +1,13 @@
 package maintenance
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 
+	"github.com/yldm-tech/spruce/internal/engine/execx"
 	"github.com/yldm-tech/spruce/internal/engine/execx/execxtest"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
@@ -94,7 +96,46 @@ func TestIconsRestartFailureAsksForLogout(t *testing.T) {
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
 	onKickstart(f, iconServicesAgentLabel).Return("", 1)
 	onKickstart(f, dockAgentLabel)
-	assertOutcome(t, runIcons(t.Context(), macEnv(f)), taskresult.Applied, "注销并重新登录后生效")
+	res := runIcons(t.Context(), macEnv(f))
+	assertOutcome(t, res, taskresult.Applied, "注销并重新登录后生效")
+	if !res.Partial {
+		t.Errorf("result %+v, want partial so the done card shows the logout step", res)
+	}
+}
+
+func TestIconsCancelledAfterClearingReportsTheChange(t *testing.T) {
+	cacheDir, _ := iconCacheFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	f := execxtest.New()
+	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
+	onKickstart(f, iconServicesAgentLabel).Do(func(context.Context, execx.Command) (execx.Output, error) {
+		cancel()
+		return execx.Output{ExitCode: -1}, context.Canceled
+	})
+	res := runIcons(ctx, macEnv(f))
+	assertOutcome(t, res, taskresult.Applied, "已清除图标缓存")
+	if !res.Partial {
+		t.Errorf("result %+v, want partial", res)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cacheDir, iconServicesCacheName)); len(entries) != 0 {
+		t.Errorf("cache entries left: %v", entries)
+	}
+	if f.Called(pathLaunchctl, "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+dockAgentLabel) {
+		t.Error("restarted the Dock after the cancel")
+	}
+}
+
+func TestIconsCancelledWithNothingRemovedIsInterrupted(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "C")
+	mustMkdir(t, cacheDir)
+	ctx, cancel := context.WithCancel(t.Context())
+	f := execxtest.New()
+	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
+	onKickstart(f, iconServicesAgentLabel).Do(func(context.Context, execx.Command) (execx.Output, error) {
+		cancel()
+		return execx.Output{ExitCode: -1}, context.Canceled
+	})
+	assertOutcome(t, runIcons(ctx, macEnv(f)), taskresult.Skipped, "未执行")
 }
 
 func TestIconsRejectsSuspiciousCacheDirectory(t *testing.T) {

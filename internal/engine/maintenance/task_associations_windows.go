@@ -299,7 +299,7 @@ func winRemoveStale(sys *winSystem, env Env, stale, listEntries []winStaleEntry)
 	case len(failed) == 0:
 		return taskresult.Result{Outcome: taskresult.Applied, Message: fmt.Sprintf("已移除 %d 条指向已卸载程序的「打开方式」记录，默认应用未改动", len(removed)), Detail: detail}
 	}
-	return taskresult.Result{Outcome: taskresult.Applied, Message: fmt.Sprintf("已移除 %d 条失效的「打开方式」记录，另有 %d 处未能修改，默认应用未改动", len(removed), len(failed)), Detail: detail}
+	return taskresult.Result{Outcome: taskresult.Applied, Partial: true, Message: fmt.Sprintf("已移除 %d 条失效的「打开方式」记录，另有 %d 处未能修改，默认应用未改动", len(removed), len(failed)), Detail: detail}
 }
 
 // winListDetail renders up to 30 items for Result.Detail.

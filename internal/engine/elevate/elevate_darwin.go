@@ -35,14 +35,16 @@ var elevateScript = []string{
 var userCanceled = regexp.MustCompile(`\(-128\)\s*$`)
 
 // NewLauncher returns the macOS Launcher: it runs the app's own executable as root through osascript's "do shell script … with administrator privileges", which shows the system authentication dialog. runner runs osascript.
+// The running executable is recorded here, when main.go creates the launcher at startup.
 func NewLauncher(runner execx.Runner) Launcher {
-	return &osascriptLauncher{runner: runner, self: selfExecutable}
+	img, err := snapshotSelf()
+	return &osascriptLauncher{runner: runner, self: func() (selfImage, error) { return img, err }}
 }
 
 type osascriptLauncher struct {
 	runner execx.Runner
-	// self returns the resolved path of the running executable.
-	self func() (string, error)
+	// self returns the running executable as recorded at startup.
+	self func() (selfImage, error)
 }
 
 // Launch implements Launcher.
@@ -84,6 +86,7 @@ func samePath(a, b string) bool { return a == b }
 
 func platformChildEnv() childEnv {
 	return childEnv{
+		// The macOS child answers on stdout and never creates a response file, so it has no checkDir.
 		channel:  viaStdout,
 		stdout:   os.Stdout,
 		stderr:   os.Stderr,

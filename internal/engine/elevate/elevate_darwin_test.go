@@ -13,8 +13,10 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
 
+// newTestLauncher returns a launcher whose running executable is self and has not been replaced since startup.
 func newTestLauncher(f *execxtest.Fake, self string) *osascriptLauncher {
-	return &osascriptLauncher{runner: f, self: func() (string, error) { return self, nil }}
+	img := selfImage{path: self, unchanged: func() error { return nil }}
+	return &osascriptLauncher{runner: f, self: func() (selfImage, error) { return img, nil }}
 }
 
 var childArgs = []string{Flag, "--tasks", "dns,icons"}
@@ -175,9 +177,16 @@ func TestLaunchRefusesForeignExecutables(t *testing.T) {
 		})
 	}
 	f := execxtest.New()
-	l := &osascriptLauncher{runner: f, self: func() (string, error) { return "", errors.New("no executable") }}
+	l := &osascriptLauncher{runner: f, self: func() (selfImage, error) { return selfImage{}, errors.New("no executable") }}
 	if _, err := l.Launch(t.Context(), testExe, childArgs); err == nil {
 		t.Fatal("Launch accepted without knowing the running executable")
+	}
+	f.AssertNotCalled(t, osascriptPath)
+
+	replaced := selfImage{path: testExe, unchanged: func() error { return errors.New("replaced") }}
+	l = &osascriptLauncher{runner: f, self: func() (selfImage, error) { return replaced, nil }}
+	if _, err := l.Launch(t.Context(), testExe, childArgs); err == nil {
+		t.Fatal("Launch accepted an executable replaced since startup")
 	}
 	f.AssertNotCalled(t, osascriptPath)
 }

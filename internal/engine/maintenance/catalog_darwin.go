@@ -35,7 +35,7 @@ var cLocale = []string{"LC_ALL=C"}
 // Which part of each task runs with administrator rights (NeedsAdmin tasks run their Run in the elevated child; their Precheck always runs in the app process):
 //
 //   - dns: elevated. The VPN probe (scutil, route) runs in Precheck as the user; the child reads the mDNSResponder label, flushes the directory cache and signals mDNSResponder.
-//   - spotlight: elevated, but only when needed. Precheck reads the index state with mdutil -s as the user and stops the task as Unchanged when indexing is healthy, so a healthy Mac never sees the prompt; the child re-reads the state and runs mdutil -i on / -E.
+//   - spotlight: elevated, but only when needed. Precheck reads the index state with mdutil -s as the user and stops the task as Unchanged when indexing is healthy, so a healthy Mac never sees the prompt; a disabled or transitioning index is left alone (Skipped in Precheck); only the "unknown indexing state" error reaches the child, which re-reads the state and runs mdutil -E / to rebuild the index.
 //   - quicklook, icons, launchservices, databases: user only, they touch nothing but the user's own caches and data.
 func PlatformTasks() []TaskImpl {
 	return []TaskImpl{

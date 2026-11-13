@@ -262,3 +262,70 @@ func TestElevatedHandlerRunsOnlyAdminTasks(t *testing.T) {
 type fakePermissions struct{}
 
 func (fakePermissions) FullDiskAccess() (PermissionState, error) { return PermissionGranted, nil }
+
+// TestRunWaitsForTheElevatedBatchAfterCancel closes the page while the elevated child runs: the child cannot be stopped, so its results must be recorded as it reported them instead of as failures, and the user tasks after it stop.
+func TestRunWaitsForTheElevatedBatchAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	var batchCtxErr error
+	el := elevatorFunc(func(bctx context.Context, ids []string) ([]taskresult.Result, error) {
+		cancel()
+		batchCtxErr = bctx.Err()
+		out := make([]taskresult.Result, len(ids))
+		for i, id := range ids {
+			out[i] = taskresult.Result{TaskID: id, Outcome: taskresult.Applied, Message: "已刷新 DNS 缓存"}
+		}
+		return out, nil
+	})
+	r := &recorder{}
+	s := newTestService(t, []TaskImpl{r.task("dns", true, ""), r.task("quicklook", false, taskresult.Applied)}, el)
+	got, err := s.Run(ctx, []string{"dns", "quicklook"}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if batchCtxErr != nil {
+		t.Errorf("the elevated batch saw a cancelled context: %v", batchCtxErr)
+	}
+	if got[0].Outcome != taskresult.Applied || got[0].Message != "已刷新 DNS 缓存" {
+		t.Errorf("admin result %+v, want the child's own", got[0])
+	}
+	if got[1].Outcome != taskresult.Skipped || len(r.ran) != 0 {
+		t.Errorf("user result %+v, ran %v", got[1], r.ran)
+	}
+}
+
+// TestRunCancelledPrecheckIsInterrupted cancels during a precheck whose command then fails: the result must say the run was interrupted, not the precheck's own verdict about the failed command.
+func TestRunCancelledPrecheckIsInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	el := &fakeElevator{outcome: taskresult.Applied}
+	r := &recorder{}
+	dns := r.task("dns", true, "")
+	dns.Precheck = func(context.Context, Env) *taskresult.Result {
+		cancel()
+		return &taskresult.Result{Outcome: taskresult.Skipped, Message: "无法确认 VPN 是否已连接，为避免断线已跳过"}
+	}
+	laterChecked := false
+	later := r.task("spotlight", true, "")
+	later.Precheck = func(context.Context, Env) *taskresult.Result {
+		laterChecked = true
+		return nil
+	}
+	s := newTestService(t, []TaskImpl{dns, later}, el)
+	got, err := s.Run(ctx, []string{"dns", "spotlight"}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, res := range got {
+		if res != (taskresult.Result{TaskID: res.TaskID, Outcome: taskresult.Skipped, Message: "维护已中断，未执行", Detail: context.Canceled.Error()}) {
+			t.Errorf("result %+v, want interrupted", res)
+		}
+	}
+	if laterChecked || len(el.batches) != 0 {
+		t.Errorf("ran after the cancel: precheck %v, batches %v", laterChecked, el.batches)
+	}
+}
+
+type elevatorFunc func(ctx context.Context, ids []string) ([]taskresult.Result, error)
+
+func (f elevatorFunc) Run(ctx context.Context, ids []string) ([]taskresult.Result, error) {
+	return f(ctx, ids)
+}

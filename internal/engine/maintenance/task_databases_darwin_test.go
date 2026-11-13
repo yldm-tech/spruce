@@ -129,6 +129,9 @@ func TestDatabasesSkipsRunningApps(t *testing.T) {
 	scriptHealthy(f, fx.chat)
 	res := fx.run(t, f)
 	assertOutcome(t, res, taskresult.Skipped, "已优化 1 个", "Safari、邮件仍在运行", "退出后再运行一次")
+	if res.Reason != "" {
+		t.Errorf("a running app is not a permission problem: reason %q", res.Reason)
+	}
 	for _, c := range f.Calls() {
 		if db := c.Args[len(c.Args)-2]; db == fx.safari || db == fx.mail {
 			t.Errorf("queried the database of a running app: %s", c.String())
@@ -230,6 +233,9 @@ func TestDatabasesWithoutFullDiskAccess(t *testing.T) {
 			t.Fatal("precheck let the task run without Full Disk Access")
 		}
 		assertOutcome(t, *res, taskresult.Skipped, "完全磁盘访问权限")
+		if res.Reason != taskresult.ReasonFullDiskAccess {
+			t.Errorf("reason %q, want the Full Disk Access reason the page offers 去授权 for", res.Reason)
+		}
 	})
 	for _, p := range []PermissionChecker{nil, macPermissions{state: PermissionGranted}, macPermissions{state: PermissionNotRequired}, macPermissions{state: PermissionUnknown}, macPermissions{err: errors.New("probe failed")}} {
 		env := macEnv(execxtest.New())
@@ -249,7 +255,11 @@ func TestDatabasesWithoutFullDiskAccess(t *testing.T) {
 			}
 		}
 		f := execxtest.New()
-		assertOutcome(t, fx.run(t, f), taskresult.Skipped, "完全磁盘访问权限")
+		res := fx.run(t, f)
+		assertOutcome(t, res, taskresult.Skipped, "完全磁盘访问权限")
+		if res.Reason != taskresult.ReasonFullDiskAccess {
+			t.Errorf("reason %q", res.Reason)
+		}
 		if len(f.Calls()) != 0 {
 			t.Errorf("ran sqlite3 on unreadable files: %v", f.Calls())
 		}
@@ -293,6 +303,44 @@ func TestDatabasesCancelled(t *testing.T) {
 	cancel()
 	res := databasesTask(fx.cfg).Run(ctx, fx.env(execxtest.New()))
 	assertOutcome(t, res, taskresult.Skipped, "中断")
+}
+
+// TestDatabasesCancelledAfterVacuumKeepsTheTally cancels while Mail's database is processed, after Safari's was vacuumed: the result must say that one database was optimised.
+func TestDatabasesCancelledAfterVacuumKeepsTheTally(t *testing.T) {
+	fx := newDBFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	f := execxtest.New()
+	scriptHealthy(f, fx.safari)
+	onSQLite(f, fx.mail, statsSQL).Do(func(context.Context, execx.Command) (execx.Output, error) {
+		cancel()
+		return execx.Output{ExitCode: -1}, context.Canceled
+	})
+	res := databasesTask(fx.cfg).Run(ctx, fx.env(f))
+	assertOutcome(t, res, taskresult.Applied, "已优化 1 个数据库", "中断")
+	if !res.Partial {
+		t.Errorf("result %+v, want partial", res)
+	}
+	f.AssertCalled(t, pathSqlite3, sqliteArgs(fx.safari, vacuumSQL)...)
+	if f.Called(pathSqlite3, sqliteArgs(fx.chat, statsSQL)...) {
+		t.Error("went on after the cancel")
+	}
+}
+
+func TestDatabasesTooLargeAfterWorkIsPartial(t *testing.T) {
+	fx := newDBFixture(t)
+	f := execxtest.New()
+	scriptHealthy(f, fx.safari)
+	scriptHealthy(f, fx.mail)
+	big := append([]byte("SQLite format 3\x00"), make([]byte, 8192)...)
+	if err := os.WriteFile(fx.chat, big, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fx.cfg.maxBytes = 4096 + 100
+	res := fx.run(t, f)
+	assertOutcome(t, res, taskresult.Applied, "已优化 2 个数据库", "较大")
+	if !res.Partial {
+		t.Errorf("result %+v, want partial so the done card shows the note", res)
+	}
 }
 
 func TestMailEnvelopeIndexPicksNewestVersion(t *testing.T) {

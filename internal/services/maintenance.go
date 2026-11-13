@@ -95,7 +95,7 @@ func (m *Maintenance) Catalog() []TaskView {
 	return out
 }
 
-// Run runs the tasks named by ids, streams progress, records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress. Admin tasks run together behind one system prompt.
+// Run runs the tasks named by ids, streams progress, records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress; the error's text is a sentence in Simplified Chinese for the page to show, and the engine's own error goes to the log. Admin tasks run together behind one system prompt.
 func (m *Maintenance) Run(ctx context.Context, ids []string, progress *mygo.Channel[ProgressEvent]) (RunSummary, error) {
 	started := time.Now()
 	results, err := m.svc.Run(ctx, ids, func(ev maintenance.Event) {
@@ -107,7 +107,7 @@ func (m *Maintenance) Run(ctx context.Context, ids []string, progress *mygo.Chan
 	})
 	interrupted := err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err())
 	if err != nil && !interrupted {
-		return RunSummary{}, err
+		return RunSummary{}, m.userError(err)
 	}
 	summary := summarize(newRunID(started), started, time.Now(), results)
 	summary.Interrupted = interrupted
@@ -116,6 +116,20 @@ func (m *Maintenance) Run(ctx context.Context, ids []string, progress *mygo.Chan
 		m.log.Error("record maintenance run in history", "run", summary.RunID, "err", err)
 	}
 	return summary, nil
+}
+
+// userError turns an error of maintenance.Service.Run into the sentence the done card shows: MyGo hands the page only the error's text.
+func (m *Maintenance) userError(err error) error {
+	m.log.Warn("maintenance run rejected", "err", err)
+	switch {
+	case errors.Is(err, maintenance.ErrBusy):
+		return errors.New("已有维护正在进行，请等它结束后再试")
+	case errors.Is(err, maintenance.ErrUnknownTask):
+		return errors.New("维护项目已更新，请重新打开维护页面后再试")
+	case errors.Is(err, maintenance.ErrNoTasks):
+		return errors.New("没有选择任何维护项目")
+	}
+	return errors.New("维护没能开始，详情已记录到日志")
 }
 
 func summarize(id string, start, end time.Time, results []taskresult.Result) RunSummary {

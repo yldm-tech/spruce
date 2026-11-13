@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Result, TaskView } from "../../mygo";
-import { formatAlertTitle, formatEstimate, fullDiskAccessBlocked, issueLines } from "./summary";
+import {
+  completedLines,
+  formatAlertTitle,
+  formatEstimate,
+  fullDiskAccessBlocked,
+  issueLines,
+} from "./summary";
 
-function r(taskId: string, outcome: Result["outcome"], message: string): Result {
-  return { taskId, outcome, message, duration: 0 };
+function r(taskId: string, outcome: Result["outcome"], message: string, extra: Partial<Result> = {}): Result {
+  return { taskId, outcome, message, duration: 0, ...extra };
 }
 
 const catalog = [
@@ -57,10 +63,34 @@ describe("issueLines", () => {
   });
 });
 
+describe("issueLines and completedLines", () => {
+  it("lists a partly applied result as an issue and every other completed result with its message", () => {
+    const results = [
+      r("c", "unchanged", "无需处理"),
+      r("b", "applied", "已清除，另有 2 个未能清除", { partial: true }),
+      r("a", "applied", "已完成；注销后生效"),
+    ];
+    expect(issueLines(results, catalog)).toEqual([{ titles: ["乙"], message: "已清除，另有 2 个未能清除" }]);
+    // Catalog order, whatever order the results came in.
+    expect(completedLines(results, catalog)).toEqual([
+      { titles: ["甲"], message: "已完成；注销后生效" },
+      { titles: ["丙"], message: "无需处理" },
+    ]);
+  });
+
+  it("groups completed results that share a message", () => {
+    expect(
+      completedLines([r("a", "applied", "好"), r("b", "skipped", "取消"), r("c", "applied", "好")], catalog),
+    ).toEqual([{ titles: ["甲", "丙"], message: "好" }]);
+  });
+});
+
 describe("fullDiskAccessBlocked", () => {
-  it("is true only for an undone Full Disk Access task", () => {
-    expect(fullDiskAccessBlocked([r("databases", "skipped", "")])).toBe(true);
-    expect(fullDiskAccessBlocked([r("databases", "unavailable", "")])).toBe(true);
+  it("is true only for a result skipped because Full Disk Access is missing", () => {
+    expect(fullDiskAccessBlocked([r("databases", "skipped", "", { reason: "fullDiskAccess" })])).toBe(true);
+    // Safari still running, a busy database or low disk space are not about the permission.
+    expect(fullDiskAccessBlocked([r("databases", "skipped", "Safari 仍在运行，已跳过")])).toBe(false);
+    expect(fullDiskAccessBlocked([r("databases", "unavailable", "")])).toBe(false);
     expect(fullDiskAccessBlocked([r("databases", "failed", "")])).toBe(false);
     expect(fullDiskAccessBlocked([r("dns", "skipped", "")])).toBe(false);
   });

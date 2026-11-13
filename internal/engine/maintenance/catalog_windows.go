@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,7 @@ import (
 //
 //   - dns: "ipconfig /flushdns" works for a standard user, so it runs in the app process without a UAC prompt.
 //   - search: checks the Windows Search service (WSearch) from the app process and only asks for administrator rights when the service is stopped although it is set to start automatically. It never rebuilds the index: a rebuild re-indexes every file for hours and leaves search incomplete meanwhile, which is not a maintenance step to run unasked.
-//   - thumbnails: deletes the per-user thumbcache_*.db files, as Disk Cleanup's "Thumbnails" handler does. Files Explorer holds open are reported, never forced: Explorer is not restarted.
+//   - thumbnails: calls the system's registered "Thumbnail Cache" Disk Cleanup handler through IEmptyVolumeCache, the same handler Disk Cleanup's "Thumbnails" entry uses. It clears the cache while Explorer keeps running; deleting thumbcache_*.db directly fails while Explorer holds them open, which it does for the whole session.
 //   - icons: "ie4uinit.exe -show" asks the shell to refresh its icon cache in place. Deleting iconcache_*.db would need an Explorer restart, so it is not done.
 //   - associations: removes only HKCU "Open with" entries (FileExts\<ext>\OpenWithList and OpenWithProgids) that point to programs or ProgIDs that no longer exist on a fixed drive. UserChoice (the hash-protected default app) is never opened for writing.
 func PlatformTasks() []TaskImpl {
@@ -45,10 +44,12 @@ func winTasks(sys *winSystem) []TaskImpl {
 type winSystem struct {
 	// systemDir returns the System32 directory. Tools are run by absolute path from there, so a program planted earlier in PATH is never picked.
 	systemDir func() (string, error)
-	// explorerCacheDir returns %LOCALAPPDATA%\Microsoft\Windows\Explorer, where the thumbnail and icon caches live.
+	// explorerCacheDir returns %LOCALAPPDATA%\Microsoft\Windows\Explorer, where the thumbnail and icon caches live; the thumbnail task cleans the volume it is on.
 	explorerCacheDir func() (string, error)
-	// removeFile deletes name inside root. os.Root keeps the deletion inside the cache directory even if an entry is a link.
-	removeFile func(root *os.Root, name string) error
+	// purgeThumbnailCache empties the thumbnail cache on a volume (e.g. `C:\`) through the registered Disk Cleanup handler.
+	purgeThumbnailCache func(ctx context.Context, volume string) (winCachePurge, error)
+	// uptime returns the time since boot; the search task uses it to recognise the delayed-start window after sign-in.
+	uptime func() time.Duration
 	// services queries and starts Windows services.
 	services winServiceManager
 	// registry reads and edits the registry.
@@ -70,12 +71,13 @@ func newWinSystem() *winSystem {
 			}
 			return filepath.Join(dir, "Microsoft", "Windows", "Explorer"), nil
 		},
-		removeFile:   (*os.Root).Remove,
-		services:     scmServices{},
-		registry:     osRegistry{},
-		pathState:    osPathState,
-		pollInterval: 500 * time.Millisecond,
-		startTimeout: 30 * time.Second,
+		purgeThumbnailCache: purgeThumbnailCache,
+		uptime:              windows.DurationSinceBoot,
+		services:            scmServices{},
+		registry:            osRegistry{},
+		pathState:           osPathState,
+		pollInterval:        500 * time.Millisecond,
+		startTimeout:        30 * time.Second,
 	}
 }
 

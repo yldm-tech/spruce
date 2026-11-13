@@ -26,7 +26,6 @@ var channels = map[string]channel{"stdout": viaStdout, "file": viaFile}
 type childLauncher struct {
 	t        *testing.T
 	ch       channel
-	tempDir  string
 	handler  Handler
 	notAdmin bool
 	err      error
@@ -47,7 +46,7 @@ func (l *childLauncher) Launch(ctx context.Context, exe string, args []string) (
 		channel:  l.ch,
 		stdout:   &stdout,
 		stderr:   &stderr,
-		tempDir:  l.tempDir,
+		checkDir: acceptDir,
 		elevated: func() bool { return !l.notAdmin },
 	})
 	if l.code != ExitOK {
@@ -68,9 +67,22 @@ func echoHandler(_ context.Context, ids []string) []taskresult.Result {
 	return out
 }
 
+// acceptDir is the childEnv.checkDir of tests that are not about the platform's ownership check.
+func acceptDir(string) error { return nil }
+
+// resolvedTempDir returns a fresh temp directory with symlinks resolved (macOS's /var/folders is a symlink to /private/var/folders), the form in which the parent hands the exchange directory to the child.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
 func newPair(t *testing.T, ch channel, h Handler) (*ProcessElevator, *childLauncher) {
-	tmp := t.TempDir()
-	l := &childLauncher{t: t, ch: ch, tempDir: tmp, handler: h}
+	tmp := resolvedTempDir(t)
+	l := &childLauncher{t: t, ch: ch, handler: h}
 	p := New(testExe, l)
 	p.TempDir, p.channel = tmp, ch
 	return p, l
@@ -190,6 +202,12 @@ func TestRunRejectsBadResponses(t *testing.T) {
 		"invalid outcome": func(_ context.Context, ids []string) []taskresult.Result {
 			return []taskresult.Result{{TaskID: ids[0], Outcome: "done"}, {TaskID: ids[1], Outcome: taskresult.Applied}}
 		},
+		"partial on a skipped result": func(_ context.Context, ids []string) []taskresult.Result {
+			return []taskresult.Result{{TaskID: ids[0], Outcome: taskresult.Skipped, Partial: true}, {TaskID: ids[1], Outcome: taskresult.Applied}}
+		},
+		"unknown reason": func(_ context.Context, ids []string) []taskresult.Result {
+			return []taskresult.Result{{TaskID: ids[0], Outcome: taskresult.Skipped, Reason: "reboot"}, {TaskID: ids[1], Outcome: taskresult.Applied}}
+		},
 	}
 	for name, h := range cases {
 		for chName, ch := range channels {
@@ -261,6 +279,9 @@ func serve(t *testing.T, args []string, env childEnv) (code int, ran bool, stdou
 	if env.elevated == nil {
 		env.elevated = func() bool { return true }
 	}
+	if env.checkDir == nil {
+		env.checkDir = acceptDir
+	}
 	code = serveChild(t.Context(), args, testAllowed, func(ctx context.Context, ids []string) []taskresult.Result {
 		ran = true
 		return echoHandler(ctx, ids)
@@ -287,7 +308,7 @@ func TestServeChildStdout(t *testing.T) {
 
 func TestServeChildRejectsArguments(t *testing.T) {
 	dir := func(t *testing.T) string {
-		d, err := os.MkdirTemp(t.TempDir(), exchangeDirPrefix)
+		d, err := os.MkdirTemp(resolvedTempDir(t), exchangeDirPrefix)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,7 +352,7 @@ func TestServeChildRejectsArguments(t *testing.T) {
 	for name, mk := range fileCases {
 		t.Run("file/"+name, func(t *testing.T) {
 			d := dir(t)
-			code, ran, _ := serve(t, mk(d), childEnv{channel: viaFile, tempDir: filepath.Dir(d)})
+			code, ran, _ := serve(t, mk(d), childEnv{channel: viaFile})
 			if code != ExitBadRequest || ran {
 				t.Fatalf("code %d, ran %v", code, ran)
 			}
@@ -354,12 +375,11 @@ func TestServeChildRefusesWhenNotElevated(t *testing.T) {
 }
 
 func TestServeChildFileChannel(t *testing.T) {
-	temp := t.TempDir()
-	d, err := os.MkdirTemp(temp, exchangeDirPrefix)
+	d, err := os.MkdirTemp(resolvedTempDir(t), exchangeDirPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, ran, out := serve(t, []string{Flag, "--tasks", "dns,icons", "--out", d}, childEnv{channel: viaFile, tempDir: temp})
+	code, ran, out := serve(t, []string{Flag, "--tasks", "dns,icons", "--out", d}, childEnv{channel: viaFile})
 	if code != ExitOK || !ran || out != "" {
 		t.Fatalf("code %d, ran %v, stdout %q", code, ran, out)
 	}
@@ -372,7 +392,42 @@ func TestServeChildFileChannel(t *testing.T) {
 	}
 }
 
-// TestServeChildResponseFileSafety covers the rules for the exchange directory the Windows child writes into: it must be a plain directory named spruce-elevated-<digits> directly inside the system temp directory, and the response file must not exist yet.
+// TestServeChildAcceptsAnotherTempRoot is over-the-shoulder elevation on Windows: the elevated child runs with the administrator's profile, so the exchange directory the parent made is not in the child's own temp directory, and that must not matter.
+func TestServeChildAcceptsAnotherTempRoot(t *testing.T) {
+	parentTemp := filepath.Join(resolvedTempDir(t), "Users", "standard", "AppData", "Local", "Temp")
+	if err := os.MkdirAll(parentTemp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d, err := os.MkdirTemp(parentTemp, exchangeDirPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, ran, _ := serve(t, []string{Flag, "--tasks", "dns", "--out", d}, childEnv{channel: viaFile})
+	if code != ExitOK || !ran {
+		t.Fatalf("code %d, ran %v", code, ran)
+	}
+	if _, err := readResponseFile(filepath.Join(d, ResponseFile)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServeChildAsksThePlatformAboutTheDirectory(t *testing.T) {
+	d, err := os.MkdirTemp(resolvedTempDir(t), exchangeDirPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checked string
+	refuse := func(dir string) error { checked = dir; return errors.New("owned by SYSTEM") }
+	code, ran, _ := serve(t, []string{Flag, "--tasks", "dns", "--out", d}, childEnv{channel: viaFile, checkDir: refuse})
+	if code != ExitIOError || ran || checked != d {
+		t.Fatalf("code %d, ran %v, checked %q", code, ran, checked)
+	}
+	if _, err := os.Lstat(filepath.Join(d, ResponseFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a response was written: %v", err)
+	}
+}
+
+// TestServeChildResponseFileSafety covers the rules for the exchange directory the Windows child writes into: it must be a plain directory named spruce-elevated-<digits>, reached without any symlink or junction, and the response file must not exist yet.
 func TestServeChildResponseFileSafety(t *testing.T) {
 	type setup func(t *testing.T, temp string) (dir string, check func(t *testing.T))
 	mkdir := func(t *testing.T, parent, name string) string {
@@ -388,12 +443,6 @@ func TestServeChildResponseFileSafety(t *testing.T) {
 		}
 	}
 	cases := map[string]setup{
-		"outside the temp dir": func(t *testing.T, _ string) (string, func(*testing.T)) {
-			return mkdir(t, t.TempDir(), exchangeDirPrefix+"1"), nil
-		},
-		"nested below the temp dir": func(t *testing.T, temp string) (string, func(*testing.T)) {
-			return mkdir(t, mkdir(t, temp, "sub"), exchangeDirPrefix+"1"), nil
-		},
 		"the temp dir itself": func(t *testing.T, temp string) (string, func(*testing.T)) {
 			return temp, nil
 		},
@@ -424,6 +473,17 @@ func TestServeChildResponseFileSafety(t *testing.T) {
 			return link, func(t *testing.T) {
 				if _, err := os.Lstat(filepath.Join(elsewhere, ResponseFile)); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("wrote through the symlinked directory: %v", err)
+				}
+			}
+		},
+		"a parent directory is a symlink": func(t *testing.T, temp string) (string, func(*testing.T)) {
+			elsewhere := resolvedTempDir(t)
+			mkdir(t, elsewhere, exchangeDirPrefix+"1")
+			link := filepath.Join(temp, "link")
+			symlink(t, elsewhere, link)
+			return filepath.Join(link, exchangeDirPrefix+"1"), func(t *testing.T) {
+				if _, err := os.Lstat(filepath.Join(elsewhere, exchangeDirPrefix+"1", ResponseFile)); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("wrote through the symlinked parent: %v", err)
 				}
 			}
 		},
@@ -465,9 +525,9 @@ func TestServeChildResponseFileSafety(t *testing.T) {
 	}
 	for name, mk := range cases {
 		t.Run(name, func(t *testing.T) {
-			temp := t.TempDir()
+			temp := resolvedTempDir(t)
 			dir, check := mk(t, temp)
-			code, ran, _ := serve(t, []string{Flag, "--tasks", "dns", "--out", dir}, childEnv{channel: viaFile, tempDir: temp})
+			code, ran, _ := serve(t, []string{Flag, "--tasks", "dns", "--out", dir}, childEnv{channel: viaFile})
 			if code != ExitIOError || ran {
 				t.Fatalf("code %d, ran %v", code, ran)
 			}
@@ -475,5 +535,43 @@ func TestServeChildResponseFileSafety(t *testing.T) {
 				check(t)
 			}
 		})
+	}
+}
+
+func TestCheckSelf(t *testing.T) {
+	exe := filepath.Join(resolvedTempDir(t), "Spruce")
+	if err := os.WriteFile(exe, []byte("original"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	img, err := imageAt(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := func() (selfImage, error) { return img, nil }
+	if err := checkSelf(exe, self); err != nil {
+		t.Fatalf("the unchanged executable was refused: %v", err)
+	}
+	for _, other := range []string{filepath.Join(filepath.Dir(exe), "Other"), "Spruce", exe + string(filepath.Separator) + "."} {
+		if err := checkSelf(other, self); err == nil {
+			t.Errorf("checkSelf accepted %q", other)
+		}
+	}
+
+	// Rename-and-replace: the running image moves away and another file takes its path.
+	if err := os.Rename(exe, exe+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("replacement"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSelf(exe, self); err == nil {
+		t.Fatal("checkSelf accepted a file put at the executable's path after startup")
+	}
+
+	if err := os.Remove(exe); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSelf(exe, self); err == nil {
+		t.Fatal("checkSelf accepted a missing executable")
 	}
 }

@@ -44,6 +44,9 @@ export interface ProgressEvent {
 /** ProgressKind is the kind of a ProgressEvent. */
 export type ProgressKind = "started" | "finished";
 
+/** Reason is a machine-readable cause attached to a Result, for the page to react to without matching Message text. */
+export type Reason = "fullDiskAccess";
+
 /** Result is what one task did. */
 export interface Result {
   /** TaskID is the stable ID of the task (maintenance.Task.ID). */
@@ -52,6 +55,10 @@ export interface Result {
   outcome: Outcome;
   /** Message is a short user-facing sentence in Simplified Chinese, shown in the UI and in the history, e.g. "已刷新 DNS 缓存" or "Safari 仍在运行，已跳过". */
   message: string;
+  /** Partial marks an Applied result whose task left part of its work undone or needs a follow-up from the user (files held open, a registry value that could not be changed, a database too large to compact, an icon cache that takes effect only after logging out). Message explains what is left. It is never set on other outcomes. */
+  partial?: boolean;
+  /** Reason, when set, is the machine-readable cause of the outcome, e.g. ReasonFullDiskAccess. */
+  reason?: Reason;
   /** Detail is technical context for diagnostics (command, exit code, stderr excerpt). It is never shown as the primary text. */
   detail?: string;
   /** Duration is how long the task took; in JSON (and TypeScript) it is a number of nanoseconds. */
@@ -107,7 +114,7 @@ export const Maintenance = {
   catalog(): Promise<TaskView[]> {
     return call("Maintenance.Catalog");
   },
-  /** Run runs the tasks named by ids, streams progress, records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress. Admin tasks run together behind one system prompt. */
+  /** Run runs the tasks named by ids, streams progress, records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress; the error's text is a sentence in Simplified Chinese for the page to show, and the engine's own error goes to the log. Admin tasks run together behind one system prompt. */
   run(ids: string[], progress: Channel<ProgressEvent>): Promise<RunSummary> {
     return call("Maintenance.Run", ids, progress);
   },

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -87,6 +88,40 @@ func TestSearchPrecheck(t *testing.T) {
 				t.Fatalf("outcome %q (%s), want %q", res.Outcome, res.Message, c.want)
 			}
 			if c.services.starts != 0 {
+				t.Error("the precheck must never start the service")
+			}
+		})
+	}
+}
+
+// TestSearchDelayedStartWindow covers WSearch's default "Automatic (Delayed Start)": right after sign-in it is stopped and has never run, which needs no UAC prompt.
+func TestSearchDelayedStartWindow(t *testing.T) {
+	neverStarted := uint32(windows.ERROR_SERVICE_NEVER_STARTED)
+	cases := []struct {
+		name    string
+		info    winServiceInfo
+		uptime  time.Duration
+		elevate bool
+	}{
+		{"delayed, never started, just booted", winServiceInfo{State: svc.Stopped, StartType: mgr.StartAutomatic, DelayedAutoStart: true, Win32ExitCode: neverStarted}, 90 * time.Second, false},
+		{"delayed, never started, long after boot", winServiceInfo{State: svc.Stopped, StartType: mgr.StartAutomatic, DelayedAutoStart: true, Win32ExitCode: neverStarted}, 30 * time.Minute, true},
+		{"not delayed, never started, just booted", winServiceInfo{State: svc.Stopped, StartType: mgr.StartAutomatic, Win32ExitCode: neverStarted}, 90 * time.Second, true},
+		{"delayed, crashed, just booted", winServiceInfo{State: svc.Stopped, StartType: mgr.StartAutomatic, DelayedAutoStart: true, Win32ExitCode: 1067}, 90 * time.Second, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &fakeServices{info: c.info}
+			sys := newTestWinSystem(t)
+			sys.services = s
+			sys.uptime = func() time.Duration { return c.uptime }
+			res := winSearchTask(sys).Precheck(context.Background(), testEnv(execxtest.New()))
+			if c.elevate != (res == nil) {
+				t.Fatalf("precheck result %+v, want elevation %v", res, c.elevate)
+			}
+			if res != nil && res.Outcome != taskresult.Unchanged {
+				t.Errorf("outcome %q (%s), want unchanged", res.Outcome, res.Message)
+			}
+			if s.starts != 0 {
 				t.Error("the precheck must never start the service")
 			}
 		})

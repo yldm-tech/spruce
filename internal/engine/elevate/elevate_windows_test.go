@@ -52,8 +52,20 @@ func TestShellExecuteErrorMapsCancel(t *testing.T) {
 
 func TestPlatformChildEnv(t *testing.T) {
 	env := platformChildEnv()
-	if env.channel != viaFile || env.tempDir != os.TempDir() {
+	if env.channel != viaFile || env.checkDir == nil {
 		t.Fatalf("env %+v", env)
+	}
+	// A directory this (unelevated or elevated) test process creates is owned by its user, or by Administrators when the test runs elevated.
+	d, err := os.MkdirTemp("", exchangeDirPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(d)
+	if err := env.checkDir(d); (err == nil) == windows.GetCurrentProcessToken().IsElevated() {
+		t.Errorf("checkDir(%q) = %v with an elevated token %v", d, err, windows.GetCurrentProcessToken().IsElevated())
+	}
+	if err := env.checkDir(os.Getenv("SystemRoot")); err == nil {
+		t.Errorf("checkDir accepted the Windows directory")
 	}
 	if env.elevated() != windows.GetCurrentProcessToken().IsElevated() {
 		t.Error("elevated does not follow the process token")
@@ -63,5 +75,31 @@ func TestPlatformChildEnv(t *testing.T) {
 func TestSamePathIgnoresCase(t *testing.T) {
 	if !samePath(`C:\Users\A\AppData\Local\Temp`, `c:\users\a\appdata\local\temp`) {
 		t.Error("paths differing in case are the same directory on Windows")
+	}
+}
+
+func TestPrivilegedOwner(t *testing.T) {
+	for _, k := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid, windows.WinLocalServiceSid, windows.WinNetworkServiceSid} {
+		sid, err := windows.CreateWellKnownSid(k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !privilegedOwner(sid) {
+			t.Errorf("%s is not treated as privileged", sid)
+		}
+	}
+	ti, err := windows.StringToSid(trustedInstallerSID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !privilegedOwner(ti) {
+		t.Error("TrustedInstaller is not treated as privileged")
+	}
+	user, err := windows.StringToSid("S-1-5-21-1004336348-1177238915-682003330-1001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if privilegedOwner(user) {
+		t.Error("an ordinary user account is treated as privileged")
 	}
 }

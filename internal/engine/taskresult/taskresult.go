@@ -32,6 +32,23 @@ func (o Outcome) Valid() bool {
 	return false
 }
 
+// Reason is a machine-readable cause attached to a Result, for the page to react to without matching Message text.
+type Reason string
+
+const (
+	// ReasonFullDiskAccess marks a result that is Skipped because the app lacks Full Disk Access (macOS). The page offers 去授权 only for results with this reason.
+	ReasonFullDiskAccess Reason = "fullDiskAccess"
+)
+
+// Valid reports whether r is empty or one of the declared reasons.
+func (r Reason) Valid() bool {
+	switch r {
+	case "", ReasonFullDiskAccess:
+		return true
+	}
+	return false
+}
+
 // Result is what one task did.
 type Result struct {
 	// TaskID is the stable ID of the task (maintenance.Task.ID).
@@ -40,6 +57,10 @@ type Result struct {
 	Outcome Outcome `json:"outcome"`
 	// Message is a short user-facing sentence in Simplified Chinese, shown in the UI and in the history, e.g. "已刷新 DNS 缓存" or "Safari 仍在运行，已跳过".
 	Message string `json:"message"`
+	// Partial marks an Applied result whose task left part of its work undone or needs a follow-up from the user (files held open, a registry value that could not be changed, a database too large to compact, an icon cache that takes effect only after logging out). Message explains what is left. It is never set on other outcomes.
+	Partial bool `json:"partial,omitempty"`
+	// Reason, when set, is the machine-readable cause of the outcome, e.g. ReasonFullDiskAccess.
+	Reason Reason `json:"reason,omitempty"`
 	// Detail is technical context for diagnostics (command, exit code, stderr excerpt). It is never shown as the primary text.
 	Detail string `json:"detail,omitempty"`
 	// Duration is how long the task took; in JSON (and TypeScript) it is a number of nanoseconds.

@@ -26,12 +26,17 @@ func newTestWinSystem(t *testing.T) *winSystem {
 	return &winSystem{
 		systemDir:        func() (string, error) { return testSystemDir, nil },
 		explorerCacheDir: func() (string, error) { return t.TempDir(), nil },
-		removeFile:       (*os.Root).Remove,
-		services:         &fakeServices{},
-		registry:         newFakeRegistry(),
-		pathState:        func(string) winPathState { return winPathUnknown },
-		pollInterval:     time.Millisecond,
-		startTimeout:     time.Second,
+		purgeThumbnailCache: func(context.Context, string) (winCachePurge, error) {
+			t.Error("the real thumbnail cache handler is not available in tests")
+			return winCachePurge{}, errors.ErrUnsupported
+		},
+		// Long after boot, so a stopped delayed-start service is not inside its start window.
+		uptime:       func() time.Duration { return time.Hour },
+		services:     &fakeServices{},
+		registry:     newFakeRegistry(),
+		pathState:    func(string) winPathState { return winPathUnknown },
+		pollInterval: time.Millisecond,
+		startTimeout: time.Second,
 	}
 }
 

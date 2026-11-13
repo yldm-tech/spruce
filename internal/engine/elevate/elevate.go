@@ -85,7 +85,7 @@ type ProcessElevator struct {
 	Executable string
 	// Launcher starts it elevated.
 	Launcher Launcher
-	// TempDir is where exchange directories are created when the platform answers through a file; empty means os.TempDir, the only parent directory the Windows child accepts.
+	// TempDir is where exchange directories are created when the platform answers through a file; empty means os.TempDir.
 	TempDir string
 
 	channel channel
@@ -127,6 +127,10 @@ func (p *ProcessElevator) Run(ctx context.Context, taskIDs []string) ([]taskresu
 			return nil, fmt.Errorf("elevate: create exchange directory: %w", err)
 		}
 		defer os.RemoveAll(dir)
+		// The child rejects a path with a symlink, junction or 8.3 short name in it (a temp directory such as C:\Users\RUNNER~1\… or macOS's /var/folders), so it gets the resolved form.
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
+			return nil, fmt.Errorf("elevate: resolve exchange directory: %w", err)
+		}
 		_, lerr := p.Launcher.Launch(ctx, p.Executable, append(args, outFlag, dir))
 		if errors.Is(lerr, ErrCancelled) {
 			return nil, ErrCancelled
@@ -200,6 +204,12 @@ func matchResults(ids []string, results []taskresult.Result) ([]taskresult.Resul
 		if !r.Outcome.Valid() {
 			return nil, fmt.Errorf("elevate: response has outcome %q for %q", r.Outcome, r.TaskID)
 		}
+		if r.Partial && r.Outcome != taskresult.Applied {
+			return nil, fmt.Errorf("elevate: response marks outcome %q for %q as partial", r.Outcome, r.TaskID)
+		}
+		if !r.Reason.Valid() {
+			return nil, fmt.Errorf("elevate: response has reason %q for %q", r.Reason, r.TaskID)
+		}
 		if _, dup := byID[r.TaskID]; dup {
 			return nil, fmt.Errorf("elevate: response has two results for %q", r.TaskID)
 		}
@@ -230,17 +240,55 @@ func validateIDs(ids []string) error {
 	return nil
 }
 
-// selfExecutable returns the path of the running executable with symlinks resolved, the only program a Launcher agrees to elevate.
-func selfExecutable() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(exe)
+// selfImage is the running executable as found when the launcher was created at startup: its path with symlinks resolved, and a check that the file at that path is still the one that was there.
+type selfImage struct {
+	path string
+	// unchanged returns an error when the file now at path is not the file that was there at startup.
+	unchanged func() error
 }
 
-// checkSelf refuses to elevate anything but the running executable: exe must be absolute, already resolved through symlinks, and the same file as self.
-func checkSelf(exe string, self func() (string, error)) error {
+// snapshotSelf records the running executable. Launchers call it when they are created, which main.go does at startup, so a file put at that path later (a rename-and-replace of the running image) no longer matches.
+func snapshotSelf() (selfImage, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return selfImage{}, err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return selfImage{}, err
+	}
+	return imageAt(exe)
+}
+
+// imageAt records the identity of the file at path (device and inode on macOS, volume serial and file index on Windows).
+func imageAt(path string) (selfImage, error) {
+	start, err := fileIdentity(path)
+	if err != nil {
+		return selfImage{}, err
+	}
+	return selfImage{path: path, unchanged: func() error {
+		now, err := fileIdentity(path)
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(start, now) {
+			return fmt.Errorf("%q is no longer the file the app was started from", path)
+		}
+		return nil
+	}}, nil
+}
+
+// fileIdentity stats path through an open handle. On Windows a FileInfo from os.Stat loads the file ID lazily, from the path, at the first os.SameFile call, which would compare whatever file is at the path then; File.Stat reads it from the handle right away.
+func fileIdentity(path string) (os.FileInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.Stat()
+}
+
+// checkSelf refuses to elevate any path other than the one the process started from: exe must be absolute, already resolved through symlinks, equal to that path, and still the same file (device and inode, or volume serial and file index) that was there when the launcher was created. It compares paths and file identity, not code signatures, so it does not catch a binary overwritten in place under the same path; see Known limitations in the package documentation.
+func checkSelf(exe string, self func() (selfImage, error)) error {
 	if !filepath.IsAbs(exe) || filepath.Clean(exe) != exe {
 		return fmt.Errorf("elevate: %q is not a clean absolute path", exe)
 	}
@@ -248,8 +296,11 @@ func checkSelf(exe string, self func() (string, error)) error {
 	if err != nil {
 		return fmt.Errorf("elevate: locate the running executable: %w", err)
 	}
-	if !samePath(exe, own) {
-		return fmt.Errorf("elevate: refusing to elevate %q, which is not the running executable %q", exe, own)
+	if !samePath(exe, own.path) {
+		return fmt.Errorf("elevate: refusing to elevate %q, which is not the running executable %q", exe, own.path)
+	}
+	if err := own.unchanged(); err != nil {
+		return fmt.Errorf("elevate: refusing to elevate: %w", err)
 	}
 	return nil
 }
@@ -274,8 +325,8 @@ type childEnv struct {
 	stdout io.Writer
 	// stderr receives diagnostics.
 	stderr io.Writer
-	// tempDir is, with viaFile, the only directory the exchange directory may be a direct child of.
-	tempDir string
+	// checkDir is, with viaFile, the platform's check that the exchange directory may receive the response (on Windows: it is owned by an unprivileged account).
+	checkDir func(dir string) error
 	// elevated reports whether the process runs with administrator rights.
 	elevated func() bool
 }
@@ -285,7 +336,7 @@ type childEnv struct {
 //	--spruce-elevated --tasks <id>[,<id>...]                (macOS)
 //	--spruce-elevated --tasks <id>[,<id>...] --out <dir>    (Windows)
 //
-// where every ID is in allowed (the admin task IDs of the compiled-in catalog) and named once, and <dir> is an exchange directory directly inside the system temp directory. It refuses to run anything unless the process is elevated (euid 0 on macOS, an elevated token on Windows), runs h, writes the Response (to stdout on macOS, to <dir>/response.json created exclusively on Windows) and returns the process exit code.
+// where every ID is in allowed (the admin task IDs of the compiled-in catalog) and named once, and <dir> is an exchange directory: a plain directory named spruce-elevated-<digits>, reached without symlinks or junctions and owned by an unprivileged account. It refuses to run anything unless the process is elevated (euid 0 on macOS, an elevated token on Windows), runs h, writes the Response (to stdout on macOS, to <dir>/response.json created exclusively on Windows) and returns the process exit code.
 func ServeChild(ctx context.Context, args []string, allowed []string, h Handler) int {
 	return serveChild(ctx, args, allowed, h, platformChildEnv())
 }
@@ -300,7 +351,7 @@ func serveChild(ctx context.Context, args []string, allowed []string, h Handler,
 	// The output is opened before anything runs, so an unusable exchange directory stops the child early.
 	out, closeOut := env.stdout, func() error { return nil }
 	if env.channel == viaFile {
-		f, err := createResponseFile(dir, env.tempDir)
+		f, err := createResponseFile(dir, env.checkDir)
 		if err != nil {
 			fmt.Fprintf(env.stderr, "elevate: %v\n", err)
 			return ExitIOError
@@ -358,8 +409,10 @@ func parseChildArgs(args []string, allowed []string, ch channel) (ids []string, 
 	return ids, dir, nil
 }
 
-// createResponseFile creates ResponseFile inside dir exclusively. dir must be a real directory (not a symlink or junction) named like an exchange directory, directly inside tempDir. The file is created through an os.Root with O_EXCL, so an existing file or a planted symlink at that name makes it fail instead of being followed or overwritten.
-func createResponseFile(dir, tempDir string) (*os.File, error) {
+// createResponseFile creates ResponseFile inside dir exclusively. dir must be a clean absolute path named like an exchange directory, with no symlink or junction anywhere in it, naming a plain directory that checkDir accepts. The file is created through an os.Root with O_EXCL, so an existing file or a planted symlink at that name makes it fail instead of being followed or overwritten.
+//
+// The parent directory is deliberately not compared with the child's own temp directory: an elevated process gets its environment from the elevated account's profile, so with over-the-shoulder elevation (a standard user typing an administrator's credentials) the child's %TEMP% is the administrator's while the parent made the directory in the standard user's.
+func createResponseFile(dir string, checkDir func(string) error) (*os.File, error) {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return nil, fmt.Errorf("the exchange directory %q is not a clean absolute path", dir)
 	}
@@ -368,16 +421,12 @@ func createResponseFile(dir, tempDir string) (*os.File, error) {
 	if !ok || suffix == "" || strings.Trim(suffix, "0123456789") != "" {
 		return nil, fmt.Errorf("the exchange directory %q is not named %s<digits>", dir, exchangeDirPrefix)
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve the exchange directory: %w", err)
 	}
-	temp, err := filepath.EvalSymlinks(tempDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve the temp directory: %w", err)
-	}
-	if !samePath(parent, temp) {
-		return nil, fmt.Errorf("the exchange directory %q is not inside the temp directory %q", dir, tempDir)
+	if !samePath(resolved, dir) {
+		return nil, fmt.Errorf("the exchange directory %q is reached through a symlink or junction (%q)", dir, resolved)
 	}
 	fi, err := os.Lstat(dir)
 	if err != nil {
@@ -385,6 +434,9 @@ func createResponseFile(dir, tempDir string) (*os.File, error) {
 	}
 	if fi.Mode().Type() != os.ModeDir {
 		return nil, fmt.Errorf("the exchange directory %q is not a plain directory", dir)
+	}
+	if err := checkDir(dir); err != nil {
+		return nil, fmt.Errorf("the exchange directory %q: %w", dir, err)
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {

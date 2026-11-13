@@ -198,7 +198,7 @@ func TestAssociationsRemovesOnlyStaleEntries(t *testing.T) {
 	sys.pathState = states
 
 	res := winAssociationsTask(sys).Run(context.Background(), testEnv(execxtest.New()))
-	if res.Outcome != taskresult.Applied {
+	if res.Outcome != taskresult.Applied || res.Partial {
 		t.Fatalf("result %+v", res)
 	}
 	if want := "已移除 4 条指向已卸载程序的「打开方式」记录，默认应用未改动"; res.Message != want {
@@ -270,8 +270,8 @@ func TestAssociationsWriteFailures(t *testing.T) {
 	sys.registry = reg
 	sys.pathState = states
 	res := winAssociationsTask(sys).Run(context.Background(), testEnv(execxtest.New()))
-	if res.Outcome != taskresult.Applied || !strings.Contains(res.Message, "另有 1 处未能修改") {
-		t.Fatalf("result %+v", res)
+	if res.Outcome != taskresult.Applied || !res.Partial || !strings.Contains(res.Message, "另有 1 处未能修改") {
+		t.Fatalf("result %+v, want a partial applied result", res)
 	}
 	// Only the letter actually deleted leaves the MRUList.
 	if mru, _ := reg.String(winHKCU, txtList, "MRUList"); mru != "bedca" {

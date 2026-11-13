@@ -163,7 +163,7 @@ func precheckDatabases(_ context.Context, env Env) *taskresult.Result {
 	}
 	state, err := env.Permissions.FullDiskAccess()
 	if err == nil && state == PermissionDenied {
-		return &taskresult.Result{Outcome: taskresult.Skipped, Message: fullDiskAccessMessage, Detail: "full disk access: denied"}
+		return &taskresult.Result{Outcome: taskresult.Skipped, Reason: taskresult.ReasonFullDiskAccess, Message: fullDiskAccessMessage, Detail: "full disk access: denied"}
 	}
 	if err != nil {
 		env.Log.Warn("full disk access check failed", "err", err)
@@ -226,7 +226,7 @@ func runDatabases(ctx context.Context, env Env, cfg databaseConfig) taskresult.R
 		}
 		for _, f := range files {
 			if ctx.Err() != nil {
-				return interrupted()
+				return t.interruptedResult()
 			}
 			st, detail := optimizeDatabase(ctx, env, cfg, f)
 			if st != dbMissing {
@@ -235,7 +235,7 @@ func runDatabases(ctx context.Context, env Env, cfg databaseConfig) taskresult.R
 		}
 	}
 	if ctx.Err() != nil {
-		return interrupted()
+		return t.interruptedResult()
 	}
 	return t.result()
 }
@@ -357,6 +357,20 @@ func parsePageCounts(out string) (pages, free int64, ok bool) {
 	return pages, free, true
 }
 
+// interruptedResult is the Result when the run was cancelled part-way: interrupted() when nothing was vacuumed yet, otherwise the databases already done. The rest of the tally is not used, since a file whose sqlite3 call the cancellation killed was counted as failed or busy.
+func (t *dbTally) interruptedResult() taskresult.Result {
+	done := t.counts[dbVacuumed]
+	if done == 0 {
+		return interrupted()
+	}
+	return taskresult.Result{
+		Outcome: taskresult.Applied,
+		Partial: true,
+		Message: fmt.Sprintf("已优化 %d 个数据库，维护已中断，其余未执行", done),
+		Detail:  joinDetail(strings.Join(t.details, "; "), context.Canceled.Error()),
+	}
+}
+
 // result turns the tally into the task's Result. Precedence: missing Full Disk Access, then errors, then apps the user has to quit or that were busy, then work done, then the reasons nothing was done.
 func (t *dbTally) result() taskresult.Result {
 	detail := strings.Join(t.details, "; ")
@@ -367,7 +381,7 @@ func (t *dbTally) result() taskresult.Result {
 	}
 	switch {
 	case t.counts[dbNoAccess] > 0:
-		return taskresult.Result{Outcome: taskresult.Skipped, Message: prefix + fullDiskAccessMessage, Detail: detail}
+		return taskresult.Result{Outcome: taskresult.Skipped, Reason: taskresult.ReasonFullDiskAccess, Message: prefix + fullDiskAccessMessage, Detail: detail}
 	case t.counts[dbCorrupt] > 0:
 		return taskresult.Result{Outcome: taskresult.Failed, Message: prefix + joinApps(t.apps[dbCorrupt]) + "的数据库校验未通过，未做改动", Detail: detail}
 	case t.counts[dbFailed] > 0:
@@ -379,7 +393,7 @@ func (t *dbTally) result() taskresult.Result {
 	case t.counts[dbLowSpace] > 0:
 		return taskresult.Result{Outcome: taskresult.Skipped, Message: prefix + "磁盘空间不足，未优化 " + joinApps(t.apps[dbLowSpace]) + "的数据库", Detail: detail}
 	case done > 0 && t.counts[dbTooLarge] > 0:
-		return taskresult.Result{Outcome: taskresult.Applied, Message: prefix + joinApps(t.apps[dbTooLarge]) + "的数据库较大，为安全起见未压缩", Detail: detail}
+		return taskresult.Result{Outcome: taskresult.Applied, Partial: true, Message: prefix + joinApps(t.apps[dbTooLarge]) + "的数据库较大，为安全起见未压缩", Detail: detail}
 	case done > 0:
 		return taskresult.Result{Outcome: taskresult.Applied, Message: fmt.Sprintf("已优化 %d 个应用数据库", done), Detail: detail}
 	case t.counts[dbTooLarge] > 0:

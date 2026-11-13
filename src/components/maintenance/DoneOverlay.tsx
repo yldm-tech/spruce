@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 import type { RunSummary, TaskView } from "../../mygo";
-import { doneTitle, formatIssueLine, issueLines, okCount } from "./summary";
+import { completedLines, doneTitle, formatIssueLine, issueLines, okCount } from "./summary";
 
 interface DoneOverlayProps {
   /** Shown as the card's lines: the run's summary, or the reason it could not start. */
@@ -12,9 +12,11 @@ interface DoneOverlayProps {
   onClose: () => void;
 }
 
-/** DoneOverlay is the modal card at the end of a run. Its big number counts the tasks that completed; the lines below explain the rest with each task's own message. 完成 returns the page to idle. */
+/** DoneOverlay is the modal card at the end of a run. Its big number counts the tasks that completed; the lines below give every task's own message, the ones that need attention (not done, or done only in part) first. It makes no claim of its own such as "nothing needs a restart": only the tasks know that. 完成 returns the page to idle. */
 export function DoneOverlay({ outcome, catalog, permissionAction, onClose }: DoneOverlayProps) {
   const titleId = useId();
+  const bigId = useId();
+  const linesId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     closeRef.current?.focus();
@@ -34,14 +36,21 @@ export function DoneOverlay({ outcome, catalog, permissionAction, onClose }: Don
     title = doneTitle(summary);
     big = `${okCount(summary)} 项`;
     succeeded = okCount(summary) > 0;
-    const issues = issueLines(summary.results, catalog).map(formatIssueLine);
-    lines = issues.length === 0 ? ["全部已应用，无需重启"] : issues;
+    lines = [...issueLines(summary.results, catalog), ...completedLines(summary.results, catalog)].map(
+      formatIssueLine,
+    );
     if (summary.interrupted) lines.push("维护在中途停止，没有运行的任务不会改动系统");
   }
 
   return (
     <div className="overlay overlay--done">
-      <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="done-card">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={`${bigId} ${linesId}`}
+        className="done-card"
+      >
         <span aria-hidden="true" className="done-badge">
           <svg
             width="44"
@@ -59,8 +68,12 @@ export function DoneOverlay({ outcome, catalog, permissionAction, onClose }: Don
         <span id={titleId} className="done-title">
           {title}
         </span>
-        <span className="done-big">{big}</span>
-        <span className="done-sub">{lines.join("\n")}</span>
+        <span id={bigId} className="done-big">
+          {big}
+        </span>
+        <span id={linesId} className="done-sub">
+          {lines.join("\n")}
+        </span>
         {permissionAction}
         <button ref={closeRef} type="button" className="done-button" onClick={onClose}>
           完成

@@ -101,7 +101,7 @@ func (s *Service) Catalog() []Task {
 //
 // Order: every Precheck first (in the app process); then the NeedsAdmin tasks that passed, as one elevated batch behind one prompt (a declined prompt makes them Skipped, a failed launch makes them Failed); then the other tasks one by one. progress, when non-nil, is called synchronously from the calling goroutine.
 //
-// When ctx is cancelled the tasks not yet run are reported Skipped and Run returns the results together with ctx's error.
+// When ctx is cancelled the tasks not yet run are reported Skipped and Run returns the results together with ctx's error. A precheck is not started once ctx is cancelled, and one that ends after the cancellation is reported as interrupted instead of with its own verdict. An elevated batch that has been launched is waited for even after ctx is cancelled (it cannot be stopped, see package elevate), so its results are recorded as the child reported them.
 func (s *Service) Run(ctx context.Context, ids []string, progress func(Event)) ([]taskresult.Result, error) {
 	selected, err := s.selection(ids)
 	if err != nil {
@@ -116,10 +116,19 @@ func (s *Service) Run(ctx context.Context, ids []string, progress func(Event)) (
 
 	var admin, user []TaskImpl
 	for _, t := range selected {
+		if ctx.Err() != nil {
+			r.finished(t, interrupted(), 0)
+			continue
+		}
 		if t.Precheck != nil {
 			r.started(t.ID)
 			start := s.now()
 			if res := t.Precheck(ctx, s.env); res != nil {
+				// A precheck whose command was killed by the cancellation would otherwise report that as a verdict (e.g. "cannot tell whether a VPN is connected").
+				if ctx.Err() != nil {
+					r.finished(t, interrupted(), 0)
+					continue
+				}
 				r.finished(t, *res, s.now().Sub(start))
 				continue
 			}
@@ -228,7 +237,8 @@ func (r *run) runElevated(tasks []TaskImpl) {
 		}
 		return
 	}
-	results, err := r.s.elevator.Run(r.ctx, ids)
+	// The elevated batch is not cancellable once launched: on macOS the root shell that "do shell script ... with administrator privileges" started cannot be signalled by this user-level process, and on Windows TerminateProcess may lack the right to stop the elevated child. Waiting for it keeps the recorded outcomes true to what the child did; the user tasks after it still stop on r.ctx.
+	results, err := r.s.elevator.Run(context.WithoutCancel(r.ctx), ids)
 	switch {
 	case errors.Is(err, elevate.ErrCancelled):
 		for _, t := range tasks {

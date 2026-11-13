@@ -7,20 +7,28 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ShellBlockProvider, useBlockShell } from "./ShellBlock";
 import { Sidebar } from "./Sidebar";
 
-function renderAt(path: string) {
+/** A page that keeps a modal overlay up, as the 维护 page does during and after a run. */
+function BlockingPage() {
+  useBlockShell(true);
+  return null;
+}
+
+function renderAt(path: string, page?: () => ReactNode) {
   const rootRoute = createRootRoute({
     component: () => (
-      <>
+      <ShellBlockProvider>
         <Sidebar />
         <Outlet />
-      </>
+      </ShellBlockProvider>
     ),
   });
-  const maintenance = createRoute({ getParentRoute: () => rootRoute, path: "/maintenance" });
+  const maintenance = createRoute({ getParentRoute: () => rootRoute, path: "/maintenance", component: page });
   const router = createRouter({
     routeTree: rootRoute.addChildren([maintenance]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -56,5 +64,16 @@ describe("Sidebar", () => {
       expect(entry.getAttribute("title")).toBe("即将推出");
       expect(entry.hasAttribute("href")).toBe(false);
     }
+  });
+
+  it("is inert while a page's modal overlay is up", async () => {
+    renderAt("/maintenance", BlockingPage);
+    const nav = await screen.findByRole("navigation", { name: "Spruce", hidden: true });
+    expect(nav.hasAttribute("inert")).toBe(true);
+  });
+
+  it("is usable otherwise", async () => {
+    renderAt("/maintenance");
+    expect((await screen.findByRole("navigation", { name: "Spruce" })).hasAttribute("inert")).toBe(false);
   });
 });

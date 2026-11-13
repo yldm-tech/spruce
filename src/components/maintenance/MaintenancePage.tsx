@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Channel } from "mygo-runtime";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Maintenance, Permissions, type ProgressEvent, type RunSummary, type TaskView } from "../../mygo";
+import { useBlockShell } from "../ShellBlock";
 import { AlertBanner } from "./AlertBanner";
 import { DoneOverlay } from "./DoneOverlay";
 import { catalogQueryOptions, fullDiskAccessQueryOptions } from "./queries";
-import { RunOverlay, type RunProgress } from "./RunOverlay";
+import { RunOverlay, runStatusText, type RunProgress } from "./RunOverlay";
 import {
   formatEstimate,
   FULL_DISK_ACCESS_TASKS,
@@ -70,6 +71,9 @@ export function MaintenancePage() {
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   const [progress, setProgress] = useState<RunProgress>(IDLE_PROGRESS);
   const [runTasks, setRunTasks] = useState<TaskView[]>([]);
+  const runButtonRef = useRef<HTMLButtonElement>(null);
+  // Set by 完成, so focus goes back to 运行 once the page is no longer inert.
+  const restoreFocus = useRef(false);
 
   const tasks = catalog.data ?? [];
   const isOn = (t: TaskView) => overrides[t.id] ?? t.defaultOn;
@@ -87,6 +91,8 @@ export function MaintenancePage() {
 
   const start = () => {
     if (selected.length === 0) return;
+    // A grant made before this run is already in effect for it; only a grant made on the done card may say "run again".
+    fullDiskAccess.guide.reset();
     setProgress({ ...IDLE_PROGRESS, total: selected.length });
     setRunTasks(selected);
     run.mutate(selected.map((t) => t.id));
@@ -94,11 +100,26 @@ export function MaintenancePage() {
 
   const reset = () => {
     run.reset();
+    fullDiskAccess.guide.reset();
     setProgress(IDLE_PROGRESS);
     setRunTasks([]);
+    restoreFocus.current = true;
   };
 
   const phase = run.isPending ? "running" : run.isSuccess || run.isError ? "done" : "idle";
+  useBlockShell(phase !== "idle");
+  useEffect(() => {
+    if (phase === "idle" && restoreFocus.current) {
+      restoreFocus.current = false;
+      runButtonRef.current?.focus();
+    }
+  }, [phase]);
+  const liveText =
+    phase !== "running"
+      ? ""
+      : progress.currentTaskId === null
+        ? `正在维护系统…，共 ${progress.total || runTasks.length} 项任务`
+        : runStatusText(runTasks, progress);
   const permissionMissing = needsFullDiskAccess(fullDiskAccess.state);
   const summary: RunSummary | undefined = run.data;
 
@@ -157,7 +178,13 @@ export function MaintenancePage() {
             <span className="maint-stat-label">已选择</span>
             <span className="maint-stat-value">{`${selected.length} 项`}</span>
           </div>
-          <button type="button" className="run-button" disabled={selected.length === 0} onClick={start}>
+          <button
+            ref={runButtonRef}
+            type="button"
+            className="run-button"
+            disabled={selected.length === 0}
+            onClick={start}
+          >
             运行
           </button>
           <div className="maint-stat">
@@ -167,6 +194,10 @@ export function MaintenancePage() {
         </footer>
       </div>
 
+      {/* Mounted from the first render and outside the inert page, so screen readers announce the run as soon as it starts. */}
+      <div role="status" aria-live="polite" className="visually-hidden">
+        {liveText}
+      </div>
       {phase === "running" && <RunOverlay tasks={runTasks} progress={progress} />}
       {phase === "done" && (
         <DoneOverlay

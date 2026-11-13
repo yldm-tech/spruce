@@ -50,13 +50,15 @@ type shellExecuteInfo struct {
 }
 
 // NewLauncher returns the Windows Launcher: ShellExecuteEx with the "runas" verb, which shows the UAC prompt, then a wait on the process handle. runner is not used; the parameter keeps the constructor the same on every platform.
+// The running executable is recorded here, when main.go creates the launcher at startup.
 func NewLauncher(execx.Runner) Launcher {
-	return &runasLauncher{self: selfExecutable}
+	img, err := snapshotSelf()
+	return &runasLauncher{self: func() (selfImage, error) { return img, err }}
 }
 
 type runasLauncher struct {
-	// self returns the resolved path of the running executable.
-	self func() (string, error)
+	// self returns the running executable as recorded at startup.
+	self func() (selfImage, error)
 }
 
 // Launch implements Launcher. It returns nil stdout: the child answers through the exchange directory.
@@ -183,7 +185,37 @@ func platformChildEnv() childEnv {
 	return childEnv{
 		channel:  viaFile,
 		stderr:   os.Stderr,
-		tempDir:  os.TempDir(),
+		checkDir: dirOwnedByUnprivilegedAccount,
 		elevated: func() bool { return windows.GetCurrentProcessToken().IsElevated() },
 	}
+}
+
+// trustedInstallerSID is the service SID of TrustedInstaller (NT SERVICE\TrustedInstaller), which owns most of the Windows directory.
+const trustedInstallerSID = "S-1-5-80-956008885-3425701886-2022237836-3622500891-2224575489"
+
+// dirOwnedByUnprivilegedAccount accepts the exchange directory only when its owner is not a privileged account. The non-elevated parent creates it with os.MkdirTemp, so its owner is the requesting user, both with same-user consent and with over-the-shoulder elevation; objects created by an elevated administrator token are owned by the Administrators group, and system directories by SYSTEM or TrustedInstaller. So the elevated child only writes where the requesting user could already write.
+func dirOwnedByUnprivilegedAccount(dir string) error {
+	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read the owner: %w", err)
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return fmt.Errorf("read the owner: %w", err)
+	}
+	if privilegedOwner(owner) {
+		return fmt.Errorf("it is owned by the privileged account %s", owner)
+	}
+	return nil
+}
+
+// privilegedOwner reports whether sid is an account whose directories the elevated child must never write into.
+func privilegedOwner(sid *windows.SID) bool {
+	for _, k := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid, windows.WinLocalServiceSid, windows.WinNetworkServiceSid} {
+		if sid.IsWellKnown(k) {
+			return true
+		}
+	}
+	ti, err := windows.StringToSid(trustedInstallerSID)
+	return err != nil || sid.Equals(ti)
 }

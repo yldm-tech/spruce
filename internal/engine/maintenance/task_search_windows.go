@@ -16,6 +16,9 @@ import (
 // winSearchService is the service name of Windows Search, the indexer behind Start menu and File Explorer search.
 const winSearchService = "WSearch"
 
+// winDelayedStartWindow is how long after boot a delayed automatic service may legitimately not have started yet: the SCM starts delayed services about 120 s after the last automatic service has started, and a slow disk stretches boot itself.
+const winDelayedStartWindow = 10 * time.Minute
+
 // errServiceMissing is returned by winServiceManager when the service is not installed (ERROR_SERVICE_DOES_NOT_EXIST).
 var errServiceMissing = errors.New("service is not installed")
 
@@ -52,7 +55,7 @@ func winSearchTask(sys *winSystem) TaskImpl {
 			if res != nil {
 				return res
 			}
-			return winSearchVerdict(info)
+			return winSearchVerdict(info, sys.uptime())
 		},
 		Run: func(ctx context.Context, env Env) taskresult.Result {
 			info, res := winQuerySearch(sys)
@@ -60,7 +63,7 @@ func winSearchTask(sys *winSystem) TaskImpl {
 				return *res
 			}
 			// The state may have changed between the precheck and the elevated batch.
-			if res := winSearchVerdict(info); res != nil {
+			if res := winSearchVerdict(info, sys.uptime()); res != nil {
 				return *res
 			}
 			before := fmt.Sprintf("WSearch was stopped (start type %s, last exit code %d)", winStartTypeName(info), info.Win32ExitCode)
@@ -85,8 +88,8 @@ func winQuerySearch(sys *winSystem) (winServiceInfo, *taskresult.Result) {
 	return info, nil
 }
 
-// winSearchVerdict returns the final Result for a service that needs no action, or nil when it is stopped although it should run automatically.
-func winSearchVerdict(info winServiceInfo) *taskresult.Result {
+// winSearchVerdict returns the final Result for a service that needs no action, or nil when it is stopped although it should run automatically. WSearch is "Automatic (Delayed Start)" by default, so for a couple of minutes after boot it is legitimately stopped and has never run (ERROR_SERVICE_NEVER_STARTED); that window, judged by uptime, needs no action either. A delayed service that still has not started long after boot, or one that stopped with any exit code, is acted on.
+func winSearchVerdict(info winServiceInfo, uptime time.Duration) *taskresult.Result {
 	detail := fmt.Sprintf("WSearch state %d, start type %s", info.State, winStartTypeName(info))
 	switch {
 	case info.StartType == mgr.StartDisabled:
@@ -101,6 +104,8 @@ func winSearchVerdict(info winServiceInfo) *taskresult.Result {
 		return &taskresult.Result{Outcome: taskresult.Unchanged, Message: "Windows 搜索服务已暂停，未做改动", Detail: detail}
 	case info.StartType != mgr.StartAutomatic:
 		return &taskresult.Result{Outcome: taskresult.Unchanged, Message: "Windows 搜索服务设为手动启动，当前未运行，未做改动", Detail: detail}
+	case info.DelayedAutoStart && info.Win32ExitCode == uint32(windows.ERROR_SERVICE_NEVER_STARTED) && uptime < winDelayedStartWindow:
+		return &taskresult.Result{Outcome: taskresult.Unchanged, Message: "Windows 搜索服务设为延迟启动，开机后还没到启动时间，未做改动", Detail: fmt.Sprintf("%s, never started, %s since boot", detail, uptime.Round(time.Second))}
 	}
 	return nil
 }

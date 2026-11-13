@@ -386,6 +386,11 @@
   gap: 18px;
 }
 
+/* It takes focus only to keep focus off the inert page; the whole area has nothing to outline. */
+.overlay--run:focus {
+  outline: none;
+}
+
 .overlay--done {
   padding: 24px;
 }
@@ -436,12 +441,22 @@
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  max-width: 420px;
+  max-width: 480px;
+  max-height: 100%;
   padding: 40px 52px;
   border-radius: var(--radius-dialog);
   background: var(--surface-dialog);
   border: 1px solid var(--border-dialog);
   box-shadow: var(--shadow-dialog);
+}
+
+/* Only the lines give way when the card meets the window's height. */
+.done-card > * {
+  flex-shrink: 0;
+}
+
+.done-card > .done-sub {
+  flex-shrink: 1;
 }
 
 .done-badge {
@@ -468,7 +483,10 @@
   line-height: 1.1;
 }
 
+/* One line per task; with every task's message listed it can outgrow a short window, so it scrolls instead of pushing 完成 off the card. */
 .done-sub {
+  min-height: 0;
+  overflow-y: auto;
   font-size: 14px;
   line-height: 1.6;
   color: var(--color-text-nav-footer);

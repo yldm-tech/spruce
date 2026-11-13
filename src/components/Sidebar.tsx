@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
+import { useShellBlocked } from "./ShellBlock";
+
 /** A sidebar entry. Entries without `to` are features of later milestones: they render disabled with the 即将推出 tooltip. */
 interface NavEntry {
   label: string;
@@ -186,10 +188,11 @@ function NavItem({ entry, footer }: { entry: NavEntry; footer?: boolean }) {
   );
 }
 
-/** The app's sidebar, as designed: every section is listed, only 维护 is built in this milestone. */
+/** The app's sidebar, as designed: every section is listed, only 维护 is built in this milestone. It is inert while a page's modal overlay is up. */
 export function Sidebar() {
+  const blocked = useShellBlocked();
   return (
-    <nav aria-label="Spruce" className="sidebar">
+    <nav aria-label="Spruce" className="sidebar" inert={blocked}>
       <div className="sidebar-titlebar" />
       {GROUPS.map((group, i) => (
         <div key={group.label ?? i} className="sidebar-group">

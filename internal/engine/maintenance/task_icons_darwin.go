@@ -70,21 +70,32 @@ func runIcons(ctx context.Context, env Env) taskresult.Result {
 	env.Log.Debug("icon caches cleared", "dir", dir, "removed", removed)
 
 	uid := strconv.Itoa(os.Getuid())
+	detail := fmt.Sprintf("removed %d cache entries in %s", removed, dir)
 	var restartErrs []string
 	for _, label := range []string{iconServicesAgentLabel, dockAgentLabel} {
 		cmd := execx.Command{Name: pathLaunchctl, Args: []string{"kickstart", "-k", "gui/" + uid + "/" + label}, Timeout: iconsCommandTimeout}
 		if _, err := env.Runner.Run(ctx, cmd); err != nil {
 			if ctx.Err() != nil {
-				return interrupted()
+				if removed == 0 {
+					return interrupted()
+				}
+				// The caches are already gone; report that change instead of "未执行", so the history matches the disk.
+				return taskresult.Result{
+					Outcome: taskresult.Applied,
+					Partial: true,
+					Message: "已清除图标缓存，维护中断，未能刷新程序坞；注销并重新登录后生效",
+					Detail:  joinDetail(detail, "interrupted before restarting "+label+": "+err.Error()),
+				}
 			}
 			restartErrs = append(restartErrs, err.Error())
 		}
 	}
-	detail := fmt.Sprintf("removed %d cache entries in %s", removed, dir)
 	if len(restartErrs) > 0 {
+		// The agents keep their old icons in memory until they restart, so the user has to log out; Partial makes the page show this message.
 		return taskresult.Result{
 			Outcome: taskresult.Applied,
-			Message: "已清除图标缓存，注销并重新登录后生效",
+			Partial: true,
+			Message: "已清除图标缓存，但未能重启图标服务和程序坞；注销并重新登录后生效",
 			Detail:  joinDetail(append([]string{detail}, restartErrs...)...),
 		}
 	}

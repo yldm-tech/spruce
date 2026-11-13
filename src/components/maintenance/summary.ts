@@ -28,19 +28,39 @@ export function okCount(summary: RunSummary): number {
   return summary.applied + summary.unchanged;
 }
 
-/** A line of the done overlay about tasks that did not complete, grouped by their shared message so a declined admin prompt reads as one line. */
+/** A line of the done overlay: the tasks that share one message (so a declined admin prompt reads as one line) and that message. */
 export interface IssueLine {
   titles: string[];
   message: string;
 }
 
-/** issueLines lists the skipped, unavailable and failed results of a run, in catalog order, grouped by message. */
+/** isIssue reports whether a result needs the user's attention: it did not complete, or it completed only in part (Result.partial) and its message says what is left. */
+export function isIssue(r: Result): boolean {
+  if (r.outcome === "unchanged") return false;
+  if (r.outcome === "applied") return r.partial === true;
+  return true;
+}
+
+/** issueLines lists the results that need attention (see isIssue), in catalog order, grouped by message. */
 export function issueLines(results: Result[], catalog: TaskView[]): IssueLine[] {
+  return groupLines(results.filter(isIssue), catalog);
+}
+
+/** completedLines lists the results that completed without anything left to do, in catalog order, grouped by message. Their messages still matter: some carry a hint such as logging out and in again. */
+export function completedLines(results: Result[], catalog: TaskView[]): IssueLine[] {
+  return groupLines(
+    results.filter((r) => !isIssue(r)),
+    catalog,
+  );
+}
+
+function groupLines(results: Result[], catalog: TaskView[]): IssueLine[] {
   const titles = new Map(catalog.map((t) => [t.id, t.title]));
+  const order = new Map(catalog.map((t, i) => [t.id, i]));
+  const rank = (r: Result) => order.get(r.taskId) ?? catalog.length;
   const lines: IssueLine[] = [];
   const byMessage = new Map<string, IssueLine>();
-  for (const r of results) {
-    if (r.outcome === "applied" || r.outcome === "unchanged") continue;
+  for (const r of [...results].sort((a, b) => rank(a) - rank(b))) {
     const title = titles.get(r.taskId) ?? r.taskId;
     const existing = byMessage.get(r.message);
     if (existing) {
@@ -66,9 +86,7 @@ export function doneTitle(summary: RunSummary): string {
   return "维护完成";
 }
 
-/** fullDiskAccessBlocked reports whether a run left a Full Disk Access task undone, so the done overlay offers 去授权 (together with the current permission state). */
+/** fullDiskAccessBlocked reports whether a run left a task undone because Full Disk Access was missing, so the done overlay offers 去授权 (together with the current permission state). A skip for another reason, such as Safari still running, does not count. */
 export function fullDiskAccessBlocked(results: Result[]): boolean {
-  return results.some(
-    (r) => FULL_DISK_ACCESS_TASKS.has(r.taskId) && (r.outcome === "skipped" || r.outcome === "unavailable"),
-  );
+  return results.some((r) => r.reason === "fullDiskAccess");
 }
