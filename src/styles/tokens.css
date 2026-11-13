@@ -3,7 +3,9 @@
   color-scheme: dark;
 
   /* ---- Typography ---- */
-  --font-sans: "Inter Variable", Inter, "Noto Sans SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  /* Inter (bundled, Latin only) first; CJK text falls through to the system's Chinese UI font: PingFang SC on macOS, Microsoft YaHei UI on Windows. */
+  --font-sans:
+    "Inter Variable", Inter, "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", system-ui, sans-serif;
   --font-size-section: 11px;
   --font-size-nav-footer: 13px;
   --font-size-body: 13px;

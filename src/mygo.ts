@@ -9,7 +9,7 @@ export interface Alert {
   pid: number;
   /** Name is the process's display name, e.g. "Xcode". */
   name: string;
-  /** CPUPercent is its CPU use over the last Window, as a percent of one logical CPU. */
+  /** CPUPercent is its CPU use over the last Window, as a percent of one logical CPU on every platform (Activity Monitor's convention; Windows Task Manager divides by the number of logical CPUs instead). */
   cpuPercent: number;
   /** Since is when the sustained period began. */
   since: string;

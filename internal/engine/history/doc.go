@@ -1,12 +1,12 @@
 // Package history records what the app did, for the 操作历史 page and for support. This milestone records maintenance runs only.
 //
-// # Foundation (history.go)
+// # Types (history.go)
 //
 // Kind, Run and Store are fixed here. The caller decides where the file lives: main.go passes a path inside mygo.App.Path(mygo.PathUserData).
 //
-// # History agent
+// # Store (store.go)
 //
-// The history agent implements, in this package:
+// The file-backed Store:
 //
 //	// Open returns a Store keeping its runs in the file at path (JSON Lines, one Run per line, appended). Open performs no I/O: the directory and the file are created on the first Append, and a missing file lists as empty. This keeps `mygo generate`, which runs main up to App.Run, from touching the user's data.
 //	func Open(path string) (Store, error)

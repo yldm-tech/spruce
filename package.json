@@ -11,6 +11,7 @@
     "build:web": "vp build",
     "dev:e2e": "GOFLAGS=-tags=e2e mygo dev",
     "build:e2e": "GOFLAGS=-tags=e2e mygo build -debug -skip-dmg -skip-installer",
+    "test:e2e": "scripts/e2e-smoke.sh",
     "test": "vp test run",
     "check": "vp check",
     "check:fix": "vp check --fix",

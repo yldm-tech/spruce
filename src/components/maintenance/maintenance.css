@@ -1,0 +1,489 @@
+/* The 维护 page, after maintenance-lean.html (1280x820). Values come from tokens.css; literal pixel sizes are the design's. */
+
+/* ---- Page ---- */
+
+/* The page scrolls inside .app-main, whose box the overlays cover. */
+.maint-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 32px 24px;
+}
+
+/* ---- Header ---- */
+
+/* The header reaches the top edge of the window (the design's 20px top padding is inside it) and drags the window, staying clear of the Windows caption buttons at the top right. */
+.maint-header {
+  --app-region: drag;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 20px;
+  padding-right: var(--mygo-titlebar-inset-right, 0px);
+}
+
+.maint-header-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.maint-header-icon {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: var(--radius-header-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gradient-accent);
+  box-shadow: 0 10px 24px var(--shadow-accent-soft);
+}
+
+.maint-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.maint-header-text h1 {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.maint-header-text span {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+/* ---- Alert banner ---- */
+
+/* The live region stays in the document so screen readers hear the banner appear; while empty it takes back the column gap it would otherwise add. */
+.alert-banner-region:empty {
+  margin-top: -18px;
+}
+
+.alert-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: var(--radius-card);
+  background: var(--surface-banner);
+  border: 1px solid var(--border-banner);
+}
+
+.alert-banner-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-banner-icon);
+}
+
+.alert-banner-text {
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.alert-banner-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.alert-banner-sub {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+.alert-banner-error {
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.alert-banner-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 19px;
+  background: var(--surface-button-ghost);
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.alert-banner-button:hover {
+  color: var(--color-text-link-hover);
+}
+
+/* ---- Cards ---- */
+
+.task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+}
+
+.task-grid-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px 22px;
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+}
+
+/* A task with a prerequisite (the hint) sits on a quieter, dashed card. */
+.task-card--hint {
+  background: var(--surface-card-muted);
+  border: 1px dashed var(--border-card-hint);
+}
+
+.task-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.task-icon {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: var(--radius-card-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-card-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.task-card-description,
+.task-card-hint {
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.task-card-hint {
+  color: var(--color-warning);
+}
+
+/* ---- Switch ---- */
+
+/* A real checkbox with role="switch" lies invisible over the drawn track, so clicks, keyboard and screen readers all reach it. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 26px;
+  flex: none;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  padding: 3px;
+  display: flex;
+  justify-content: flex-start;
+  background: var(--switch-off);
+  transition: background-color 0.15s ease;
+}
+
+.switch input:checked + .switch-track {
+  justify-content: flex-end;
+  background: var(--switch-on);
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+.switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--switch-thumb);
+}
+
+/* ---- Full Disk Access prompt ---- */
+
+.permission-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  margin-top: 6px;
+}
+
+.task-card .permission-action {
+  justify-content: flex-start;
+}
+
+.permission-action-text {
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.permission-action-button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--gradient-accent);
+  color: var(--run-button-text);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.permission-action-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.permission-action-error {
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+/* ---- Footer ---- */
+
+.maint-footer {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  /* The run button's outer ring (18px) stays clear of the cards above. */
+  padding-top: 18px;
+}
+
+.maint-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.maint-stat--end {
+  align-items: flex-end;
+}
+
+.maint-stat-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.maint-stat-value {
+  font-size: var(--font-size-stat);
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing-stat);
+}
+
+.run-button {
+  width: 92px;
+  height: 92px;
+  flex: none;
+  border-radius: 46px;
+  border: 0;
+  cursor: pointer;
+  font-size: var(--font-size-run-button);
+  font-weight: 700;
+  color: var(--run-button-text);
+  background: var(--run-button-background);
+  box-shadow: var(--run-button-shadow);
+  transition:
+    opacity 0.15s ease,
+    filter 0.15s ease;
+}
+
+.run-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  filter: saturate(0.4);
+}
+
+/* ---- Focus ---- */
+
+.alert-banner-button:focus-visible,
+.permission-action-button:focus-visible,
+.done-button:focus-visible,
+.task-grid-error button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+.run-button:focus-visible {
+  outline: 3px solid var(--color-text);
+  outline-offset: 4px;
+}
+
+/* ---- Overlays ---- */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(var(--overlay-blur));
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+}
+
+.overlay--run {
+  flex-direction: column;
+  gap: 18px;
+}
+
+.overlay--done {
+  padding: 24px;
+}
+
+.run-spinner {
+  animation: spin 0.9s linear infinite;
+}
+
+.run-spinner-track {
+  stroke: var(--overlay-spinner-track);
+}
+
+.run-spinner-arc {
+  stroke: var(--overlay-spinner);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-spinner {
+    animation-duration: 3s;
+  }
+}
+
+.overlay-title {
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.overlay-sub {
+  font-size: 14px;
+  color: var(--color-text-overlay-sub);
+}
+
+.overlay-progress {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-note {
+  max-width: 360px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+.done-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  padding: 40px 52px;
+  border-radius: var(--radius-dialog);
+  background: var(--surface-dialog);
+  border: 1px solid var(--border-dialog);
+  box-shadow: var(--shadow-dialog);
+}
+
+.done-badge {
+  width: 88px;
+  height: 88px;
+  border-radius: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gradient-accent);
+  box-shadow: 0 16px 40px var(--shadow-accent);
+}
+
+.done-title {
+  margin-top: 6px;
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.done-big {
+  font-size: var(--font-size-done);
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing-stat);
+  line-height: 1.1;
+}
+
+.done-sub {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-nav-footer);
+  white-space: pre-line;
+}
+
+.done-button {
+  margin-top: 10px;
+  min-height: 46px;
+  padding: 0 40px;
+  border-radius: 23px;
+  border: 0;
+  background: var(--button-light-background);
+  color: var(--button-light-text);
+  font-size: var(--font-size-card-title);
+  font-weight: 700;
+  cursor: pointer;
+}

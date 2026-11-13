@@ -43,7 +43,8 @@ func BroadcastAlerts(ctx context.Context, mon health.Monitor) {
 			if !ok {
 				return
 			}
-			HealthAlerts.Broadcast(alerts)
+			// Broadcast fails only when the payload cannot be encoded as JSON, which never happens for a list of health.Alert.
+			_ = HealthAlerts.Broadcast(alerts)
 		}
 	}
 }

@@ -29,10 +29,16 @@ func main() {
 	runner := execx.OSRunner{}
 	tasks := maintenance.PlatformTasks()
 
-	// The elevated child: the same executable relaunched with administrator rights by elevate.ProcessElevator. It runs the requested admin tasks and exits without starting any UI.
+	// The elevated child: the same executable relaunched with administrator rights by elevate.ProcessElevator. It accepts only the IDs of this catalog's admin tasks, runs them and exits without starting any UI.
 	if elevate.IsChild(os.Args[1:]) {
+		var adminIDs []string
+		for _, t := range tasks {
+			if t.NeedsAdmin {
+				adminIDs = append(adminIDs, t.ID)
+			}
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-		code := elevate.ServeChild(ctx, os.Args[1:], maintenance.ElevatedHandler(tasks, maintenance.Env{Runner: runner, Log: logger}))
+		code := elevate.ServeChild(ctx, os.Args[1:], adminIDs, maintenance.ElevatedHandler(tasks, maintenance.Env{Runner: runner, Log: logger}))
 		stop()
 		os.Exit(code)
 	}

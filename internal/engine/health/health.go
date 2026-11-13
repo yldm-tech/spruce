@@ -13,22 +13,25 @@ type Config struct {
 	Interval time.Duration
 	// Window is the sliding window over which a process's CPU percent is averaged; at least two Intervals.
 	Window time.Duration
-	// Threshold is the CPU percent (of one logical CPU) at or above which a process is hot.
+	// Threshold is the CPU percent (of one logical CPU) at or above which a process becomes hot.
 	Threshold float64
+	// Hysteresis is how many percentage points below Threshold a hot process must fall before it stops being hot, so a process hovering around Threshold neither flaps nor restarts its Sustain clock; 0 means it stops at Threshold.
+	Hysteresis float64
 	// Sustain is how long a process must stay hot before it alerts.
 	Sustain time.Duration
 	// Ignore lists process names that never alert (exact, case-sensitive match against ProcessSample.Name).
 	Ignore []string
 }
 
-// DefaultConfig is the configuration the app ships with: sample every 5 s, average over 1 min, alert at 40 % of a core sustained for 10 min. Kernel and idle pseudo-processes are ignored.
+// DefaultConfig is the configuration the app ships with: sample every 5 s, average over 1 min, alert at 40 % of a core sustained for 10 min, and stop being hot below 30 %. Kernel, idle and memory-manager pseudo-processes are ignored (macOS kernel_task; Windows System Idle Process, System, Registry, Memory Compression); WindowServer and other real system processes are not.
 func DefaultConfig() Config {
 	return Config{
-		Interval:  5 * time.Second,
-		Window:    time.Minute,
-		Threshold: 40,
-		Sustain:   10 * time.Minute,
-		Ignore:    []string{"kernel_task", "System Idle Process", "System", "Idle"},
+		Interval:   5 * time.Second,
+		Window:     time.Minute,
+		Threshold:  40,
+		Hysteresis: 10,
+		Sustain:    10 * time.Minute,
+		Ignore:     []string{"kernel_task", "System Idle Process", "System", "Idle", "Registry", "Memory Compression"},
 	}
 }
 
@@ -41,6 +44,8 @@ func (c Config) Validate() error {
 		return fmt.Errorf("health: Window %v must be at least two Intervals (%v)", c.Window, 2*c.Interval)
 	case c.Threshold <= 0:
 		return errors.New("health: Threshold must be positive")
+	case c.Hysteresis < 0 || c.Hysteresis >= c.Threshold:
+		return fmt.Errorf("health: Hysteresis %v must be at least 0 and below Threshold %v", c.Hysteresis, c.Threshold)
 	case c.Sustain < 0:
 		return errors.New("health: Sustain must not be negative")
 	}
@@ -52,7 +57,7 @@ type Alert struct {
 	PID int32 `json:"pid"`
 	// Name is the process's display name, e.g. "Xcode".
 	Name string `json:"name"`
-	// CPUPercent is its CPU use over the last Window, as a percent of one logical CPU.
+	// CPUPercent is its CPU use over the last Window, as a percent of one logical CPU on every platform (Activity Monitor's convention; Windows Task Manager divides by the number of logical CPUs instead).
 	CPUPercent float64 `json:"cpuPercent"`
 	// Since is when the sustained period began.
 	Since time.Time `json:"since"`

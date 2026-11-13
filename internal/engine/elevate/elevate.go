@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
@@ -18,20 +19,23 @@ import (
 // Flag is the first argument that turns the app's executable into the elevated child.
 const Flag = "--spruce-elevated"
 
-// WireVersion is the version of Request and Response. The parent and the child are the same executable, so a mismatch means a corrupted or foreign file.
+// Child arguments after Flag. See ServeChild for the grammar.
+const (
+	tasksFlag = "--tasks"
+	outFlag   = "--out"
+)
+
+// WireVersion is the version of Response. The parent and the child are the same executable, so a mismatch means a corrupted or foreign response.
 const WireVersion = 1
 
-// File names inside the exchange directory.
-const (
-	RequestFile  = "request.json"
-	ResponseFile = "response.json"
-)
+// ResponseFile is the name of the response file inside the exchange directory, on platforms whose child answers through a file (Windows).
+const ResponseFile = "response.json"
 
-// Size limits for the files read at the process boundary.
-const (
-	maxRequestSize  = 64 << 10
-	maxResponseSize = 1 << 20
-)
+// exchangeDirPrefix is the name prefix of the exchange directory; os.MkdirTemp appends decimal digits.
+const exchangeDirPrefix = "spruce-elevated-"
+
+// maxResponseSize bounds the response read at the process boundary.
+const maxResponseSize = 1 << 20
 
 // ErrCancelled is returned when the user declined or dismissed the administrator prompt. The maintenance runner reports the admin tasks as skipped, not failed.
 var ErrCancelled = errors.New("elevate: the administrator prompt was declined")
@@ -42,28 +46,32 @@ type Elevator interface {
 	Run(ctx context.Context, taskIDs []string) ([]taskresult.Result, error)
 }
 
-// Request is what the parent asks the elevated child to do.
-type Request struct {
-	Version int      `json:"version"`
-	TaskIDs []string `json:"taskIds"`
-}
-
 // Response is what the elevated child did.
 type Response struct {
 	Version int                 `json:"version"`
 	Results []taskresult.Result `json:"results"`
-	// Error is set when the child rejected the request as a whole.
+	// Error is set when the child refused the request as a whole.
 	Error string `json:"error,omitempty"`
 }
 
-// Launcher starts a program with administrator rights. See the package documentation for the contract each platform implements.
+// Launcher starts a program with administrator rights. NewLauncher returns the one of the running platform.
 type Launcher interface {
-	// Launch starts exe with args elevated and waits for it to exit. It returns ErrCancelled when the user declined the prompt.
-	Launch(ctx context.Context, exe string, args []string) error
+	// Launch starts exe with args elevated, behind one system prompt, and waits for it to exit. It returns what the program wrote to standard output when the platform can capture it (macOS) and nil otherwise (Windows). The error is nil only when the program ran and exited with status 0; it is ErrCancelled when the user declined or dismissed the prompt.
+	Launch(ctx context.Context, exe string, args []string) (stdout []byte, err error)
 }
 
 // Handler runs the requested admin tasks inside the elevated child and returns one result per ID, in order. maintenance.ElevatedHandler provides it.
 type Handler func(ctx context.Context, taskIDs []string) []taskresult.Result
+
+// channel is how the elevated child hands its Response back to the parent.
+type channel int
+
+const (
+	// viaStdout: the child prints the Response on standard output, which the launcher captures (macOS, where osascript returns the output of "do shell script"). Nothing is written to disk by the elevated process.
+	viaStdout channel = iota
+	// viaFile: the child creates ResponseFile in an exchange directory the parent made with os.MkdirTemp (Windows, where ShellExecuteEx cannot capture the output of an elevated process).
+	viaFile
+)
 
 // taskIDPattern is the syntax of task IDs accepted across the process boundary.
 var taskIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -73,19 +81,21 @@ func ValidTaskID(id string) bool { return taskIDPattern.MatchString(id) }
 
 // ProcessElevator implements Elevator by relaunching the app's executable through a Launcher.
 type ProcessElevator struct {
-	// Executable is the absolute path of the app's own executable (os.Executable).
+	// Executable is the absolute path of the app's own executable (os.Executable, resolved through symlinks).
 	Executable string
 	// Launcher starts it elevated.
 	Launcher Launcher
-	// TempDir is where exchange directories are created; empty means os.TempDir.
+	// TempDir is where exchange directories are created when the platform answers through a file; empty means os.TempDir, the only parent directory the Windows child accepts.
 	TempDir string
+
+	channel channel
 }
 
 var _ Elevator = (*ProcessElevator)(nil)
 
-// New returns a ProcessElevator for executable that launches through l.
+// New returns a ProcessElevator for executable that launches through l, using the response channel of the running platform.
 func New(executable string, l Launcher) *ProcessElevator {
-	return &ProcessElevator{Executable: executable, Launcher: l}
+	return &ProcessElevator{Executable: executable, Launcher: l, channel: platformChannel}
 }
 
 // Run implements Elevator.
@@ -96,33 +106,59 @@ func (p *ProcessElevator) Run(ctx context.Context, taskIDs []string) ([]taskresu
 	if err := validateIDs(taskIDs); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp(p.TempDir, "spruce-elevated-")
-	if err != nil {
-		return nil, fmt.Errorf("elevate: create exchange directory: %w", err)
-	}
-	defer os.RemoveAll(dir)
-
-	req, err := json.Marshal(Request{Version: WireVersion, TaskIDs: taskIDs})
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, RequestFile), req, 0o600); err != nil {
-		return nil, fmt.Errorf("elevate: write request: %w", err)
-	}
-	if err := p.Launcher.Launch(ctx, p.Executable, []string{Flag, dir}); err != nil {
-		if errors.Is(err, ErrCancelled) {
+	args := []string{Flag, tasksFlag, strings.Join(taskIDs, ",")}
+
+	var resp Response
+	switch p.channel {
+	case viaStdout:
+		out, err := p.Launcher.Launch(ctx, p.Executable, args)
+		if err != nil {
+			return nil, launchError(err)
+		}
+		if resp, err = decodeResponse(out); err != nil {
+			return nil, err
+		}
+	case viaFile:
+		dir, err := os.MkdirTemp(p.TempDir, exchangeDirPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("elevate: create exchange directory: %w", err)
+		}
+		defer os.RemoveAll(dir)
+		_, lerr := p.Launcher.Launch(ctx, p.Executable, append(args, outFlag, dir))
+		if errors.Is(lerr, ErrCancelled) {
 			return nil, ErrCancelled
 		}
-		return nil, fmt.Errorf("elevate: launch: %w", err)
+		resp, err = readResponseFile(filepath.Join(dir, ResponseFile))
+		switch {
+		case err == nil && lerr == nil:
+		case err == nil && resp.Error != "":
+			// The child refused the request and exited non-zero; its own explanation is the better error.
+			return nil, fmt.Errorf("elevate: the elevated process refused the request: %s", resp.Error)
+		case lerr != nil:
+			return nil, launchError(lerr)
+		default:
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("elevate: unknown response channel %d", p.channel)
 	}
-	resp, err := readResponse(filepath.Join(dir, ResponseFile))
-	if err != nil {
-		return nil, err
+	if resp.Error != "" {
+		return nil, fmt.Errorf("elevate: the elevated process refused the request: %s", resp.Error)
 	}
 	return matchResults(taskIDs, resp.Results)
 }
 
-func readResponse(path string) (Response, error) {
+func launchError(err error) error {
+	if errors.Is(err, ErrCancelled) {
+		return ErrCancelled
+	}
+	return fmt.Errorf("elevate: launch: %w", err)
+}
+
+func readResponseFile(path string) (Response, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Response{}, fmt.Errorf("elevate: the elevated process wrote no response: %w", err)
@@ -132,8 +168,17 @@ func readResponse(path string) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("elevate: read response: %w", err)
 	}
+	return decodeResponse(data)
+}
+
+// decodeResponse validates the bytes the child handed back: size, JSON and version. A refusal (Response.Error) is returned as data for the caller to report.
+func decodeResponse(data []byte) (Response, error) {
 	if len(data) > maxResponseSize {
 		return Response{}, errors.New("elevate: response too large")
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return Response{}, errors.New("elevate: the elevated process returned no response")
 	}
 	var resp Response
 	if err := json.Unmarshal(data, &resp); err != nil {
@@ -141,9 +186,6 @@ func readResponse(path string) (Response, error) {
 	}
 	if resp.Version != WireVersion {
 		return Response{}, fmt.Errorf("elevate: response version %d, want %d", resp.Version, WireVersion)
-	}
-	if resp.Error != "" {
-		return Response{}, fmt.Errorf("elevate: the elevated process rejected the request: %s", resp.Error)
 	}
 	return resp, nil
 }
@@ -188,6 +230,30 @@ func validateIDs(ids []string) error {
 	return nil
 }
 
+// selfExecutable returns the path of the running executable with symlinks resolved, the only program a Launcher agrees to elevate.
+func selfExecutable() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}
+
+// checkSelf refuses to elevate anything but the running executable: exe must be absolute, already resolved through symlinks, and the same file as self.
+func checkSelf(exe string, self func() (string, error)) error {
+	if !filepath.IsAbs(exe) || filepath.Clean(exe) != exe {
+		return fmt.Errorf("elevate: %q is not a clean absolute path", exe)
+	}
+	own, err := self()
+	if err != nil {
+		return fmt.Errorf("elevate: locate the running executable: %w", err)
+	}
+	if !samePath(exe, own) {
+		return fmt.Errorf("elevate: refusing to elevate %q, which is not the running executable %q", exe, own)
+	}
+	return nil
+}
+
 // IsChild reports whether args (os.Args[1:]) start the elevated child.
 func IsChild(args []string) bool {
 	return len(args) > 0 && args[0] == Flag
@@ -195,102 +261,148 @@ func IsChild(args []string) bool {
 
 // Exit codes of ServeChild.
 const (
-	ExitOK         = 0
-	ExitBadRequest = 2
-	ExitIOError    = 3
+	ExitOK          = 0
+	ExitBadRequest  = 2
+	ExitIOError     = 3
+	ExitNotElevated = 4
 )
 
-// ServeChild is the whole life of the elevated child: it reads the request from the exchange directory named in args ([Flag, directory]), runs h, writes the response and returns the process exit code.
-func ServeChild(ctx context.Context, args []string, h Handler) int {
-	if len(args) != 2 || args[0] != Flag {
-		fmt.Fprintf(os.Stderr, "usage: %s <exchange directory>\n", Flag)
+// childEnv is what serveChild needs from the process, so that tests can play the elevated child without being elevated.
+type childEnv struct {
+	channel channel
+	// stdout receives the Response with viaStdout.
+	stdout io.Writer
+	// stderr receives diagnostics.
+	stderr io.Writer
+	// tempDir is, with viaFile, the only directory the exchange directory may be a direct child of.
+	tempDir string
+	// elevated reports whether the process runs with administrator rights.
+	elevated func() bool
+}
+
+// ServeChild is the whole life of the elevated child. args is os.Args[1:], which must be exactly
+//
+//	--spruce-elevated --tasks <id>[,<id>...]                (macOS)
+//	--spruce-elevated --tasks <id>[,<id>...] --out <dir>    (Windows)
+//
+// where every ID is in allowed (the admin task IDs of the compiled-in catalog) and named once, and <dir> is an exchange directory directly inside the system temp directory. It refuses to run anything unless the process is elevated (euid 0 on macOS, an elevated token on Windows), runs h, writes the Response (to stdout on macOS, to <dir>/response.json created exclusively on Windows) and returns the process exit code.
+func ServeChild(ctx context.Context, args []string, allowed []string, h Handler) int {
+	return serveChild(ctx, args, allowed, h, platformChildEnv())
+}
+
+func serveChild(ctx context.Context, args []string, allowed []string, h Handler, env childEnv) int {
+	ids, dir, err := parseChildArgs(args, allowed, env.channel)
+	if err != nil {
+		fmt.Fprintf(env.stderr, "elevate: %v\n", err)
 		return ExitBadRequest
 	}
-	dir := args[1]
-	if !filepath.IsAbs(dir) {
-		fmt.Fprintln(os.Stderr, "elevate: the exchange directory must be absolute")
-		return ExitBadRequest
+
+	// The output is opened before anything runs, so an unusable exchange directory stops the child early.
+	out, closeOut := env.stdout, func() error { return nil }
+	if env.channel == viaFile {
+		f, err := createResponseFile(dir, env.tempDir)
+		if err != nil {
+			fmt.Fprintf(env.stderr, "elevate: %v\n", err)
+			return ExitIOError
+		}
+		out, closeOut = f, f.Close
+	}
+
+	resp, code := Response{Version: WireVersion}, ExitOK
+	if env.elevated() {
+		resp.Results = h(ctx, ids)
+	} else {
+		resp.Error = "the process is not running with administrator rights"
+		fmt.Fprintf(env.stderr, "elevate: %s\n", resp.Error)
+		code = ExitNotElevated
+	}
+	err = writeResponse(out, resp)
+	if cerr := closeOut(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		fmt.Fprintf(env.stderr, "elevate: write response: %v\n", err)
+		return ExitIOError
+	}
+	return code
+}
+
+// parseChildArgs checks args against the grammar of ServeChild and returns the task IDs and, with viaFile, the exchange directory.
+func parseChildArgs(args []string, allowed []string, ch channel) (ids []string, dir string, err error) {
+	want := 3
+	if ch == viaFile {
+		want = 5
+	}
+	if len(args) != want || args[0] != Flag || args[1] != tasksFlag {
+		usage := Flag + " " + tasksFlag + " <id>[,<id>...]"
+		if ch == viaFile {
+			usage += " " + outFlag + " <dir>"
+		}
+		return nil, "", errors.New("usage: " + usage)
+	}
+	if ch == viaFile && args[3] != outFlag {
+		return nil, "", fmt.Errorf("unexpected argument %q", args[3])
+	}
+	ids = strings.Split(args[2], ",")
+	if err := validateIDs(ids); err != nil {
+		return nil, "", err
+	}
+	for _, id := range ids {
+		if !slices.Contains(allowed, id) {
+			return nil, "", fmt.Errorf("task %q is not an administrator task of this build", id)
+		}
+	}
+	if ch == viaFile {
+		dir = args[4]
+	}
+	return ids, dir, nil
+}
+
+// createResponseFile creates ResponseFile inside dir exclusively. dir must be a real directory (not a symlink or junction) named like an exchange directory, directly inside tempDir. The file is created through an os.Root with O_EXCL, so an existing file or a planted symlink at that name makes it fail instead of being followed or overwritten.
+func createResponseFile(dir, tempDir string) (*os.File, error) {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+		return nil, fmt.Errorf("the exchange directory %q is not a clean absolute path", dir)
+	}
+	name := filepath.Base(dir)
+	suffix, ok := strings.CutPrefix(name, exchangeDirPrefix)
+	if !ok || suffix == "" || strings.Trim(suffix, "0123456789") != "" {
+		return nil, fmt.Errorf("the exchange directory %q is not named %s<digits>", dir, exchangeDirPrefix)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(dir))
+	if err != nil {
+		return nil, fmt.Errorf("resolve the exchange directory: %w", err)
+	}
+	temp, err := filepath.EvalSymlinks(tempDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the temp directory: %w", err)
+	}
+	if !samePath(parent, temp) {
+		return nil, fmt.Errorf("the exchange directory %q is not inside the temp directory %q", dir, tempDir)
 	}
 	fi, err := os.Lstat(dir)
-	if err != nil || !fi.IsDir() {
-		fmt.Fprintln(os.Stderr, "elevate: the exchange directory is not a directory")
-		return ExitBadRequest
+	if err != nil {
+		return nil, fmt.Errorf("the exchange directory: %w", err)
+	}
+	if fi.Mode().Type() != os.ModeDir {
+		return nil, fmt.Errorf("the exchange directory %q is not a plain directory", dir)
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "elevate: %v\n", err)
-		return ExitIOError
+		return nil, err
 	}
 	defer root.Close()
-
-	req, err := readRequest(root)
+	f, err := root.OpenFile(ResponseFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		if werr := writeResponse(root, Response{Version: WireVersion, Error: err.Error()}); werr != nil {
-			fmt.Fprintf(os.Stderr, "elevate: %v\n", werr)
-			return ExitIOError
-		}
-		return ExitBadRequest
+		return nil, fmt.Errorf("create response: %w", err)
 	}
-	results := h(ctx, req.TaskIDs)
-	if err := writeResponse(root, Response{Version: WireVersion, Results: results}); err != nil {
-		fmt.Fprintf(os.Stderr, "elevate: %v\n", err)
-		return ExitIOError
-	}
-	return ExitOK
+	return f, nil
 }
 
-func readRequest(root *os.Root) (Request, error) {
-	f, err := root.Open(RequestFile)
-	if err != nil {
-		return Request{}, fmt.Errorf("open request: %w", err)
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxRequestSize+1))
-	if err != nil {
-		return Request{}, fmt.Errorf("read request: %w", err)
-	}
-	if len(data) > maxRequestSize {
-		return Request{}, errors.New("request too large")
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	var req Request
-	if err := dec.Decode(&req); err != nil {
-		return Request{}, fmt.Errorf("decode request: %w", err)
-	}
-	if req.Version != WireVersion {
-		return Request{}, fmt.Errorf("request version %d, want %d", req.Version, WireVersion)
-	}
-	if len(req.TaskIDs) == 0 {
-		return Request{}, errors.New("request names no tasks")
-	}
-	if err := validateIDs(req.TaskIDs); err != nil {
-		return Request{}, err
-	}
-	return req, nil
-}
-
-// writeResponse writes resp to ResponseFile through a fresh temporary file renamed into place, all inside root, so neither a planted file nor a symlink can redirect the write. The file is world-readable because the child may run as root while the parent reads it as the user.
-func writeResponse(root *os.Root, resp Response) error {
+func writeResponse(w io.Writer, resp Response) error {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
 	}
-	const tmp = ResponseFile + ".tmp"
-	_ = root.Remove(tmp)
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return fmt.Errorf("create response: %w", err)
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return fmt.Errorf("write response: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("write response: %w", err)
-	}
-	if err := root.Rename(tmp, ResponseFile); err != nil {
-		return fmt.Errorf("rename response: %w", err)
-	}
-	return nil
+	_, err = w.Write(append(data, '\n'))
+	return err
 }

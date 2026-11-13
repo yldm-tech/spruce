@@ -43,16 +43,18 @@ button {
 /* ---- App shell ---- */
 
 .app-shell {
-  min-height: 100%;
+  height: 100%;
   display: flex;
   background-color: var(--color-bg-deep);
   background-image: var(--page-background);
 }
 
+/* The page scrolls inside it (pages own their scroll container) so that overlays positioned over it always cover the visible area. */
 .app-main {
   position: relative;
   flex: 999 1 var(--main-min-width);
   min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
