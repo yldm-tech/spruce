@@ -1,6 +1,6 @@
 // Package loginitem starts Spruce when the user logs in, as app.LoginItem: on macOS 13 and later the app is the user's login item through SMAppService.mainAppService (System Settings > General > Login Items), on macOS 11 and 12 a launch agent in ~/Library/LaunchAgents opens it, and on Windows a value in the user's Run key starts it. The calls are synchronous and report the system's error, so the 设置 page can refuse to save the other settings when this one fails.
 //
-// The locations are those the MyGo builds of Spruce used (mygo@v0.9.0 internal/darwin/login.go and internal/windows/login.go), so a user who turned it on there sees it on here: the same SMAppService, the same launch agent label and the same Run value name, the app ID. MyGo's Run value carried the argument --mygo-opened-at-login; any value under the name counts as on, and the next change rewrites it.
+// The locations are those earlier builds of Spruce used (their framework's login item code for macOS and Windows), so a user who turned it on there sees it on here: the same SMAppService, the same launch agent label and the same Run value name, the app ID. Their Run value carried an extra --…-opened-at-login argument; any value under the name counts as on, and the next change rewrites it.
 package loginitem
 
 // Item is the app's login item.

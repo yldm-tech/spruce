@@ -1,4 +1,4 @@
-// Package datadir locates Spruce's data folder: filepath.Join(os.UserConfigDir(), "Spruce"), which holds history.jsonl, settings.json, window.json, app-icons/ and the single-instance lock. It is the folder the MyGo builds used (mygo's PathUserData), so existing data stays where it is.
+// Package datadir locates Spruce's data folder: filepath.Join(os.UserConfigDir(), "Spruce"), which holds history.jsonl, settings.json, window.json, app-icons/ and the single-instance lock. It is the folder earlier builds of Spruce used (their framework's user data path, the same join), so existing data stays where it is.
 package datadir
 
 import (
