@@ -219,8 +219,8 @@ func (e *Executor) plan(req CleanRequest) ([]job, []Category, error) {
 
 // Clean deletes the items req names from the remembered scan, one at a time in scan order, reporting PhaseCleaning progress after each; see the package documentation for what it guarantees. It returns an error, and deletes nothing, only when the request cannot be planned (ErrBusy, ErrNoScan, ErrStale, ErrNothingSelected, ErrBadMode).
 func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Progress)) (CleanResult, error) {
-	if req.Mode != ModeDefault && req.Mode != ModeTrashOnly {
-		return CleanResult{}, fmt.Errorf("%w: %q", ErrBadMode, req.Mode)
+	if err := CheckMode(req.Mode); err != nil {
+		return CleanResult{}, err
 	}
 	if !e.running.TryLock() {
 		return CleanResult{}, ErrBusy
@@ -351,6 +351,7 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 	progress(Progress{Phase: PhaseCleaning, Done: done, Total: len(jobs), Bytes: res.Freed + res.Trashed})
 	res.Partial = res.Interrupted || len(res.Failed) > 0
 	res.Duration = time.Since(res.StartedAt)
+	res.Handled = gone
 	e.drop(gone)
 	return res, nil
 }

@@ -1,6 +1,7 @@
 package systemjunk
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -55,5 +56,25 @@ func TestScanSetsNewestOnFolders(t *testing.T) {
 		if !it.Dir && !it.Newest.IsZero() {
 			t.Errorf("file item %s has Newest %v", it.Path, it.Newest)
 		}
+	}
+}
+
+// TestCleanRefusesAnUnknownMode: a request with a mode that is neither the default nor trash-only is refused before the Trash is emptied, even when it names only the Trash and the Executor is never asked; emptying it in the default mode lists the Trash's item in Handled.
+func TestCleanRefusesAnUnknownMode(t *testing.T) {
+	fx, c, res := cleanFixture(t)
+	for _, ids := range [][]string{{catTrash}, {catAppCaches, catTrash}} {
+		if _, err := c.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: ids, Mode: "shred"}, nil); !errors.Is(err, cleanup.ErrBadMode) {
+			t.Errorf("%v with an unknown mode: %v", ids, err)
+		}
+	}
+	if log := fx.rec.entries(); len(log) != 0 {
+		t.Fatalf("an unknown mode touched something: %v", log)
+	}
+	out, err := c.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: []string{catTrash}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bin := category(t, res, catTrash); !slices.Equal(out.Handled, []string{bin.Items[0].ID}) || !slices.Contains(fx.rec.entries(), "empty") {
+		t.Errorf("handled %v, log %v", out.Handled, fx.rec.entries())
 	}
 }

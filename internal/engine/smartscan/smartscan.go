@@ -335,8 +335,11 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 	return slices.DeleteFunc(parts, func(p part) bool { return p.items == 0 }), total, nil
 }
 
-// Clean cleans what req names from the last merged scan, source by source; see the package documentation. It returns an error, and deletes nothing, only when the request cannot be planned (cleanup.ErrBusy, ErrNoScan, ErrStale, ErrNothingSelected) or the first source refuses it.
+// Clean cleans what req names from the last merged scan, source by source; see the package documentation. It returns an error, and deletes nothing, only when the request cannot be planned (cleanup.ErrBadMode, ErrBusy, ErrNoScan, ErrStale, ErrNothingSelected) or the first source refuses it.
 func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !s.busy.TryLock() {
 		return cleanup.CleanResult{}, cleanup.ErrBusy
 	}
@@ -412,28 +415,37 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: min(done, total), Total: total, Bytes: res.Freed + res.Trashed})
 	res.Partial = res.Interrupted || len(res.Failed) > 0
 	res.Duration = s.now().Sub(res.StartedAt)
+	res.Handled = handled
 	s.forget(handled)
 	return res, nil
 }
 
-// handledItems are the items of part p its source dealt with in r: every planned item but those that failed, or, when the clean was interrupted and it cannot be told which items it reached, only those it moved to the Trash. Items it did not deal with stay in the merged scan, and those already gone count as skipped by a later clean.
+// handledItems are the items of part p its source dropped from its own remembered scan in r, so the merged scan never names an item the source has forgotten: what the source lists in CleanResult.Handled and CleanResult.Moved and, when the clean was not interrupted, every planned item that did not fail. After an interrupted clean the items not reached stay in the merged scan, as they stay in the source's.
 func handledItems(p part, r cleanup.CleanResult) []string {
-	if r.Interrupted {
-		ids := make([]string, len(r.Moved))
-		for i, m := range r.Moved {
-			ids[i] = m.ItemID
-		}
-		return ids
-	}
-	failed := make(map[string]bool, len(r.Failed))
-	for _, f := range r.Failed {
-		failed[f.ItemID] = true
-	}
+	seen := map[string]bool{}
 	var ids []string
-	for _, id := range p.req.ItemIDs {
-		if !failed[id] {
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
 			ids = append(ids, id)
 		}
+	}
+	if !r.Interrupted {
+		failed := make(map[string]bool, len(r.Failed))
+		for _, f := range r.Failed {
+			failed[f.ItemID] = true
+		}
+		for _, id := range p.req.ItemIDs {
+			if !failed[id] {
+				add(id)
+			}
+		}
+	}
+	for _, id := range r.Handled {
+		add(id)
+	}
+	for _, m := range r.Moved {
+		add(m.ItemID)
 	}
 	return ids
 }

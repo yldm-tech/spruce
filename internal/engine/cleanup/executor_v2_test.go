@@ -1,6 +1,7 @@
 package cleanup
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -257,5 +258,78 @@ func TestDrop(t *testing.T) {
 	}
 	if len(before.Categories[0].Items) != 3 || fx.scan.Items != 5 {
 		t.Error("Drop changed its argument")
+	}
+}
+
+// TestCleanListsHandledItems: Handled is exactly what the Executor dropped from its scan (deleted, moved, already gone), also when the clean is interrupted, so a caller keeping a copy of the scan can drop the same items; a failed item and the items not reached stay and clean next time.
+func TestCleanListsHandledItems(t *testing.T) {
+	fx := newFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	calls := 0
+	del := &fakeDeleter{fail: map[string]error{fx.paths["a"]: errors.New("boom")}, hook: func(string) {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+	}}
+	e := NewExecutor(del)
+	if err := e.Remember(fx.scan); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fx.paths["c"]); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.Clean(ctx, CleanRequest{CategoryIDs: []string{"caches", "installers"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Interrupted {
+		t.Fatalf("result %+v, want interrupted", res)
+	}
+	want := map[string]bool{}
+	for _, p := range append(slices.Clone(del.removed), del.trashed...) {
+		want[ItemID(p)] = true
+	}
+	all := []string{fx.id("a"), fx.id("b"), fx.id("c"), fx.id("x.dmg"), fx.id("y.pkg")}
+	// c was gone before the clean: handled only if the clean reached it.
+	reachedC := res.Skipped == 1
+	if reachedC {
+		want[fx.id("c")] = true
+	}
+	got := map[string]bool{}
+	for _, id := range res.Handled {
+		got[id] = true
+	}
+	if len(got) != len(want) || len(res.Handled) != len(want) {
+		t.Fatalf("handled %v, want %v", res.Handled, want)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("handled %v misses %s", res.Handled, id)
+		}
+	}
+	if got[fx.id("a")] {
+		t.Error("the failed item is listed as handled")
+	}
+	var rest []string
+	for _, id := range all {
+		if !got[id] {
+			rest = append(rest, id)
+		}
+	}
+	if len(rest) < 2 {
+		t.Fatalf("rest %v, want the failed item and at least one not reached", rest)
+	}
+	// Every handled item is stale now, every other one still cleans.
+	for _, id := range res.Handled {
+		if _, err := e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches", "installers"}, ItemIDs: []string{id}}, nil); !errors.Is(err, ErrStale) {
+			t.Errorf("handled %s named again: %v", id, err)
+		}
+	}
+	delete(del.fail, fx.paths["a"])
+	del.hook = nil
+	res, err = e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches", "installers"}, ItemIDs: rest}, nil)
+	if err != nil || res.Interrupted || len(res.Failed) != 0 || len(res.Handled) != len(rest) {
+		t.Errorf("second clean %+v, %v", res, err)
 	}
 }

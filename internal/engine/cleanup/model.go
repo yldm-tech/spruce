@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"slices"
 	"time"
@@ -225,6 +226,14 @@ const (
 	ModeTrashOnly CleanMode = "trashOnly"
 )
 
+// CheckMode returns ErrBadMode (wrapped, naming m) for a mode that is neither ModeDefault nor ModeTrashOnly. Every cleaner calls it before it plans anything, so an unknown mode never runs a command, empties the Trash or deletes a file.
+func CheckMode(m CleanMode) error {
+	if m != ModeDefault && m != ModeTrashOnly {
+		return fmt.Errorf("%w: %q", ErrBadMode, m)
+	}
+	return nil
+}
+
 // CleanRequest names what to delete from the last scan. With ItemIDs empty, every item of every category in CategoryIDs goes; otherwise only the named items, each of which must belong to one of CategoryIDs.
 type CleanRequest struct {
 	CategoryIDs []string  `json:"categoryIds"`
@@ -296,6 +305,8 @@ type CleanResult struct {
 	Failed []Failure `json:"failed"`
 	// Moved lists the items moved to the Trash, in the order they went.
 	Moved []Moved `json:"moved,omitempty"`
+	// Handled lists the IDs of the requested items the cleaner dropped from its remembered scan: deleted, moved to the Trash, found already gone, cleaned by a command that ran, or the Trash once emptying it was tried. A later Clean naming one of them fails with ErrStale, so a caller keeping its own copy of the scan drops exactly these (Drop), interrupted cleans included. It is bookkeeping for callers in this process and is not serialised.
+	Handled []string `json:"-"`
 	// Categories has one entry per category of the request, in scan order.
 	Categories []CategoryOutcome `json:"categories"`
 	// Partial is set when anything failed or the clean was interrupted.

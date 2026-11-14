@@ -294,6 +294,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 
 // Clean deletes what req names from the last scan. The Trash, when named, is emptied first, then the other items are handled by the cleanup.Executor; a request that does not match the last scan is rejected before anything is deleted.
 func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	// Checked first: an unknown mode must not empty the Trash, which the Executor's own check does not cover when only the Trash is named.
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !c.busy.TryLock() {
 		return cleanup.CleanResult{}, ErrBusy
 	}
@@ -358,6 +362,7 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		res.Skipped += r.Skipped
 		res.Failed = append(res.Failed, r.Failed...)
 		res.Moved = append(res.Moved, r.Moved...)
+		res.Handled = append(res.Handled, r.Handled...)
 		res.Categories = append(res.Categories, r.Categories...)
 		res.Interrupted = r.Interrupted
 	} else {
@@ -382,6 +387,8 @@ func (c *Cleaner) empty(ctx context.Context, it cleanup.Item, res *cleanup.Clean
 	c.mu.Lock()
 	c.trash = nil
 	c.mu.Unlock()
+	// The Trash item is dropped from the scan whether or not emptying worked, so the caller drops it too.
+	res.Handled = append(res.Handled, it.ID)
 	if err == nil {
 		res.Removed++
 		out.Removed = 1

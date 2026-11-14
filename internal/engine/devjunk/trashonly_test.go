@@ -2,7 +2,9 @@ package devjunk
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -65,5 +67,38 @@ func TestBuildOutputHasNoNewest(t *testing.T) {
 	}
 	if !nm.Items[0].Newest.IsZero() || time.Since(nm.Items[0].ModTime) < 80*24*time.Hour {
 		t.Errorf("item %+v, want no Newest and the project's activity as ModTime", nm.Items[0])
+	}
+}
+
+// TestCleanRefusesAnUnknownMode: a request with a mode that is neither the default nor trash-only is refused before any command runs, even when it names only command categories and the Executor is never asked; a clean in the default mode lists what it dropped in Handled, the command's item included.
+func TestCleanRefusesAnUnknownMode(t *testing.T) {
+	f := newFixture(t, "darwin", map[string]string{"/opt/homebrew/bin/npm": "/opt/homebrew/bin/npm"})
+	writeFile(t, f.home, "Library/Developer/Xcode/DerivedData/App-abc/Build/x", 4000)
+	writeFile(t, f.home, ".npm/_cacache/content-v2/x", 6000)
+	f.runner.On("/opt/homebrew/bin/npm", "cache", "clean", "--force").Return("", 0)
+	res := f.scan(t)
+	derived, npm := categoryByID(res, "tool-xcode-derived-data"), categoryByID(res, "tool-npm")
+	if derived == nil || npm == nil || npm.Command == "" {
+		t.Fatalf("derived %+v npm %+v", derived, npm)
+	}
+	for _, ids := range [][]string{{"tool-npm"}, {"tool-xcode-derived-data", "tool-npm"}} {
+		if _, err := f.cleaner.Clean(context.Background(), cleanup.CleanRequest{CategoryIDs: ids, Mode: "shred"}, nil); !errors.Is(err, cleanup.ErrBadMode) {
+			t.Errorf("%v with an unknown mode: %v", ids, err)
+		}
+	}
+	f.runner.AssertNotCalled(t, "/opt/homebrew/bin/npm")
+	if len(f.del.removed) != 0 || len(f.del.trashed) != 0 {
+		t.Fatalf("an unknown mode deleted: %v %v", f.del.removed, f.del.trashed)
+	}
+
+	out, err := f.cleaner.Clean(context.Background(), cleanup.CleanRequest{CategoryIDs: []string{"tool-xcode-derived-data", "tool-npm"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(out.Handled)
+	want := []string{derived.Items[0].ID, npm.Items[0].ID}
+	slices.Sort(want)
+	if !slices.Equal(out.Handled, want) {
+		t.Errorf("handled %v, want %v", out.Handled, want)
 	}
 }

@@ -15,8 +15,11 @@ import (
 // maxOutputInReason bounds how much of a failed command's output the page shows.
 const maxOutputInReason = 160
 
-// Clean deletes what req names from the last scan: the file categories through the Executor, then the command categories by running their commands. It deletes nothing and returns an error when the request does not match the last scan (cleanup.ErrStale), names nothing (cleanup.ErrNothingSelected) or another clean runs (cleanup.ErrBusy).
+// Clean deletes what req names from the last scan: the file categories through the Executor, then the command categories by running their commands. It deletes nothing and returns an error when the request has an unknown mode (cleanup.ErrBadMode), does not match the last scan (cleanup.ErrStale), names nothing (cleanup.ErrNothingSelected) or another clean runs (cleanup.ErrBusy).
 func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !c.cleaning.TryLock() {
 		return cleanup.CleanResult{}, cleanup.ErrBusy
 	}
@@ -118,6 +121,7 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 			out.Freed = freed
 			res.Removed++
 			res.Freed += freed
+			res.Handled = append(res.Handled, job.itemID)
 			c.forget(job.categoryID)
 		}
 		done++
