@@ -225,6 +225,9 @@ describe("DevJunkPage", () => {
     const user = userEvent.setup();
     renderPage();
     expect((await screen.findByRole("heading", { level: 1 })).textContent).toBe("开发者垃圾");
+    expect(
+      screen.getByText("清理开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成"),
+    ).toBeTruthy();
     const list = await screen.findByRole("list", { name: "项目文件夹" });
     expect(
       within(list)

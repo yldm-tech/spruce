@@ -191,6 +191,7 @@ describe("SpacePage start screen", () => {
   it("lists the disks with their capacity and the quick folders", async () => {
     renderPage();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("空间透视");
+    expect(screen.getByText("看看磁盘空间都被什么占用了")).toBeTruthy();
     const disk = await screen.findByRole("button", { name: /Macintosh HD/ });
     expect(within(disk).getByText("可用 120 GB，共 500 GB")).toBeTruthy();
     expect(within(disk).getByText("已用 76%")).toBeTruthy();

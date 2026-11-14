@@ -212,7 +212,8 @@ afterEach(() => {
 describe("HealthPage overview", () => {
   it("says it is reading until the first sample arrives", async () => {
     renderPage();
-    await screen.findByRole("heading", { name: "健康监测" });
+    expect((await screen.findByRole("heading", { level: 1 })).textContent).toBe("健康监测");
+    expect(screen.getByText("实时查看 CPU、内存、磁盘、网络和电池，找出最占资源的进程")).toBeTruthy();
     expect(within(card("CPU")).getByText("正在读取…")).toBeTruthy();
     expect(within(card("网络")).getByText("正在读取…")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "电池" })).toBeNull();

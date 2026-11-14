@@ -314,6 +314,7 @@ describe("SettingsPage history, permissions and about", () => {
     renderPage();
     const about = await screen.findByRole("region", { name: "关于" });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("设置");
+    expect(screen.getByText("调整提醒、清理范围、排除的文件夹和历史记录")).toBeTruthy();
     expect(await within(about).findByText("版本 0.1.0")).toBeTruthy();
     expect(within(about).getByText("/Users/me/Library/Application Support/Spruce")).toBeTruthy();
     expect(within(about).getByText("MyGo")).toBeTruthy();

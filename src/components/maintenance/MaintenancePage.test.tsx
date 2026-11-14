@@ -213,6 +213,7 @@ describe("MaintenancePage idle", () => {
     // A task with a hint shows the hint instead of its description.
     expect(screen.getByText("需要先退出 Safari 和邮件")).toBeTruthy();
     expect(screen.queryByText("优化应用数据库的说明")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("维护");
     expect(screen.getByText("给系统做一次轻量保养，不会动你的文档和照片")).toBeTruthy();
     expect(selectedCount()).toBe("4 项");
     // 5 + 5 + 20 + 30 seconds.

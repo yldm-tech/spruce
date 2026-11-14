@@ -28,7 +28,7 @@ export interface PageMeta {
 export const PAGES: Record<PageId, PageMeta> = {
   "smart-scan": {
     title: "智能扫描",
-    subtitle: "一次查出系统垃圾、开发缓存和旧安装包，只挑可以放心清理的",
+    subtitle: "一次扫描系统垃圾、开发者垃圾和安装包，按推荐勾选可以放心清理的",
     tone: "violet",
     icon: (
       <>
@@ -50,7 +50,7 @@ export const PAGES: Record<PageId, PageMeta> = {
   },
   "dev-junk": {
     title: "开发者垃圾",
-    subtitle: "清理构建产物和开发工具缓存，需要时会自动重新生成",
+    subtitle: "清理开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成",
     tone: "orange",
     icon: <path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />,
   },
@@ -87,13 +87,13 @@ export const PAGES: Record<PageId, PageMeta> = {
   },
   health: {
     title: "健康监测",
-    subtitle: "留意长时间占用 CPU 的进程，只提醒，不干预",
+    subtitle: "实时查看 CPU、内存、磁盘、网络和电池，找出最占资源的进程",
     tone: "red",
     icon: <path d="M3 12h4l3-7 4 14 3-7h4" />,
   },
   history: {
     title: "操作历史",
-    subtitle: "Spruce 做过的每一次维护和清理",
+    subtitle: "Spruce 做过的每一次维护、清理和卸载",
     tone: "slate",
     icon: (
       <>
@@ -105,7 +105,7 @@ export const PAGES: Record<PageId, PageMeta> = {
   },
   settings: {
     title: "设置",
-    subtitle: "调整提醒阈值、清理范围和排除的文件夹",
+    subtitle: "调整提醒、清理范围、排除的文件夹和历史记录",
     tone: "graphite",
     icon: (
       <>

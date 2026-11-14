@@ -143,7 +143,7 @@ describe("HistoryPage list", () => {
     renderPage();
     const today = await screen.findByRole("region", { name: "今天" });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("操作历史");
-    expect(screen.getByText("Spruce 做过的每一次维护和清理")).toBeTruthy();
+    expect(screen.getByText("Spruce 做过的每一次维护、清理和卸载")).toBeTruthy();
     const yesterday = screen.getByRole("region", { name: "昨天" });
     expect(fakes.History.list).toHaveBeenCalledWith(500);
 
