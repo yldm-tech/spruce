@@ -140,7 +140,26 @@ func trashDirs() []string {
 }
 
 func (b *darwinBin) MoveToTrash(ctx context.Context, paths []string) ([]Outcome, error) {
-	return moveAll(ctx, b.mover, paths)
+	out, err := moveAll(ctx, b.mover, paths)
+	for i := range out {
+		if out[i].Err == nil && out[i].TrashedPath != "" {
+			out[i].Dev, out[i].Ino = identify(out[i].TrashedPath)
+		}
+	}
+	return out, err
+}
+
+// identify returns the device and inode of the item at path, zero when it cannot be read. Reading a known name inside the Trash needs no Full Disk Access.
+func identify(path string) (dev, ino uint64) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, 0
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0
+	}
+	return uint64(st.Dev), st.Ino
 }
 
 func (b *darwinBin) Size(ctx context.Context) (TrashUsage, error) {

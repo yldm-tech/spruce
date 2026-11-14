@@ -127,7 +127,7 @@ func New(opts Options) *Cleaner {
 		opts: opts,
 		env:  env{goos: opts.GOOS, home: opts.Home, getenv: opts.Getenv},
 		del:  del,
-		exec: cleanup.NewExecutor(del),
+		exec: cleanup.NewExecutorWith(del, cleanup.ExecutorOptions{Exclusions: func() []string { return opts.Settings().Exclusions }}),
 	}
 }
 
@@ -236,6 +236,8 @@ func (b *builder) add(cat cleanup.Category, checked map[string]bool) {
 type measured struct {
 	size   int64
 	denied int64
+	// newest is the latest modification time inside the path.
+	newest time.Time
 	// excluded is set when one of the user's exclusions lies inside the path, which must then not be deleted as a whole.
 	excluded bool
 	err      error
@@ -255,7 +257,7 @@ func (c *Cleaner) measure(ctx context.Context, path string, exclusions []string,
 		}
 	}
 	r, err := fsx.DirSize(ctx, path, opts)
-	return measured{size: r.Bytes, denied: r.Denied, excluded: hit.Load(), err: err}
+	return measured{size: r.Bytes, denied: r.Denied, newest: r.Newest, excluded: hit.Load(), err: err}
 }
 
 // measureAll sizes every path with measureWorkers at a time.
@@ -322,6 +324,9 @@ func (c *Cleaner) scanTool(ctx context.Context, t *tool, exclusions []string, re
 		}
 		it := cleanup.NewItem(e.path, e.info, m.size)
 		it.Note = e.note
+		if it.Dir {
+			it.Newest = m.newest
+		}
 		cat.Items = append(cat.Items, it)
 		checked[it.ID] = e.selected
 		if !slices.Contains(roots, e.root) {
@@ -362,6 +367,7 @@ func (c *Cleaner) scanCommandTool(ctx context.Context, t *tool, exclusions []str
 		return false, err
 	}
 	var total int64
+	var newest time.Time
 	for _, m := range sizes {
 		b.addDenied(m.denied)
 		if m.excluded {
@@ -369,6 +375,9 @@ func (c *Cleaner) scanCommandTool(ctx context.Context, t *tool, exclusions []str
 		}
 		if m.err == nil {
 			total += m.size
+			if m.newest.After(newest) {
+				newest = m.newest
+			}
 		}
 	}
 	if total == 0 {
@@ -378,6 +387,7 @@ func (c *Cleaner) scanCommandTool(ctx context.Context, t *tool, exclusions []str
 	cat.Command = commandLabel(*t.command)
 	it := cleanup.NewItem(dir, info, total)
 	it.Note = note
+	it.Newest = newest
 	cat.Items = []cleanup.Item{it}
 	job := &commandJob{
 		categoryID: cat.ID, itemID: it.ID, title: t.title, path: dir, size: total, cmd: *t.command,
@@ -577,6 +587,6 @@ func (d *scopedDeleter) Remove(ctx context.Context, path string, roots []string)
 	return d.base.Remove(ctx, path, d.scope(path, roots))
 }
 
-func (d *scopedDeleter) Trash(ctx context.Context, path string, roots []string) error {
+func (d *scopedDeleter) Trash(ctx context.Context, path string, roots []string) (cleanup.Trashed, error) {
 	return d.base.Trash(ctx, path, d.scope(path, roots))
 }

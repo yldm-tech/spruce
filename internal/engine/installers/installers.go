@@ -90,7 +90,7 @@ func newCleaner(env Env) *Cleaner {
 	if env.arrived == nil {
 		env.arrived = added
 	}
-	return &Cleaner{env: env, exec: cleanup.NewExecutor(env.Deleter)}
+	return &Cleaner{env: env, exec: cleanup.NewExecutorWith(env.Deleter, cleanup.ExecutorOptions{Exclusions: func() []string { return env.Settings().Cleanup.Exclusions }})}
 }
 
 // found is one installer the walk found.

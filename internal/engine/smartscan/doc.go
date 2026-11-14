@@ -16,5 +16,7 @@
 //
 // # Cleaning
 //
-// Clean checks the whole request against the merged scan first (an unknown category or item rejects it with cleanup.ErrStale before anything is deleted), then cleans source by source, in source order, naming every item explicitly. Progress and the result are the sources' added up, with category IDs in the merged form and CategoryOutcome.Source set. Stopping takes effect between sources too. A merged scan serves one clean: the page scans again before the next.
+// Clean checks the whole request against the merged scan first (an unknown category or item rejects it with cleanup.ErrStale before anything is deleted), then cleans source by source, in source order, naming every item explicitly. Progress and the result are the sources' added up, with category IDs in the merged form and CategoryOutcome.Source set. Stopping takes effect between sources too. CleanRequest.Mode goes to every source, and the items each source moved to the Trash are reported, with merged category IDs, in CleanResult.Moved and to the callback cleanup.WithOnMoved put on the context.
+//
+// Clean keeps the rest of the merged scan, so several cleans can follow one scan: it drops what was handled (every planned item that did not fail; after an interrupted clean only what reached the Trash), and a command category once its command ran. A scan that did not finish with every source (stopped, failed or still running) leaves the sources with remembered scans the merged one does not match, so until a scan completes Clean refuses with cleanup.ErrStale and Pending reports true.
 package smartscan

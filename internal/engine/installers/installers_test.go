@@ -31,14 +31,14 @@ func (d *fakeDeleter) Remove(context.Context, string, []string) (fsx.Removal, er
 	return fsx.Removal{}, errors.New("installers must never delete permanently")
 }
 
-func (d *fakeDeleter) Trash(_ context.Context, path string, roots []string) error {
+func (d *fakeDeleter) Trash(_ context.Context, path string, roots []string) (cleanup.Trashed, error) {
 	if err := fsx.CheckTrashable(path, roots); err != nil {
-		return err
+		return cleanup.Trashed{}, err
 	}
 	d.mu.Lock()
 	d.trashed = append(d.trashed, filepath.Base(path))
 	d.mu.Unlock()
-	return os.RemoveAll(path)
+	return cleanup.Trashed{}, os.RemoveAll(path)
 }
 
 func write(t *testing.T, base, rel string, size int64, age time.Duration) string {
