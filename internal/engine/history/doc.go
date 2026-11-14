@@ -17,5 +17,5 @@
 //
 // The Store that Open returns is also a Watcher: Subscribe delivers each run once Append has written it, without ever blocking Append. The services layer forwards them to the page as the "history:appended" event.
 //
-// Fields added after the first release (Summary, Details) are optional in JSON, so files written before them read unchanged and maintenance runs carry neither.
+// Fields added after the first release (Summary, Details, and in v2 Rule, Undo and RestoreOf) are optional in JSON, so files written before them read unchanged, maintenance runs carry none of them, and an older build reading a newer file ignores what it does not know.
 package history
