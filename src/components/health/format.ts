@@ -109,11 +109,9 @@ export function coresText(info: SystemInfo): string {
   return text;
 }
 
-/** osText renders the system's name, version and build, e.g. "macOS 26.1（25B78）" or "Windows 11 Pro 24H2（26100.2314）". */
+/** osText renders the system's name and version, e.g. "macOS 26.1" or "Windows 11 Pro 24H2"; the build number has its own row on the 系统 card so the headline fits on one line. */
 export function osText(info: SystemInfo): string {
-  const name = [info.osName, info.osVersion].filter(Boolean).join(" ");
-  if (!name) return "";
-  return info.osBuild ? `${name}（${info.osBuild}）` : name;
+  return [info.osName, info.osVersion].filter(Boolean).join(" ");
 }
 
 /** The longest gap between two samples a chart draws a line across; a longer one (sampling stopped while the page was away) leaves the line broken. */

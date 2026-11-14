@@ -125,9 +125,9 @@ describe("system wording", () => {
   });
 
   it("names the OS with version and build", () => {
-    expect(osText(info())).toBe("macOS 26.1（25B78）");
+    expect(osText(info())).toBe("macOS 26.1");
     expect(osText(info({ osName: "Windows 11 Pro", osVersion: "24H2", osBuild: "26100.2314" }))).toBe(
-      "Windows 11 Pro 24H2（26100.2314）",
+      "Windows 11 Pro 24H2",
     );
     expect(osText(info({ osBuild: "" }))).toBe("macOS 26.1");
     expect(osText(info({ osName: "", osVersion: "", osBuild: "" }))).toBe("");

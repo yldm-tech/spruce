@@ -253,7 +253,8 @@ describe("HealthPage overview", () => {
     expect(within(battery).getByText("89%（相对设计容量）")).toBeTruthy();
 
     const system = card("系统");
-    expect(within(system).getByText("macOS 26.1（25B78）")).toBeTruthy();
+    expect(within(system).getByText("macOS 26.1")).toBeTruthy();
+    expect(within(system).getByText("25B78")).toBeTruthy();
     expect(within(system).getByText("Mac16,8")).toBeTruthy();
     // Uptime is measured to the sample's time: 3 days from boot.
     expect(within(system).getByText("3 天")).toBeTruthy();

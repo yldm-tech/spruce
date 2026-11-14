@@ -280,6 +280,7 @@ export function SystemCard({ info, failed, now }: { info?: SystemInfo; failed: b
       {info && (
         <DetailList
           rows={[
+            ["版本号", info.osBuild || "无法读取"],
             ["型号", info.model || "无法读取"],
             [
               "已运行",
