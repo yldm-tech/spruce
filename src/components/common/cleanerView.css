@@ -1,0 +1,90 @@
+/* The parts of the cleaner pages around CategoryList (CleanerView, CleanPlanDialog): the idle details, the notices above the results, the note on the done card and the clean plan in the confirmation. Values come from tokens.css. */
+
+.cleaner-idle {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.cleaner-idle-details {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 520px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.cleaner-idle-details ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cleaner-idle-details li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cleaner-notice {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.cleaner-notice--warning {
+  color: var(--color-warning);
+}
+
+.cleaner-done-note {
+  max-width: 380px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-nav-footer);
+}
+
+.clean-plan-message {
+  margin: 0;
+}
+
+.clean-plan-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.clean-plan-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-section);
+  color: var(--color-text-section);
+}
+
+.clean-plan-list {
+  margin: 0;
+  padding: 8px 14px;
+  list-style: none;
+  border-radius: var(--radius-card-icon);
+  background: var(--surface-list);
+  border: 1px solid var(--border-subtle);
+}
+
+.clean-plan-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+}
+
+.clean-plan-figure {
+  flex: none;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}

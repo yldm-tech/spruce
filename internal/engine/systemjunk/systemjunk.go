@@ -171,8 +171,19 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	}
 
 	var cats []cleanup.Category
+	seen := map[string]bool{}
 	for i, s := range specs {
-		cats = append(cats, assemble(s, items[i], c.env.Log)...)
+		for _, cat := range assemble(s, items[i], c.env.Log) {
+			// A folder two locations both reach (an odd %TEMP%, a Downloads folder inside a cache) is listed once, in the first category, as the Executor requires.
+			cat.Items = slices.DeleteFunc(cat.Items, func(it cleanup.Item) bool {
+				dup := seen[it.ID]
+				seen[it.ID] = true
+				return dup
+			})
+			if len(cat.Items) > 0 {
+				cats = append(cats, cat)
+			}
+		}
 	}
 	if trashCat != nil {
 		cats = append(cats, *trashCat)

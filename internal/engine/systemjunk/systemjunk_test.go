@@ -754,3 +754,25 @@ func TestTempDirsWindows(t *testing.T) {
 		t.Errorf("temp dirs %v", got)
 	}
 }
+
+func TestScanListsAFolderOnce(t *testing.T) {
+	fx := newFixture(t)
+	local := windowsEnv(t, fx)
+	// %TEMP% pointing into the INetCache folder: its children are reachable as temporary files and as app caches.
+	inet := filepath.Join(local, "Microsoft", "Windows", "INetCache")
+	vars := map[string]string{"LOCALAPPDATA": local, "TEMP": inet}
+	fx.env.Getenv = func(k string) string { return vars[k] }
+	res := scan(t, newCleaner(fx.env, windowsSpecs))
+	seen := map[string]string{}
+	for _, c := range res.Categories {
+		for _, it := range c.Items {
+			if prev, dup := seen[it.ID]; dup {
+				t.Errorf("%s listed in %s and %s", it.Path, prev, c.ID)
+			}
+			seen[it.ID] = c.ID
+		}
+	}
+	if seen[cleanup.ItemID(filepath.Join(inet, "IE"))] != catTempFiles {
+		t.Errorf("IE listed in %q", seen[cleanup.ItemID(filepath.Join(inet, "IE"))])
+	}
+}
