@@ -1,14 +1,16 @@
-// Package settings is the 设置 page: a tab per area (通用, 清理, 健康监测, 历史记录, 关于), each a column of grouped rows with the label and its description on the left and the control on the right. Every control saves on its own as it changes; there is no Save button.
+// Package settings is the 设置 page: a tab per area (通用, 自动清理, 清理, 健康监测, 历史记录, 关于), each a column of grouped rows with the label and its description on the left and the control on the right. Every control saves on its own as it changes; there is no Save button.
 package settings
 
 import (
 	"context"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/rules"
 	"github.com/yldm-tech/spruce/internal/ui/async"
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
@@ -20,6 +22,7 @@ import (
 // tabs are the page's tabs, in order.
 var tabs = []kit.Option[nav.SettingsTab]{
 	{Value: nav.SettingsGeneral, Label: "通用", TestID: "tab-general"},
+	{Value: nav.SettingsAuto, Label: "自动清理", TestID: "tab-auto"},
 	{Value: nav.SettingsCleanup, Label: "清理", TestID: "tab-cleanup"},
 	{Value: nav.SettingsHealth, Label: "健康监测", TestID: "tab-health"},
 	{Value: nav.SettingsHistory, Label: "历史记录", TestID: "tab-history"},
@@ -41,6 +44,8 @@ func Page(cx *core.Scope) core.Node {
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)
+	notify := newNotifyPermission(cx)
+	windows := deps.windows()
 
 	// 恢复默认设置 counts a generation, which draws the tab again so every control drops its draft and its notes.
 	content := core.Show{When: stores.Settings.Loaded, Then: func(*core.Scope) core.Node {
@@ -50,6 +55,8 @@ func Page(cx *core.Scope) core.Node {
 			return core.Func(func(cx *core.Scope) core.Node {
 				var groups []core.Node
 				switch t {
+				case nav.SettingsAuto:
+					groups = autoTab(stores, notify, windows)
 				case nav.SettingsCleanup:
 					groups = cleanupTab(stores.Settings)
 				case nav.SettingsHealth:
@@ -59,7 +66,7 @@ func Page(cx *core.Scope) core.Node {
 				case nav.SettingsAbout:
 					groups = aboutTab(cx, ctx, stores.Settings, deps)
 				default:
-					groups = generalTab(stores.Permission, resetRef, func() { resetErr.Set(""); resetting.Set(true) })
+					groups = generalTab(stores, notify, windows, resetRef, func() { resetErr.Set(""); resetting.Set(true) })
 				}
 				return core.View{TestID: "settings-tab-" + string(t), Style: core.Style{Gap: 22}, Children: groups}
 			})
@@ -68,7 +75,7 @@ func Page(cx *core.Scope) core.Node {
 
 	reset := kit.ConfirmDialog{Open: resetting.Get, Title: "恢复默认设置？", ConfirmLabel: "恢复默认", Danger: true, Busy: resetBusy.Get,
 		ReturnFocus: resetRef, TestID: "reset-dialog",
-		Message: confirmMessage("所有设置都会回到初始值，「登录时启动」会关闭。操作历史不受影响。", resetErr.Get, "reset-error"),
+		Message: confirmMessage(resetText, resetErr.Get, "reset-error"),
 		OnConfirm: func() {
 			resetBusy.Set(true)
 			resetErr.Set("")
@@ -112,20 +119,109 @@ func group(title, testID string, rows ...core.Node) core.Node {
 		Children: append(head, kit.Card{Clip: true, Children: withLines(rows)})}
 }
 
-func generalTab(perm *store.Permission, resetRef *core.Ref, onReset func()) []core.Node {
+// resetText is what 恢复默认设置 says it does, on its row and in its dialog.
+const resetText = "所有设置回到初始值，「登录时启动」和自动清理规则会关闭。操作历史不受影响。"
+
+// notifyDeniedText is the line under a setting that sends notifications while the system does not let Spruce send them.
+const notifyDeniedText = "通知没有开启，可以在系统设置里允许 Spruce 发送通知"
+
+func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, resetRef *core.Ref, onReset func()) []core.Node {
+	st := stores.Settings
+	limits := st.Limits()
+	general := []core.Node{
+		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", TestID: "launch-at-login",
+			DescriptionFunc: func() string {
+				if !windows && st.Value().General.KeepInTray {
+					return "登录系统后在菜单栏安静运行，不打开窗口。"
+				}
+				return "登录系统后自动打开 Spruce。"
+			}},
+	}
+	if !windows {
+		general = append(general, switchSetting{Field: FieldKeepInTray, Label: "关闭窗口后继续在菜单栏运行", TestID: "close-to-tray",
+			Description: "Spruce 会在后台定期检查，并在空间不足时提醒你。关闭后，关闭窗口就会退出 Spruce。"})
+	}
+	background := "每隔几小时检查一次可以释放的空间。只在接通电源、电脑不忙时进行，只读取，不会删除任何东西。"
+	if windows {
+		background = "Spruce 打开时" + background
+	}
 	return []core.Node{
-		group("", "section-general",
-			switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", Description: "登录系统后自动打开 Spruce。", TestID: "launch-at-login"},
-			switchSetting{Field: FieldConfirmBeforeClean, Label: "清理前确认", Description: "每次清理前先说明要清理多少、能否恢复，确认后才开始。",
-				TestID: "confirm-before-clean"},
+		group("", "section-general", general...),
+		group("后台检查", "section-background",
+			switchSetting{Field: FieldBackgroundEnabled, Label: "在后台定期检查", Description: background, TestID: "background-check"},
 		),
-		permissionsGroup(perm),
+		group("提醒", "section-alerts",
+			switchSetting{Field: FieldLowDiskAlert, Label: "空间不足时提醒我", Description: "系统盘可用空间低于下面的值时发一条通知。", TestID: "low-disk-alert",
+				OnTurnOn: notify.ask,
+				Below: []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().General.LowDiskAlert && notify.denied() }, "notify-denied")}},
+			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold"},
+		),
+		permissionsGroup(stores.Permission),
 		group("", "section-reset",
-			row{Label: "恢复默认设置", Description: "所有设置回到初始值，「登录时启动」会关闭。操作历史不受影响。", TestID: "reset-row",
+			row{Label: "恢复默认设置", Description: resetText, TestID: "reset-row",
 				Control: []core.Node{kit.Button{Text: "恢复默认设置…", Label: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset", OnPress: onReset}}},
 		),
 	}
 }
+
+// autoTab is 设置 → 自动清理: on macOS what the rules do, a switch per rule with what it would take now or what it did last, and the weekly summary; on Windows only why there are none.
+func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []core.Node {
+	if windows {
+		return []core.Node{kit.Card{Variant: kit.CardMuted, TestID: "auto-unsupported", Padding: core.Symmetric(16, 18), Children: []core.Node{
+			core.Text{Content: "Windows 版暂不提供自动清理。Windows 在回收站放不下某个项目时会询问是否直接删除，无人值守时无法保证只移到回收站。",
+				Style: lineStyle(kit.ColorTextSecondary)},
+		}}}
+	}
+	st := stores.Settings
+	trash := format.TrashName()
+	intro := core.Text{Content: "自动清理只会把文件移到" + trash + "，不会运行命令，也不会直接删除。每次运行都会记在操作历史里，在清空" + trash +
+		"之前可以放回原处。只在接通电源、电脑不忙时运行。你放回原处的项目不会再被自动清理。",
+		Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, Padding: core.Edges{Left: 4, Right: 4}}}
+	var ruleRows []core.Node
+	for _, spec := range rules.Catalog() {
+		field := RuleField(spec.ID)
+		testID := "rule-" + string(spec.ID)
+		ruleRows = append(ruleRows, switchSetting{Field: field, Label: spec.Title, Description: RuleDescription(spec.ID), TestID: testID,
+			OnTurnOn: notify.askOnce,
+			Below: []core.Node{statusLine(func() string {
+				return RuleStatusText(field.Get(st.Value()), RuleStatusOf(stores.Overview.State(), spec.ID), time.Now())
+			}, testID+"-status")}})
+	}
+	return []core.Node{
+		intro,
+		group("规则", "section-auto-rules", ruleRows...),
+		group("通知", "section-auto-notify",
+			switchSetting{Field: FieldWeeklySummary, Label: "每周汇总", Description: "每周一告诉你自动清理了多少。", TestID: "auto-summary-notify",
+				OnTurnOn: notify.ask,
+				Below: []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().Automation.WeeklySummary && notify.denied() }, "notify-denied")}},
+		),
+	}
+}
+
+// notifyPermission is whether Spruce may send notifications, as the page last heard: read without asking as the page opens, and asked for only as the user turns on something that notifies.
+type notifyPermission struct {
+	cx    *core.Scope
+	state *core.Signal[core.NotificationPermission]
+}
+
+func newNotifyPermission(cx *core.Scope) *notifyPermission {
+	n := &notifyPermission{cx: cx, state: core.NewSignal(cx, core.NotificationsNotAsked)}
+	cx.NotificationPermission(n.state.Set)
+	return n
+}
+
+// ask asks the user to let Spruce send notifications; the system prompts only the first time.
+func (n *notifyPermission) ask() { n.cx.RequestNotificationPermission(n.state.Set) }
+
+// askOnce asks only when the user was never asked: turning on a rule wants the weekly summary to be able to show, but does not need it.
+func (n *notifyPermission) askOnce() {
+	if n.state.GetUntracked() == core.NotificationsNotAsked {
+		n.ask()
+	}
+}
+
+// denied reports whether the user turned notifications off for Spruce; reading it subscribes.
+func (n *notifyPermission) denied() bool { return n.state.Get() == core.NotificationsDenied }
 
 func cleanupTab(st *store.Settings) []core.Node {
 	limits := st.Limits()
@@ -134,7 +230,7 @@ func cleanupTab(st *store.Settings) []core.Node {
 			folderListSetting{Field: FieldExclusions, Label: "排除的文件夹", Description: "任何清理功能都不会删除这些位置里的内容。",
 				MaxPaths: limits.MaxPaths, TestID: "exclusions"},
 		),
-		group("开发者垃圾", "section-dev-junk",
+		group("开发者", "section-dev-junk",
 			folderListSetting{Field: FieldDevProjectRoots, Label: "项目所在文件夹", Description: "在这些文件夹里查找项目的构建产物。",
 				MaxPaths: limits.MaxPaths, TestID: "dev-project-roots"},
 			numberSetting{Field: FieldDevArtifactMinAgeDays, Label: "最少闲置天数", Description: "项目超过这么多天没有改动，才会列出它的构建产物。",

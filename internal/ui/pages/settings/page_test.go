@@ -1,6 +1,7 @@
 package settings_test
 
 import (
+	"cmp"
 	"errors"
 	"slices"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
+	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	enginesettings "github.com/yldm-tech/spruce/internal/engine/settings"
@@ -40,6 +42,8 @@ type options struct {
 	svc   *settingsfake.Settings
 	fakes *storefake.Services
 	files *settingsfake.Files
+	// goos is the platform the page lays out for; "" is macOS.
+	goos string
 }
 
 func start(t *testing.T, o options) *page {
@@ -56,7 +60,7 @@ func start(t *testing.T, o options) *page {
 	p := &page{t: t, svc: o.svc, files: o.files, fakes: o.fakes}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, o.svc.Use(o.fakes.Deps()))
-		settings.DepsKey.Provide(cx, settings.Deps{Files: o.files})
+		settings.DepsKey.Provide(cx, settings.Deps{Files: o.files, GOOS: cmp.Or(o.goos, "darwin")})
 		p.shown = core.NewSignal(cx, true)
 		return core.Show{When: p.shown.Get, Then: func(*core.Scope) core.Node { return core.Func(settings.Page) }}
 	}, nsgotest.Size(1052, 2600))
@@ -120,16 +124,19 @@ func TestSwitchesSaveTheirOwnFieldAtOnce(t *testing.T) {
 		t.Fatalf("update %+v", got)
 	}
 
-	p.Press("role:switch 清理前确认")
-	wantGeneral := settingsfake.Defaults().General
-	wantGeneral.LaunchAtLogin, wantGeneral.ConfirmBeforeClean = true, false
-	if got := p.updates(2).General; got != wantGeneral {
+	p.Press("role:switch 在后台定期检查")
+	if got := p.updates(2); !got.General.LaunchAtLogin || got.Background.Enabled || got.General != want.General {
+		t.Fatalf("background %+v, general %+v", got.Background, got.General)
+	}
+
+	p.Press("role:switch 关闭窗口后继续在菜单栏运行")
+	if got := p.updates(3).General; got.KeepInTray || !got.LaunchAtLogin || got.LowDiskAlert {
 		t.Fatalf("general %+v", got)
 	}
 
 	p.tab("health")
 	p.Press("role:switch 启用高 CPU 提醒")
-	if got := p.updates(3).Health; got != (enginesettings.HealthSettings{CPUThreshold: 40, SustainMinutes: 10, Enabled: false}) {
+	if got := p.updates(4).Health; got != (enginesettings.HealthSettings{CPUThreshold: 40, SustainMinutes: 10, Enabled: false}) {
 		t.Fatalf("health %+v", got)
 	}
 	if p.checked("启用高 CPU 提醒") {
@@ -187,37 +194,37 @@ func TestOnlyTheLatestSaveCounts(t *testing.T) {
 	svc := settingsfake.New(dataDir)
 	off, on := make(chan struct{}), make(chan struct{})
 	svc.Wait = func(next enginesettings.AppSettings) {
-		if next.General.ConfirmBeforeClean {
+		if next.Background.Enabled {
 			<-on
 		} else {
 			<-off
 		}
 	}
 	svc.Fail = func(next enginesettings.AppSettings) error {
-		if !next.General.ConfirmBeforeClean {
+		if !next.Background.Enabled {
 			return errors.New("无法保存设置，详情已记录到日志")
 		}
 		return nil
 	}
 	p := start(t, options{svc: svc})
-	p.Press("role:switch 清理前确认")
-	p.Press("role:switch 清理前确认")
+	p.Press("role:switch 在后台定期检查")
+	p.Press("role:switch 在后台定期检查")
 	p.WaitUntil(wait, func() bool { return len(svc.Updates()) == 2 })
-	if !p.checked("清理前确认") {
+	if !p.checked("在后台定期检查") {
 		t.Fatal("the switch does not show the latest change")
 	}
 	// The newer save answers first, then the older one fails: neither its error nor its value shows.
 	close(on)
-	p.WaitUntil(wait, func() bool { return svc.Answered() == 1 && p.checked("清理前确认") })
+	p.WaitUntil(wait, func() bool { return svc.Answered() == 1 && p.checked("在后台定期检查") })
 	close(off)
 	p.WaitUntil(wait, func() bool { return svc.Answered() == 2 })
 	// The older answer is posted right after Update returns; nothing it brings may show.
 	for deadline := time.Now().Add(200 * time.Millisecond); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		p.Settle()
-		if p.Exists("id:confirm-before-clean-error") {
-			t.Fatalf("the older save's error shows: %q", p.text("confirm-before-clean-error"))
+		if p.Exists("id:background-check-error") {
+			t.Fatalf("the older save's error shows: %q", p.text("background-check-error"))
 		}
-		if !p.checked("清理前确认") {
+		if !p.checked("在后台定期检查") {
 			t.Fatal("the older save's value shows")
 		}
 	}
@@ -552,7 +559,7 @@ func TestNoPermissionsSectionWhereNotRequired(t *testing.T) {
 	fakes.Permission = maintenance.PermissionNotRequired
 	p := start(t, options{fakes: fakes})
 	p.WaitForGone("id:section-permissions", wait)
-	p.Find("role:switch 清理前确认")
+	p.Find("role:switch 在后台定期检查")
 }
 
 func TestAboutShowsTheVersionAndRevealsTheDataFolder(t *testing.T) {
@@ -717,4 +724,171 @@ func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })
 	p.WaitFor("id:settings-tab-general", wait)
+}
+
+func TestGeneralTabOnMacOS(t *testing.T) {
+	p := start(t, options{})
+	if p.Exists("id:confirm-before-clean") || p.Exists("text:清理前确认") {
+		t.Error("清理前确认 is still there")
+	}
+	if got := p.Find("id:launch-at-login >> text:登录系统后在菜单栏安静运行，不打开窗口。"); got == nil {
+		t.Error("登录时启动 does not say it stays in the menu bar")
+	}
+	p.Find("id:close-to-tray >> text:Spruce 会在后台定期检查，并在空间不足时提醒你。关闭后，关闭窗口就会退出 Spruce。")
+	if !p.checked("关闭窗口后继续在菜单栏运行") || !p.checked("在后台定期检查") || p.checked("空间不足时提醒我") {
+		t.Error("the new switches do not start at their defaults")
+	}
+	p.Find("id:section-background >> text:每隔几小时检查一次可以释放的空间。只在接通电源、电脑不忙时进行，只读取，不会删除任何东西。")
+	p.Find("id:section-alerts >> text:系统盘可用空间低于下面的值时发一条通知。")
+	if got := p.field("low-disk-threshold"); got != "20" {
+		t.Errorf("threshold shows %q", got)
+	}
+	p.Find("id:reset-row >> text:所有设置回到初始值，「登录时启动」和自动清理规则会关闭。操作历史不受影响。")
+
+	// Without the menu bar, logging in opens the window.
+	p.Press("role:switch 关闭窗口后继续在菜单栏运行")
+	p.updates(1)
+	p.WaitFor("id:launch-at-login >> text:登录系统后自动打开 Spruce。", wait)
+
+	p.Press("id:reset")
+	p.WaitFor("id:reset-dialog >> text:所有设置回到初始值，「登录时启动」和自动清理规则会关闭。操作历史不受影响。", wait)
+}
+
+func TestGeneralTabOnWindows(t *testing.T) {
+	p := start(t, options{goos: "windows"})
+	if p.Exists("id:close-to-tray") {
+		t.Error("Windows shows 关闭窗口后继续在菜单栏运行")
+	}
+	p.Find("id:launch-at-login >> text:登录系统后自动打开 Spruce。")
+	p.Find("id:section-background >> text:Spruce 打开时每隔几小时检查一次可以释放的空间。只在接通电源、电脑不忙时进行，只读取，不会删除任何东西。")
+	p.Find("id:low-disk-alert")
+}
+
+func TestLowDiskAlertAsksForNotificationsAndSaysWhenDenied(t *testing.T) {
+	p := start(t, options{})
+	// Opening the page reads the permission without asking.
+	p.Settle()
+	if p.NotificationPermission != core.NotificationsNotAsked {
+		t.Fatalf("permission %v as the page opened", p.NotificationPermission)
+	}
+	p.NotificationAnswer = core.NotificationsDenied
+	p.Press("role:switch 空间不足时提醒我")
+	if got := p.updates(1).General; !got.LowDiskAlert || got.LowDiskGB != 20 {
+		t.Fatalf("general %+v", got)
+	}
+	if got := p.WaitFor("id:notify-denied", wait).Text; got != "通知没有开启，可以在系统设置里允许 Spruce 发送通知" {
+		t.Errorf("denied line %q", got)
+	}
+	if p.NotificationPermission != core.NotificationsDenied {
+		t.Errorf("permission %v: turning the alert on did not ask", p.NotificationPermission)
+	}
+	// The switch stays on; turning it off takes the line away.
+	if !p.checked("空间不足时提醒我") {
+		t.Error("the alert turned itself off")
+	}
+	p.Press("role:switch 空间不足时提醒我")
+	p.updates(2)
+	p.WaitForGone("id:notify-denied", wait)
+
+	p.Clear("id:low-disk-threshold-field")
+	p.Type("id:low-disk-threshold-field", "0")
+	if got := p.text("low-disk-threshold-error"); got != "请输入 1 到 500 之间的整数" {
+		t.Errorf("error %q", got)
+	}
+	p.Clear("id:low-disk-threshold-field")
+	p.Type("id:low-disk-threshold-field", "50")
+	p.Advance(debounce)
+	if got := p.updates(3).General.LowDiskGB; got != 50 {
+		t.Errorf("threshold saved as %d", got)
+	}
+}
+
+func TestLowDiskAlertGranted(t *testing.T) {
+	p := start(t, options{})
+	p.Press("role:switch 空间不足时提醒我")
+	p.updates(1)
+	p.WaitUntil(wait, func() bool { return p.NotificationPermission == core.NotificationsGranted })
+	p.Settle()
+	if p.Exists("id:notify-denied") {
+		t.Error("notify-denied with the permission granted")
+	}
+}
+
+func TestAutoTabRulesAndTheirStatus(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
+	fakes.Overview = ov
+	p := start(t, options{fakes: fakes})
+	p.tab("auto")
+	p.Find("id:settings-tab-auto >> text:自动清理只会把文件移到废纸篓，不会运行命令，也不会直接删除。每次运行都会记在操作历史里，在清空废纸篓之前可以放回原处。只在接通电源、电脑不忙时运行。你放回原处的项目不会再被自动清理。")
+	for _, r := range []struct{ id, title string }{
+		{"app-caches", "旧的应用缓存"}, {"installers", "旧安装包"}, {"build-output", "闲置项目的构建产物"}, {"incomplete-downloads", "未完成的下载"},
+	} {
+		p.Find("id:section-auto-rules >> id:rule-" + r.id)
+		if p.checked(r.title) {
+			t.Errorf("%s is on by default", r.title)
+		}
+		if got := p.text("rule-" + r.id + "-status"); got != "检查后会显示符合条件的项目" {
+			t.Errorf("%s status %q without a result", r.id, got)
+		}
+	}
+	p.Find("id:rule-installers >> text:每天把「下载」里超过 7 天、对应的应用已经装好的安装包和磁盘映像（.dmg、.pkg）移到废纸篓。压缩包、系统映像和其他文件夹里的不会处理，正在挂载或无法确认是否挂载的也不会处理。")
+	if !p.checked("每周汇总") {
+		t.Error("每周汇总 is off by default")
+	}
+	p.Find("id:auto-summary-notify >> text:每周一告诉你自动清理了多少。")
+
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{},
+		Rules: []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: time.Now().Add(-3 * time.Hour), LastTrashed: 1 << 30}}})
+	p.WaitUntil(wait, func() bool { return p.text("rule-app-caches-status") == "现在符合条件的：12 项，"+format.Bytes(3<<30) })
+
+	// Turning a rule on is the user's action: it asks for notifications once, for the weekly summary, and says when it runs.
+	p.Press("role:switch 旧的应用缓存")
+	if got := p.updates(1).Automation; !got.AppCaches || got.Installers || !got.WeeklySummary {
+		t.Fatalf("automation %+v", got)
+	}
+	p.WaitUntil(wait, func() bool { return p.text("rule-app-caches-status") == "还没有运行过，下次后台检查时运行" })
+	p.WaitUntil(wait, func() bool { return p.NotificationPermission == core.NotificationsGranted })
+
+	p.Press("role:switch 旧安装包")
+	p.updates(2)
+	want := "上次运行：" + format.RelativeTime(time.Now().Add(-3*time.Hour), time.Now()) + "，移到废纸篓 " + format.Bytes(1<<30)
+	p.WaitUntil(wait, func() bool { return p.text("rule-installers-status") == want })
+}
+
+func TestWeeklySummarySaysWhenNotificationsAreOff(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.Stored.Automation.WeeklySummary = false
+	p := start(t, options{svc: svc})
+	p.tab("auto")
+	p.NotificationAnswer = core.NotificationsDenied
+	p.Press("role:switch 每周汇总")
+	if got := p.updates(1).Automation; !got.WeeklySummary {
+		t.Fatalf("automation %+v", got)
+	}
+	p.WaitFor("id:auto-summary-notify >> id:notify-denied", wait)
+}
+
+func TestAutoTabOnWindows(t *testing.T) {
+	p := start(t, options{goos: "windows"})
+	p.tab("auto")
+	p.Find("id:auto-unsupported >> text:Windows 版暂不提供自动清理。Windows 在回收站放不下某个项目时会询问是否直接删除，无人值守时无法保证只移到回收站。")
+	if p.Exists("id:section-auto-rules") || p.Exists("id:auto-summary-notify") || len(p.Query("id:settings-tab-auto >> role:switch")) != 0 {
+		t.Error("Windows shows the rules")
+	}
+}
+
+func TestTabsAndDeveloperGroup(t *testing.T) {
+	p := start(t, options{})
+	var ids []string
+	for _, tab := range p.Query("role:tab") {
+		ids = append(ids, tab.Props.TestID)
+	}
+	if want := []string{"tab-general", "tab-auto", "tab-cleanup", "tab-health", "tab-history", "tab-about"}; !slices.Equal(ids, want) {
+		t.Errorf("tabs %v, want %v", ids, want)
+	}
+	p.tab("cleanup")
+	if got := p.Find("id:section-dev-junk").Props.Label; got != "开发者" {
+		t.Errorf("group %q", got)
+	}
 }

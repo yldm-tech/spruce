@@ -4,10 +4,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/rules"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/ui/format"
 )
 
 // Field is how one control reads and writes its part of the settings.
@@ -22,9 +25,25 @@ var (
 		Get: func(s settings.AppSettings) bool { return s.General.LaunchAtLogin },
 		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.General.LaunchAtLogin = v; return s },
 	}
-	FieldConfirmBeforeClean = Field[bool]{
-		Get: func(s settings.AppSettings) bool { return s.General.ConfirmBeforeClean },
-		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.General.ConfirmBeforeClean = v; return s },
+	FieldKeepInTray = Field[bool]{
+		Get: func(s settings.AppSettings) bool { return s.General.KeepInTray },
+		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.General.KeepInTray = v; return s },
+	}
+	FieldBackgroundEnabled = Field[bool]{
+		Get: func(s settings.AppSettings) bool { return s.Background.Enabled },
+		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.Background.Enabled = v; return s },
+	}
+	FieldLowDiskAlert = Field[bool]{
+		Get: func(s settings.AppSettings) bool { return s.General.LowDiskAlert },
+		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.General.LowDiskAlert = v; return s },
+	}
+	FieldLowDiskGB = Field[int]{
+		Get: func(s settings.AppSettings) int { return s.General.LowDiskGB },
+		Put: func(s settings.AppSettings, v int) settings.AppSettings { s.General.LowDiskGB = v; return s },
+	}
+	FieldWeeklySummary = Field[bool]{
+		Get: func(s settings.AppSettings) bool { return s.Automation.WeeklySummary },
+		Put: func(s settings.AppSettings, v bool) settings.AppSettings { s.Automation.WeeklySummary = v; return s },
 	}
 	FieldHealthEnabled = Field[bool]{
 		Get: func(s settings.AppSettings) bool { return s.Health.Enabled },
@@ -66,6 +85,67 @@ var (
 		Put: func(s settings.AppSettings, v int) settings.AppSettings { s.History.RetentionDays = v; return s },
 	}
 )
+
+// RuleField is the on/off field of the automatic rule id.
+func RuleField(id rules.ID) Field[bool] {
+	at := func(a *settings.AutomationSettings) *bool {
+		switch id {
+		case rules.AppCaches:
+			return &a.AppCaches
+		case rules.Installers:
+			return &a.Installers
+		case rules.BuildOutput:
+			return &a.BuildOutput
+		}
+		return &a.IncompleteDownloads
+	}
+	return Field[bool]{
+		Get: func(s settings.AppSettings) bool { return *at(&s.Automation) },
+		Put: func(s settings.AppSettings, v bool) settings.AppSettings { *at(&s.Automation) = v; return s },
+	}
+}
+
+// RuleDescription is what an automatic rule does, as 设置 → 自动清理 says under its label.
+func RuleDescription(id rules.ID) string {
+	trash := format.TrashName()
+	switch id {
+	case rules.AppCaches:
+		return "每周把 30 天没有改动的应用缓存移到" + trash + "。正在运行的应用的缓存不会处理。"
+	case rules.Installers:
+		return "每天把「下载」里超过 7 天、对应的应用已经装好的安装包和磁盘映像（.dmg、.pkg）移到" + trash + "。压缩包、系统映像和其他文件夹里的不会处理，正在挂载或无法确认是否挂载的也不会处理。"
+	case rules.BuildOutput:
+		return "每周把 90 天没有改动的项目里的 node_modules、target 等构建产物移到" + trash + "。有未提交改动、无法确定 Git 状态，或构建产物文件夹里有纳入版本控制的文件的项目不会处理；不是 Git 仓库的项目按最后改动时间判断。"
+	case rules.IncompleteDownloads:
+		return "每天把超过 7 天没有变化的未完成下载移到" + trash + "。"
+	}
+	return ""
+}
+
+// RuleStatusText is the grey line under an automatic rule: when it is off, what it would take from the current result (st nil while there is none); when it is on, its last run or that it has not run yet.
+func RuleStatusText(on bool, st *app.RuleStatus, now time.Time) string {
+	switch {
+	case on && st != nil && !st.LastRun.IsZero():
+		return "上次运行：" + format.RelativeTime(st.LastRun, now) + "，移到" + format.TrashName() + " " + format.Bytes(st.LastTrashed)
+	case on:
+		return "还没有运行过，下次后台检查时运行"
+	case st == nil:
+		return "检查后会显示符合条件的项目"
+	}
+	return "现在符合条件的：" + strconv.Itoa(st.Matching) + " 项，" + format.Bytes(st.MatchingBytes)
+}
+
+// RuleStatusOf returns the status of rule id in st, nil while no check has a result or the controller does not report the rule.
+func RuleStatusOf(st app.OverviewState, id rules.ID) *app.RuleStatus {
+	if st.Result == nil {
+		return nil
+	}
+	for i := range st.Rules {
+		if st.Rules[i].ID == string(id) {
+			return &st.Rules[i]
+		}
+	}
+	return nil
+}
 
 // maxWhole is the largest whole number a field takes, JavaScript's Number.MAX_SAFE_INTEGER as the React page had it.
 const maxWhole = 1<<53 - 1
