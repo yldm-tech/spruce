@@ -1,0 +1,493 @@
+/* The 空间透视 page's own parts: the start screen's disk and folder cards, the tabs, the path, the treemap, the entry list and the banner for unreadable folders. The page column, header, action bar, dialogs and scan state are in ../common/common.css. Values come from tokens.css; literal pixel sizes follow the 维护 design's. */
+
+/* ---- Start screen ---- */
+
+.space-start {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.space-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.space-section-title {
+  margin: 0;
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-section);
+  color: var(--color-text-section);
+}
+
+.space-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.space-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.space-card:hover {
+  background: var(--space-card-hover);
+}
+
+.space-card-icon {
+  border-radius: var(--radius-card-icon);
+}
+
+.space-card-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-card-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.space-card-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-body);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.space-capacity,
+.space-share {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--progress-track);
+}
+
+.space-capacity {
+  height: 6px;
+  margin-top: 6px;
+}
+
+.space-capacity-used,
+.space-share-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.space-capacity-used {
+  background: var(--space-capacity-used);
+}
+
+.space-capacity-used--full {
+  background: var(--space-capacity-full);
+}
+
+.space-choose {
+  display: flex;
+}
+
+/* ---- Results ---- */
+
+/* The results never shrink below their content, so in a short window the page scrolls instead of letting the map slide under the action bar. */
+.space-results {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.space-tabs {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-banner);
+}
+
+.space-tab {
+  min-height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: none;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.space-tab[aria-selected="true"] {
+  background: var(--surface-nav-active);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* The live region stays in the document so screen readers hear the next notice; while empty it takes back the gap it would add. */
+.space-notice {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+.space-notice:empty {
+  margin-top: -14px;
+}
+
+.space-error {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+.space-error--row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.space-panel {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.space-panel[hidden] {
+  display: none;
+}
+
+/* ---- Path ---- */
+
+.space-path {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.space-path ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-size-body);
+}
+
+.space-path li {
+  display: inline-flex;
+  align-items: center;
+}
+
+.space-path li + li::before {
+  content: "›";
+  margin: 0 4px;
+  color: var(--color-text-section);
+}
+
+.space-path-current {
+  padding: 2px 4px;
+  font-weight: 600;
+}
+
+.space-path-size {
+  margin-left: auto;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Treemap and list ---- */
+
+/* The map and the list share one row that fills the window's height left by the header, the tabs and the action bar, never less than 340px; the list scrolls inside it. */
+.space-browser {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr);
+  gap: 14px;
+  height: max(340px, calc(100vh - 380px));
+}
+
+.space-treemap {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface-list);
+  border: 1px solid var(--border-card);
+}
+
+.space-cell {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-space-cell);
+  box-shadow: inset 0 0 0 1px var(--space-cell-edge);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  text-shadow: var(--space-cell-text-shadow);
+}
+
+.space-cell--open {
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.space-cell--open:hover {
+  filter: brightness(1.15);
+}
+
+.space-cell--group {
+  background: var(--space-cell-group);
+  box-shadow: none;
+  border: 1px dashed var(--space-cell-group-border);
+}
+
+.space-cell-name,
+.space-cell-size {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-cell-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.space-cell-size {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.space-browser-list {
+  min-width: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+}
+
+.space-large-list {
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+}
+
+.space-large-note {
+  margin: 0;
+  font-size: var(--font-size-body);
+  color: var(--color-text-muted);
+}
+
+.space-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 6px 10px 6px 14px;
+}
+
+.space-row:hover {
+  background: var(--surface-row-hover);
+}
+
+.space-row-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-nav-icon);
+  background: var(--space-row-icon);
+  color: var(--color-text-secondary);
+}
+
+.space-row-icon--dir {
+  color: var(--space-row-icon-dir);
+}
+
+.space-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.space-row-name,
+.space-row-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-row-name {
+  font-size: var(--font-size-body);
+}
+
+.space-row-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.space-row-open:hover {
+  color: var(--color-text-link-hover);
+}
+
+.space-row-sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.space-share {
+  height: 4px;
+}
+
+.space-share-fill {
+  background: var(--space-share-fill);
+}
+
+.space-row-size {
+  flex: none;
+  min-width: 64px;
+  text-align: right;
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two icon buttons wide on every row, so the sizes line up on the rows of folded groups too. */
+.space-row-actions {
+  flex: none;
+  width: 62px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.space-trash-button[aria-disabled="true"] {
+  opacity: 0.45;
+}
+
+/* ---- Unreadable folders ---- */
+
+.space-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 14px 18px;
+  border-radius: var(--radius-card);
+  background: var(--surface-banner);
+  border: 1px solid var(--border-banner);
+}
+
+.space-banner-text {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.space-banner-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.space-banner-sub {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+.space-banner-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.space-banner-button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--gradient-accent);
+  color: var(--run-button-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.space-banner-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.space-progress-figures {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Focus ---- */
+
+.space-card:focus-visible,
+.space-tab:focus-visible,
+.space-cell--open:focus-visible,
+.space-row-open:focus-visible,
+.space-banner-button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}

@@ -139,6 +139,7 @@ func main() {
 	}), historyStore, home, logger))
 
 	// page: space
+	mygo.Bind(services.NewSpace(home, settingsStore.Get, trash.System(), historyStore, logger))
 
 	// page: health
 	// The dashboard's sampler runs only while the page watches it; health alerts come from monitor, as on the 维护 page.
