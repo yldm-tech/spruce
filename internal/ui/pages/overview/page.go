@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
-	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/scancache"
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
@@ -275,12 +274,6 @@ func unanswered(st app.OverviewState) bool {
 		st.LastAuto == nil && len(st.Rules) == 0 && st.Next.IsZero()
 }
 
-// scopeKey is what of the settings decides what a check finds (scancache.Key hashes the same): a change makes the result stale.
-func scopeKey(c settings.CleanupSettings) string {
-	return strings.Join(c.Exclusions, "\x00") + "\x01" + strings.Join(c.DevProjectRoots, "\x00") + "\x01" + strconv.Itoa(c.DevArtifactMinAgeDays) +
-		"\x01" + strings.Join(c.InstallerRoots, "\x00")
-}
-
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
@@ -320,7 +313,7 @@ func Page(cx *core.Scope) core.Node {
 		if !stores.Settings.Loaded() {
 			return
 		}
-		k := scopeKey(stores.Settings.Value().Cleanup)
+		k := scancache.Key(stores.Settings.Value())
 		if !have {
 			base, have = k, true
 			return
