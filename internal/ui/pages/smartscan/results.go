@@ -129,8 +129,10 @@ func (s sourceSection) Render(cx *core.Scope) core.Node {
 		toggle,
 		core.Show{When: open.Get, Then: func(*core.Scope) core.Node {
 			return cleanflow.CategoryList{Categories: func() []cleanup.Category { return group }, Selection: f.Selection.Get,
-				OnChange: func(next cleanflow.Selection) { f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next)) },
-				Label:    meta.Title + "的项目", Reveal: s.Reveal, Disabled: s.Disabled, TestID: "list-" + id}
+				OnChange: func(next cleanflow.Selection) {
+					f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next))
+				},
+				Label: meta.Title + "的项目", Reveal: s.Reveal, Disabled: s.Disabled, TestID: "list-" + id}
 		}},
 	}}
 }
