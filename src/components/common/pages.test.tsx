@@ -3,7 +3,6 @@ import type { ComponentType } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DevJunkPage } from "../dev-junk/DevJunkPage";
-import { HealthPage } from "../health/HealthPage";
 import { HistoryPage } from "../history/HistoryPage";
 import { InstallersPage } from "../installers/InstallersPage";
 import { SettingsPage } from "../settings/SettingsPage";
@@ -20,7 +19,6 @@ const SHELLS: [PageId, ComponentType][] = [
   ["installers", InstallersPage],
   ["uninstall", UninstallPage],
   ["space", SpacePage],
-  ["health", HealthPage],
   ["history", HistoryPage],
   ["settings", SettingsPage],
 ];
