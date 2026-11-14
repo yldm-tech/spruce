@@ -103,6 +103,19 @@ func daySection(s *State, g func() DayGroup) core.Node {
 		}}
 }
 
+// The row's line heights, which match the browser's normal line height for the title (15 points) and the summary (13) with the Chinese fallback font, so a row is 65 points tall over its 1-point separator, as in the design (Apple text rounds each line up to a whole point).
+const (
+	titleLineHeight   = 1.25
+	summaryLineHeight = 1.5
+)
+
+// rowTitle is a row's title, the kind's page title.
+func rowTitle(s string) core.Text {
+	t := kit.Text(s, kit.FontCardTitle, kit.Semibold, kit.ColorText)
+	t.Style.LineHeightMultiple = titleLineHeight
+	return t
+}
+
 // runRow is one run: a button with the kind's tile, title and summary line, the start time and a chevron, which shows or hides the run's details under it.
 func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core.Node {
 	open := core.NewSignal(cx, false)
@@ -116,8 +129,9 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 		Children: []core.Node{
 			kit.IconTile{Tone: meta.Tone, Size: 38, GlyphSize: 19, Glyph: meta.Glyph, Radius: kit.RadiusCardIcon},
 			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
-				kit.Text(meta.Title, kit.FontCardTitle, kit.Semibold, kit.ColorText),
-				core.Text{Content: RunSummary(run), MaxLines: 1, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextMuted}},
+				rowTitle(meta.Title),
+				core.Text{Content: RunSummary(run), MaxLines: 1, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody,
+					LineHeightMultiple: summaryLineHeight, Color: kit.ColorTextMuted}},
 			}},
 			kit.Tabular(kit.Text(Clock(run.StartedAt, false), kit.FontBody, kit.Regular, kit.ColorTextSecondary)),
 			core.View{StyleFunc: func() core.Style {
