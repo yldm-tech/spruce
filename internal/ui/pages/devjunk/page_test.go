@@ -345,9 +345,22 @@ func TestNothingFound(t *testing.T) {
 	p.Press("id:scan")
 	p.WaitFor("text:没有找到开发者垃圾", wait)
 	p.Find("text:开发工具的缓存和项目里的构建产物都已经很干净了。")
+	if p.Exists("text:/没有权限读取/") {
+		t.Error("the unreadable places are named though every place was read")
+	}
 	if p.Exists("id:clean") {
 		t.Error("清理 shows without results")
 	}
+}
+
+// A scan that found nothing but could not read some places says so above the empty state, as the old page did.
+func TestNothingFoundWithUnreadablePlaces(t *testing.T) {
+	r := cleanflowfake.Result()
+	r.Denied = 2
+	p := start(t, scanning(r), newFakes(t, "/Users/u/Workspace"))
+	p.Press("id:scan")
+	p.WaitFor("text:没有找到开发者垃圾", wait)
+	p.Find("text:有 2 个位置没有权限读取，结果可能不完整。")
 }
 
 // Ported from DevJunkPage.test.tsx: shows a scan that failed and lets the user try again.

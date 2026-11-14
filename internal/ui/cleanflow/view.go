@@ -27,6 +27,8 @@ type ViewConfig struct {
 	SizeLabel string
 	// EmptyTitle and EmptyDescription are the page when the scan found nothing.
 	EmptyTitle, EmptyDescription string
+	// EmptyNotice, when set, is a warning line above the empty state, shown when it returns something (开发者垃圾's places it could not read).
+	EmptyNotice func(f *Flow) string
 	// Results, when set, builds the results in place of the notices and the one CategoryList (开发者垃圾's two sections); the action bar stays.
 	Results func(cx *core.Scope, f *Flow) core.Node
 	// Confirm, when set, builds the question asked before a clean; View sets its Open, OnConfirm and OnCancel. CleanPlanDialog when nil.
@@ -167,8 +169,14 @@ func View(cx *core.Scope, f *Flow, cfg ViewConfig) core.Node {
 func results(cx *core.Scope, f *Flow, cfg ViewConfig, meta nav.Meta, cleanRef *core.Ref) core.Node {
 	res := f.Result.GetUntracked()
 	if res == nil || len(res.Categories) == 0 {
-		return kit.EmptyState{Title: cfg.EmptyTitle, Description: cfg.EmptyDescription, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "empty",
+		empty := kit.EmptyState{Title: cfg.EmptyTitle, Description: cfg.EmptyDescription, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "empty",
 			Action: kit.Button{Text: "重新扫描", Variant: kit.ButtonGhost, OnPress: f.Scan, TestID: "empty-rescan"}}
+		if cfg.EmptyNotice != nil {
+			if notice := cfg.EmptyNotice(f); notice != "" {
+				return core.Group{kit.Notice{Text: func() string { return notice }, Tone: kit.LevelWarning}, empty}
+			}
+		}
+		return empty
 	}
 	notResults := func() bool { return f.Phase.Get() != PhaseResults }
 	var children []core.Node

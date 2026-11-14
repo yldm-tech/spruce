@@ -104,3 +104,11 @@ func RootsNotice(roots []string, loaded bool) string {
 	}
 	return "项目文件夹里没有找到构建产物。"
 }
+
+// DeniedNotice is the warning above the results, or above the empty state, when the scan could not read denied places; empty when it read them all.
+func DeniedNotice(denied int64) string {
+	if denied <= 0 {
+		return ""
+	}
+	return "有 " + strconv.FormatInt(denied, 10) + " 个位置没有权限读取，结果可能不完整。"
+}

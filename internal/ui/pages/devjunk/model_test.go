@@ -167,3 +167,12 @@ func TestRootsNotice(t *testing.T) {
 		}
 	}
 }
+
+func TestDeniedNotice(t *testing.T) {
+	if got := devjunk.DeniedNotice(0); got != "" {
+		t.Errorf("none denied: %q", got)
+	}
+	if got := devjunk.DeniedNotice(2); got != "有 2 个位置没有权限读取，结果可能不完整。" {
+		t.Errorf("two denied: %q", got)
+	}
+}

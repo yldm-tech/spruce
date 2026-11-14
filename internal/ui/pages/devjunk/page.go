@@ -45,6 +45,13 @@ func Page(cx *core.Scope) core.Node {
 		SizeLabel:        "已选大小",
 		EmptyTitle:       "没有找到开发者垃圾",
 		EmptyDescription: "开发工具的缓存和项目里的构建产物都已经很干净了。",
+		// The unreadable places are named above the empty state too, as above the results.
+		EmptyNotice: func(f *cleanflow.Flow) string {
+			if res := f.Result.GetUntracked(); res != nil {
+				return DeniedNotice(res.Denied)
+			}
+			return ""
+		},
 		Results: func(_ *core.Scope, f *cleanflow.Flow) core.Node {
 			return results(f, roots, revealer(deps.Files))
 		},
@@ -113,8 +120,7 @@ func results(f *cleanflow.Flow, roots func() ([]string, bool), rev reveal) core.
 	tools, projects := SplitGroups(res.Categories)
 	notResults := func() bool { return f.Phase.Get() != cleanflow.PhaseResults }
 	var children core.Group
-	if res.Denied > 0 {
-		denied := "有 " + strconv.FormatInt(res.Denied, 10) + " 个位置没有权限读取，结果可能不完整。"
+	if denied := DeniedNotice(res.Denied); denied != "" {
 		children = append(children, kit.Notice{Text: func() string { return denied }, Tone: kit.LevelWarning})
 	}
 	if len(tools) > 0 {
