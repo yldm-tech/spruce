@@ -64,6 +64,7 @@ const (
 	MaxCPUThreshold      = 800
 	MinSustainMinutes    = 1
 	MaxSustainMinutes    = 120
+	MinDevArtifactMinAge = 0
 	MaxDevArtifactMinAge = 3650
 	MinLargeFileMB       = 10
 	MaxLargeFileMB       = 1024 * 1024
@@ -104,7 +105,7 @@ func Normalize(s AppSettings, home string) AppSettings {
 	s.Cleanup.Exclusions = cleanList(s.Cleanup.Exclusions, home, true)
 	s.Cleanup.DevProjectRoots = cleanList(s.Cleanup.DevProjectRoots, home, false)
 	s.Cleanup.InstallerRoots = cleanList(s.Cleanup.InstallerRoots, home, false)
-	s.Cleanup.DevArtifactMinAgeDays = clamp(s.Cleanup.DevArtifactMinAgeDays, 0, MaxDevArtifactMinAge)
+	s.Cleanup.DevArtifactMinAgeDays = clamp(s.Cleanup.DevArtifactMinAgeDays, MinDevArtifactMinAge, MaxDevArtifactMinAge)
 	s.Cleanup.LargeFileMinMB = clamp(s.Cleanup.LargeFileMinMB, MinLargeFileMB, MaxLargeFileMB)
 	s.History.RetentionDays = clamp(s.History.RetentionDays, MinRetentionDays, MaxRetentionDays)
 	return s

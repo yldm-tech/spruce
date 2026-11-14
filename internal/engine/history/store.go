@@ -32,36 +32,47 @@ const (
 type fileStore struct {
 	path string
 	log  *slog.Logger
+	watchers
 
 	mu sync.Mutex
 	// count is the number of valid runs in the file, or -1 until the first Append reads it.
 	count int
 }
 
-// Append writes run as one line with a single write, fsyncs it, and trims the file to the newest MaxRuns runs once it holds more.
+var _ Watcher = (*fileStore)(nil)
+
+// Append writes run as one line with a single write, fsyncs it, and trims the file to the newest MaxRuns runs once it holds more. Subscribers hear of run once its line is written, even when trimming then fails.
 func (s *fileStore) Append(run Run) error {
 	line, err := json.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("history: encode run %q: %w", run.ID, err)
 	}
+	written, err := s.appendRun(line)
+	if written {
+		s.notify(run)
+	}
+	return err
+}
 
+// appendRun writes line and trims the file; written reports whether the line reached the file.
+func (s *fileStore) appendRun(line []byte) (written bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.count < 0 {
 		runs, err := s.readLocked()
 		if err != nil {
-			return err
+			return false, err
 		}
 		s.count = len(runs)
 	}
 	if err := s.appendLocked(line); err != nil {
-		return err
+		return false, err
 	}
 	s.count++
 	if s.count > MaxRuns {
-		return s.trimLocked()
+		return true, s.trimLocked()
 	}
-	return nil
+	return true, nil
 }
 
 func (s *fileStore) appendLocked(line []byte) error {

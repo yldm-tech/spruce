@@ -121,6 +121,8 @@ func main() {
 	// page: health
 
 	// page: history
+	// Every run any page records reaches 操作历史 as events.historyAppended. Retention pruning (at start, on every change of 保留天数 and daily) is FollowSettings' job.
+	onReady = append(onReady, func(ctx context.Context) { services.BroadcastHistory(ctx, historyStore, logger) })
 
 	// page: settings
 

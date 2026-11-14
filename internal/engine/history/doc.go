@@ -13,5 +13,9 @@
 //
 // Requirements: Append, List, Prune and Clear are safe for concurrent use within the process; Append writes the whole line with one write and fsyncs; List tolerates (skips and logs) a truncated or corrupt line, such as the last line after a crash, instead of failing; the file is capped at MaxRuns runs by rewriting it through a temporary file and a rename when it grows past that. Prune(cutoff) drops runs that started before cutoff the same way (main.go prunes with the retention of the settings, RetentionCutoff, at start, on every settings change and daily); Clear deletes the file.
 //
+// # Watching (watch.go)
+//
+// The Store that Open returns is also a Watcher: Subscribe delivers each run once Append has written it, without ever blocking Append. The services layer forwards them to the page as the "history:appended" event.
+//
 // Fields added after the first release (Summary, Details) are optional in JSON, so files written before them read unchanged and maintenance runs carry neither.
 package history

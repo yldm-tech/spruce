@@ -26,11 +26,97 @@ type Settings struct {
 	store *settings.Store
 	login LoginItem
 	log   *slog.Logger
+
+	// pickFolder shows the system's folder picker and returns the chosen folder, or "" when the user cancels.
+	pickFolder func(ctx context.Context, title string) (string, error)
+	// version is the app's version; dataDir the app's user data folder.
+	version func() string
+	dataDir func() (string, error)
 }
 
-// NewSettings returns the service over store; login applies General.LaunchAtLogin.
+// NewSettings returns the service over store; login applies General.LaunchAtLogin. The folder picker, the version and the data folder are mygo's (Dialog.Open, App.Version, App.Path(PathUserData)).
 func NewSettings(store *settings.Store, login LoginItem, log *slog.Logger) *Settings {
-	return &Settings{store: store, login: login, log: log}
+	return &Settings{
+		store:      store,
+		login:      login,
+		log:        log,
+		pickFolder: nativeFolderPicker,
+		version:    mygo.App.Version,
+		dataDir:    func() (string, error) { return mygo.App.Path(mygo.PathUserData) },
+	}
+}
+
+// nativeFolderPicker shows mygo's open dialog for one folder, as a sheet of the window that asked where there is one.
+func nativeFolderPicker(ctx context.Context, title string) (string, error) {
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:            mygo.CallerWindow(ctx),
+		Title:             title,
+		Message:           title,
+		ButtonLabel:       "选择",
+		Directory:         true,
+		CreateDirectories: true,
+	})
+	if err != nil || len(paths) == 0 {
+		return "", err
+	}
+	return paths[0], nil
+}
+
+// SettingRange is the inclusive range Settings.Update clamps one number to.
+type SettingRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// SettingsLimits are the ranges of the settings package, for the page's sliders, fields and validation messages.
+type SettingsLimits struct {
+	CPUThreshold          SettingRange `json:"cpuThreshold"`
+	SustainMinutes        SettingRange `json:"sustainMinutes"`
+	DevArtifactMinAgeDays SettingRange `json:"devArtifactMinAgeDays"`
+	LargeFileMinMB        SettingRange `json:"largeFileMinMB"`
+	RetentionDays         SettingRange `json:"retentionDays"`
+	// MaxPaths is how many entries each folder list keeps.
+	MaxPaths int `json:"maxPaths"`
+}
+
+// Limits returns the ranges Update clamps to.
+func (s *Settings) Limits() SettingsLimits {
+	return SettingsLimits{
+		CPUThreshold:          SettingRange{settings.MinCPUThreshold, settings.MaxCPUThreshold},
+		SustainMinutes:        SettingRange{settings.MinSustainMinutes, settings.MaxSustainMinutes},
+		DevArtifactMinAgeDays: SettingRange{settings.MinDevArtifactMinAge, settings.MaxDevArtifactMinAge},
+		LargeFileMinMB:        SettingRange{settings.MinLargeFileMB, settings.MaxLargeFileMB},
+		RetentionDays:         SettingRange{settings.MinRetentionDays, settings.MaxRetentionDays},
+		MaxPaths:              settings.MaxPaths,
+	}
+}
+
+// ChooseFolder shows the system's folder picker titled title and returns the folder the user chose, or "" when they cancelled. It does not change the settings: the page adds the folder to a list and calls Update.
+func (s *Settings) ChooseFolder(ctx context.Context, title string) (string, error) {
+	p, err := s.pickFolder(ctx, title)
+	if err != nil {
+		s.log.Warn("choose folder", "err", err)
+		return "", errors.New("无法打开选择文件夹的窗口")
+	}
+	return p, nil
+}
+
+// AppAbout is what the 关于 section shows.
+type AppAbout struct {
+	// Version is the app's version from mygo.config.ts, or "" in a build that does not carry one (go run).
+	Version string `json:"version"`
+	// DataDir is the folder holding the settings and the history.
+	DataDir string `json:"dataDir"`
+}
+
+// About returns the app's version and its data folder.
+func (s *Settings) About() (AppAbout, error) {
+	dir, err := s.dataDir()
+	if err != nil {
+		s.log.Warn("user data folder", "err", err)
+		return AppAbout{}, errors.New("无法读取 Spruce 的数据文件夹")
+	}
+	return AppAbout{Version: s.version(), DataDir: dir}, nil
 }
 
 // Get returns the current settings. General.LaunchAtLogin reports the system's state, which the user can also change in System Settings or Task Manager.
