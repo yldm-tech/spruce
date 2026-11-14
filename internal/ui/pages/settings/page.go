@@ -184,7 +184,8 @@ func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []cor
 		ruleRows = append(ruleRows, switchSetting{Field: field, Label: spec.Title, Description: RuleDescription(spec.ID), TestID: testID,
 			OnTurnOn: notify.askOnce,
 			Below: []core.Node{statusLine(func() string {
-				return RuleStatusText(field.Get(st.Value()), RuleStatusOf(stores.Overview.State(), spec.ID), time.Now())
+				ov := stores.Overview.State()
+				return RuleStatusText(field.Get(st.Value()), RuleStatusOf(ov, spec.ID), ov.Result != nil, time.Now())
 			}, testID+"-status")}})
 	}
 	return []core.Node{

@@ -858,6 +858,21 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 	p.updates(2)
 	want := "上次运行：" + format.RelativeTime(time.Now().Add(-3*time.Hour), time.Now()) + "，移到废纸篓 " + format.Bytes(1<<30)
 	p.WaitUntil(wait, func() bool { return p.text("rule-installers-status") == want })
+
+	// Without a result (at startup, or with no readable cache) a rule that is on still shows its last run, and a rule that is off waits for a check.
+	statuses := []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: time.Now().Add(-3 * time.Hour), LastTrashed: 1 << 30}, {ID: "build-output", Matching: 2, MatchingBytes: 1 << 30}}
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{}, Rules: statuses})
+	p.WaitUntil(wait, func() bool {
+		return p.text("rule-build-output-status") == "现在符合条件的：2 项，"+format.Bytes(1<<30)
+	})
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Rules: statuses})
+	p.WaitUntil(wait, func() bool { return p.text("rule-build-output-status") == "检查后会显示符合条件的项目" })
+	if got := p.text("rule-installers-status"); got != want {
+		t.Errorf("installers status %q without a result, want %q", got, want)
+	}
+	if got := p.text("rule-app-caches-status"); got != "还没有运行过，下次后台检查时运行" {
+		t.Errorf("app-caches status %q without a result", got)
+	}
 }
 
 func TestWeeklySummarySaysWhenNotificationsAreOff(t *testing.T) {

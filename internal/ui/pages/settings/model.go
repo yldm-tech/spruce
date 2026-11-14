@@ -121,24 +121,21 @@ func RuleDescription(id rules.ID) string {
 	return ""
 }
 
-// RuleStatusText is the grey line under an automatic rule: when it is off, what it would take from the current result (st nil while there is none); when it is on, its last run or that it has not run yet.
-func RuleStatusText(on bool, st *app.RuleStatus, now time.Time) string {
+// RuleStatusText is the grey line under an automatic rule: when it is on, its last run (which does not depend on a check result) or that it has not run yet; when it is off, what it would take from the current result, or that a check will tell while there is no result (hasResult false) or the controller does not report the rule (st nil).
+func RuleStatusText(on bool, st *app.RuleStatus, hasResult bool, now time.Time) string {
 	switch {
 	case on && st != nil && !st.LastRun.IsZero():
 		return "上次运行：" + format.RelativeTime(st.LastRun, now) + "，移到" + format.TrashName() + " " + format.Bytes(st.LastTrashed)
 	case on:
 		return "还没有运行过，下次后台检查时运行"
-	case st == nil:
+	case st == nil || !hasResult:
 		return "检查后会显示符合条件的项目"
 	}
 	return "现在符合条件的：" + strconv.Itoa(st.Matching) + " 项，" + format.Bytes(st.MatchingBytes)
 }
 
-// RuleStatusOf returns the status of rule id in st, nil while no check has a result or the controller does not report the rule.
+// RuleStatusOf returns the status of rule id in st, nil when the controller does not report the rule. It does not depend on st.Result: the last run of a rule is known without a check result.
 func RuleStatusOf(st app.OverviewState, id rules.ID) *app.RuleStatus {
-	if st.Result == nil {
-		return nil
-	}
 	for i := range st.Rules {
 		if st.Rules[i].ID == string(id) {
 			return &st.Rules[i]
