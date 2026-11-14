@@ -25,7 +25,7 @@ func (b PageBackground) Render(*core.Scope) core.Node {
 	base.Gradients = []core.Gradient{Linear(160, Stop(core.RGB(0x8a4a12), 0), Stop(core.RGB(0x4a2238), 45), Stop(ColorBgDeep, 100))}
 	content := core.View{Style: core.Style{Position: core.Relative, FlexGrow: 1, Direction: core.Row, MinHeight: core.Pt(0)}, Children: b.Children}
 	return core.View{
-		Style: core.Style{FlexGrow: 1, Direction: core.Row, Background: ColorBgDeep, Overflow: core.Hidden,
+		Style: core.Style{FlexGrow: 1, FlexShrink: 1, Direction: core.Row, Background: ColorBgDeep, Overflow: core.Hidden,
 			FontFamily: FontSans, Color: ColorText},
 		Children: []core.Node{
 			core.View{Style: base, PointerEvents: core.PointerEventsNone},
