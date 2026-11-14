@@ -101,6 +101,8 @@ func rootsList(roots func() []string) core.Node {
 			path := r()
 			t := kit.Tabular(kit.Text(format.TruncateMiddle(path, rootsWidth), kit.FontBody, kit.Regular, kit.ColorText))
 			t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
+			// The design draws the folders at the normal line height of Inter, tighter than the default of the font list.
+			t.Style.LineHeightEm = 1.21
 			return core.View{TestID: "root-" + strconv.Itoa(i()), Tooltip: tooltip(path), Children: []core.Node{t}}
 		})}}
 }
