@@ -85,7 +85,7 @@ const (
 	PermissionNotRequired PermissionState = "notRequired"
 )
 
-// PermissionChecker reports system permissions to tasks. The services layer implements it with mygo's permissionflow plugin, so the engine does not import mygo; tests use a fake.
+// PermissionChecker reports system permissions to tasks. internal/app implements it with internal/host/fulldisk, so the engine does not import any UI framework; tests use a fake.
 type PermissionChecker interface {
 	// FullDiskAccess reports whether the app may read other apps' data under ~/Library (macOS). The "databases" task skips with a hint when it is not PermissionGranted or PermissionNotRequired.
 	FullDiskAccess() (PermissionState, error)

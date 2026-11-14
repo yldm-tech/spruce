@@ -1,4 +1,4 @@
-// Package smartscan is the engine of the 智能扫描 page: it runs the scans of several cleaners at once (系统垃圾, 开发者垃圾 and 安装包, in that order), merges what they found into one result, and hands each part of a clean back to the cleaner that found it, so every check of that cleaner applies. Scanner implements cleanup.Scanner; main.go registers it under services.CleanerSmartScan. It does not import mygo and has no scanning logic of its own.
+// Package smartscan is the engine of the 智能扫描 page: it runs the scans of several cleaners at once (系统垃圾, 开发者垃圾 and 安装包, in that order), merges what they found into one result, and hands each part of a clean back to the cleaner that found it, so every check of that cleaner applies. Scanner implements cleanup.Scanner; wire.go registers it under app.CleanerSmartScan. It does not import any UI framework and has no scanning logic of its own.
 //
 // # Own instances
 //

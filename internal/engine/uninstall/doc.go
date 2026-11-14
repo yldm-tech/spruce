@@ -1,4 +1,4 @@
-// Package uninstall is the engine of the 应用卸载 page: it lists the installed apps, measures them, finds the files an app leaves behind and removes an app with the files the user picked. It does not import mygo; internal/services/uninstall.go binds it.
+// Package uninstall is the engine of the 应用卸载 page: it lists the installed apps, measures them, finds the files an app leaves behind and removes an app with the files the user picked. It does not import any UI framework; internal/app/uninstall.go binds it.
 //
 // The flow is list → pick → leftovers → remove, one app at a time, rather than the scan-all/clean model of the cleaner pages, so the engine has its own API (Engine) and uses cleanup.Executor only for the deletions: every removal goes to the Trash (Recycle Bin), only for items of the last Plan, re-checked before each move.
 //

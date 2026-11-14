@@ -1,4 +1,4 @@
-// Package space is the engine of the 空间透视 page: it lists the disks and quick targets worth looking at, walks a folder into a bounded size tree, and decides what the page may move to the Trash from it. It does not import mygo; internal/services/space.go adapts it to the page.
+// Package space is the engine of the 空间透视 page: it lists the disks and quick targets worth looking at, walks a folder into a bounded size tree, and decides what the page may move to the Trash from it. It does not import any UI framework; internal/app/space.go adapts it to the page.
 //
 // # What lives where
 //

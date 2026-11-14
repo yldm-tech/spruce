@@ -1,4 +1,4 @@
-// Package systemjunk is the engine of the 系统垃圾 page: it finds user-level junk (application and browser caches, logs, crash and error reports, temporary files, interrupted downloads, the Trash) and deletes what the user picked. It implements cleanup.Scanner; main.go registers it under services.CleanerSystemJunk. It does not import mygo.
+// Package systemjunk is the engine of the 系统垃圾 page: it finds user-level junk (application and browser caches, logs, crash and error reports, temporary files, interrupted downloads, the Trash) and deletes what the user picked. It implements cleanup.Scanner; wire.go registers it under app.CleanerSystemJunk. It does not import any UI framework.
 //
 // # Locations
 //

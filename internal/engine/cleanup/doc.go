@@ -1,4 +1,4 @@
-// Package cleanup is the model and the deletion engine every cleaner page shares (系统垃圾, 开发者垃圾, 安装包, 智能扫描, and the leftovers of 应用卸载). A page's engine package scans and builds Categories of Items; Executor deletes what the user picked. It does not import mygo; the services layer binds Scanners to the page.
+// Package cleanup is the model and the deletion engine every cleaner page shares (系统垃圾, 开发者垃圾, 安装包, 智能扫描, and the leftovers of 应用卸载). A page's engine package scans and builds Categories of Items; Executor deletes what the user picked. It does not import any UI framework; internal/app binds Scanners to the page.
 //
 // # Writing a cleaner
 //

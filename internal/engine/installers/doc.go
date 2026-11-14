@@ -1,4 +1,4 @@
-// Package installers is the engine of the 安装包 page: it finds installer files the user probably no longer needs in the folders of settings Cleanup.InstallerRoots (by default Downloads and Desktop) and moves the ones the user picked to the Trash or Recycle Bin. It implements cleanup.Scanner; main.go registers it under services.CleanerInstallers. It does not import mygo.
+// Package installers is the engine of the 安装包 page: it finds installer files the user probably no longer needs in the folders of settings Cleanup.InstallerRoots (by default Downloads and Desktop) and moves the ones the user picked to the Trash or Recycle Bin. It implements cleanup.Scanner; wire.go registers it under app.CleanerInstallers. It does not import any UI framework.
 //
 // # What counts
 //

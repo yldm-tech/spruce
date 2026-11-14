@@ -75,7 +75,7 @@ func osascriptArgs(exe string, args []string) []string {
 	return append(out, args...)
 }
 
-// inAppBundle reports whether exe is <bundle>.app/Contents/MacOS/<file>, the layout of an app's main executable (mygo dev runs a real bundle too).
+// inAppBundle reports whether exe is <bundle>.app/Contents/MacOS/<file>, the layout of an app's main executable (nsgo dev runs a real bundle too).
 func inAppBundle(exe string) bool {
 	macOS := filepath.Dir(exe)
 	contents := filepath.Dir(macOS)

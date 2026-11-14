@@ -194,10 +194,10 @@ func TestLaunchRefusesForeignExecutables(t *testing.T) {
 func TestInAppBundle(t *testing.T) {
 	for exe, want := range map[string]bool{
 		testExe: true,
-		"/Users/me/proj/.mygo/dev/Spruce Dev.app/Contents/MacOS/Spruce Dev": true,
-		"/Applications/Spruce.app/Contents/MacOS":                           false,
-		"/Applications/Spruce.app/Contents/Frameworks/x":                    false,
-		"/tmp/go-build123/b001/exe/spruce":                                  false,
+		"/Users/me/proj/.nsgo/dev/macos/Spruce.app/Contents/MacOS/Spruce": true,
+		"/Applications/Spruce.app/Contents/MacOS":                         false,
+		"/Applications/Spruce.app/Contents/Frameworks/x":                  false,
+		"/tmp/go-build123/b001/exe/spruce":                                false,
 	} {
 		if got := inAppBundle(exe); got != want {
 			t.Errorf("inAppBundle(%q) = %v", exe, got)

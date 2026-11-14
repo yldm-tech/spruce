@@ -1,4 +1,4 @@
-// Package fsx is the file system layer every cleaner shares: measuring directories (DirSize), deleting permanently but only inside allowed roots (SafeRemove), revealing an item in Finder or Explorer (Reveal) and matching the user's exclusions (Excluded). It does not import mygo.
+// Package fsx is the file system layer every cleaner shares: measuring directories (DirSize), deleting permanently but only inside allowed roots (SafeRemove), revealing an item in Finder or Explorer (Reveal) and matching the user's exclusions (Excluded). It does not import any UI framework.
 //
 // # Measuring
 //

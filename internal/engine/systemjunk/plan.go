@@ -11,7 +11,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/devcaches"
 )
 
-// appBundleID is Spruce's own bundle identifier (mygo.config.ts); its caches are in use while the scan runs.
+// appBundleID is Spruce's own bundle identifier (the id in nsgo.yaml); its caches are in use while the scan runs.
 const appBundleID = "ai.yldm.spruce"
 
 // Ages below which entries are not offered.

@@ -51,7 +51,7 @@ var (
 	selLocalizedDescription = objc.RegisterName("localizedDescription")
 )
 
-// foundationMover calls NSFileManager trashItemAtURL:resultingItemURL:error: through the Objective-C runtime with purego, without cgo: the app builds with CGO_ENABLED=0, as MyGo does.
+// foundationMover calls NSFileManager trashItemAtURL:resultingItemURL:error: through the Objective-C runtime with purego, without cgo: the app builds with CGO_ENABLED=0, as nsgo build does.
 type foundationMover struct{}
 
 func nsString(s string) objc.ID {

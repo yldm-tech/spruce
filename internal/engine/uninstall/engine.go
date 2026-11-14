@@ -37,7 +37,7 @@ var (
 // minNameLen is the shortest app name leftovers may match by: shorter names are too likely to be someone else's folder.
 const minNameLen = 3
 
-// SelfBundleID is Spruce's own bundle ID (mygo.config.ts identifier); the list leaves it, and IDs below it, out.
+// SelfBundleID is Spruce's own bundle ID (the id in nsgo.yaml); the list leaves it, and IDs below it, out.
 const SelfBundleID = "ai.yldm.spruce"
 
 // Usage is what is known about when an app was last used.

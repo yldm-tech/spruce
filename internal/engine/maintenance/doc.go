@@ -1,4 +1,4 @@
-// Package maintenance describes the maintenance tasks of the 维护 page and runs a selection of them. It does not import mygo: the services layer adapts it to the UI.
+// Package maintenance describes the maintenance tasks of the 维护 page and runs a selection of them. It does not import any UI framework: internal/app adapts it to the UI.
 //
 // # What lives where
 //

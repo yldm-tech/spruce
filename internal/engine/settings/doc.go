@@ -1,6 +1,6 @@
-// Package settings keeps the user's preferences in one JSON file in the app's data folder and tells interested parts of the app when they change. It does not import mygo; the services layer binds the Store to the 设置 page and forwards changes as the "settings:changed" event.
+// Package settings keeps the user's preferences in one JSON file in the app's data folder and tells interested parts of the app when they change. It does not import any UI framework; internal/app saves through the Store and the UI's settings store follows Subscribe.
 //
-//	// Open returns a Store keeping its settings in the file at path; home expands a leading "~" in paths. Open performs no I/O: the file is read on first use and written on the first change, so `mygo generate`, which runs main up to App.Run, never touches the user's data.
+//	// Open returns a Store keeping its settings in the file at path; home expands a leading "~" in paths. Open performs no I/O: the file is read on first use and written on the first change.
 //	func Open(path, home string, defaults func() AppSettings) (*Store, error)
 //
 //	func (s *Store) Get() AppSettings                              // the current settings, defaults where the file is missing or unreadable
