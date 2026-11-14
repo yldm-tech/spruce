@@ -99,6 +99,8 @@ type Category struct {
 	Command string `json:"command,omitempty"`
 	// Warning is an optional caution in Simplified Chinese shown in the warning colour, e.g. "删除后 Xcode 需要重新建立索引".
 	Warning string `json:"warning,omitempty"`
+	// Source is, in a combined scan (智能扫描), the cleaner the category comes from, e.g. "system-junk"; empty on a cleaner's own page.
+	Source string `json:"source,omitempty"`
 	// Roots are the folders the items may be deleted from; they stay in Go.
 	Roots []string `json:"-"`
 }
@@ -113,6 +115,38 @@ type ScanResult struct {
 	Denied    int64         `json:"denied"`
 	ScannedAt time.Time     `json:"scannedAt"`
 	Duration  time.Duration `json:"duration"`
+	// Sources is, for a combined scan (智能扫描), how each of its cleaners did; empty on a cleaner's own page.
+	Sources []SourceState `json:"sources,omitempty"`
+}
+
+// SourceStatus is where one cleaner of a combined scan is.
+type SourceStatus string
+
+const (
+	// SourceScanning is a cleaner whose scan is still running.
+	SourceScanning SourceStatus = "scanning"
+	// SourceDone is a cleaner whose scan finished; its categories are in the result.
+	SourceDone SourceStatus = "done"
+	// SourceFailed is a cleaner whose scan failed; the result has nothing of it and Error says why.
+	SourceFailed SourceStatus = "failed"
+)
+
+// SourceState is how one cleaner of a combined scan (智能扫描) is doing: streamed in Progress.Sources while it scans, and in ScanResult.Sources once the scan is over.
+type SourceState struct {
+	// ID is the cleaner, e.g. "system-junk".
+	ID     string       `json:"id"`
+	Status SourceStatus `json:"status"`
+	// Done and Total count the cleaner's own scan steps while it scans; Total is 0 while unknown.
+	Done  int `json:"done"`
+	Total int `json:"total"`
+	// Bytes is found so far while scanning, and the size of what it found once done.
+	Bytes int64 `json:"bytes"`
+	// Items is how many items it found, once done.
+	Items int `json:"items"`
+	// Denied counts locations it could not read (see ScanResult.Denied).
+	Denied int64 `json:"denied"`
+	// Error is why the scan failed, a sentence in Simplified Chinese.
+	Error string `json:"error,omitempty"`
 }
 
 // NewResult sorts each category's items largest first, fills in the sizes and totals, settles the default selection (a Selected category checks all its items; a category whose items are all Selected is Selected), and stamps the scan as started at started and finished now.
@@ -169,10 +203,12 @@ type Failure struct {
 type CategoryOutcome struct {
 	CategoryID string `json:"categoryId"`
 	Title      string `json:"title"`
-	Removed    int    `json:"removed"`
-	Freed      int64  `json:"freed"`
-	Trashed    int64  `json:"trashed"`
-	Failed     int    `json:"failed"`
+	// Source is the cleaner the category comes from in a combined clean (Category.Source).
+	Source  string `json:"source,omitempty"`
+	Removed int    `json:"removed"`
+	Freed   int64  `json:"freed"`
+	Trashed int64  `json:"trashed"`
+	Failed  int    `json:"failed"`
 }
 
 // CleanResult is what a clean did.
@@ -219,6 +255,8 @@ type Progress struct {
 	Total int `json:"total"`
 	// Bytes is found so far while scanning and freed or trashed so far while cleaning.
 	Bytes int64 `json:"bytes"`
+	// Sources is, while a combined scan (智能扫描) runs, the state of each of its cleaners.
+	Sources []SourceState `json:"sources,omitempty"`
 }
 
 // Scanner is what a cleaner page's engine implements; see the package documentation.

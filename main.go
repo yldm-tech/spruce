@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo"
+	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/devjunk"
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
@@ -23,6 +24,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/installers"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/smartscan"
 	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 	"github.com/yldm-tech/spruce/internal/engine/systemjunk"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
@@ -111,22 +113,37 @@ func main() {
 	// ---- Pages ----
 	// One block per page, under its anchor; each page edits only its own block (see the file comment).
 
+	// The cleaners 智能扫描 combines. Each call builds a new instance: a scanner remembers its last scan for the clean that follows, so the page and 智能扫描 each get their own (see internal/engine/smartscan).
+	newSystemJunk := func() cleanup.Scanner {
+		return systemjunk.New(systemjunk.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger})
+	}
+	newDevJunk := func() cleanup.Scanner {
+		return devjunk.New(devjunk.Options{
+			Home:     home,
+			Runner:   runner,
+			Settings: func() settings.CleanupSettings { return settingsStore.Get().Cleanup },
+			Log:      logger,
+		})
+	}
+	newInstallers := func() cleanup.Scanner {
+		return installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger})
+	}
+
 	// page: smart-scan
+	services.RegisterCleaner(cleanups, services.CleanerSmartScan, smartscan.New([]smartscan.Source{
+		{ID: string(services.CleanerSystemJunk), New: newSystemJunk},
+		{ID: string(services.CleanerDevJunk), New: newDevJunk},
+		{ID: string(services.CleanerInstallers), New: newInstallers},
+	}, logger))
 
 	// page: system-junk
-	services.RegisterCleaner(cleanups, services.CleanerSystemJunk, systemjunk.New(systemjunk.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
+	services.RegisterCleaner(cleanups, services.CleanerSystemJunk, newSystemJunk())
 
 	// page: dev-junk
-	devJunk := devjunk.New(devjunk.Options{
-		Home:     home,
-		Runner:   runner,
-		Settings: func() settings.CleanupSettings { return settingsStore.Get().Cleanup },
-		Log:      logger,
-	})
-	services.RegisterCleaner(cleanups, services.CleanerDevJunk, devJunk)
+	services.RegisterCleaner(cleanups, services.CleanerDevJunk, newDevJunk())
 
 	// page: installers
-	services.RegisterCleaner(cleanups, services.CleanerInstallers, installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
+	services.RegisterCleaner(cleanups, services.CleanerInstallers, newInstallers())
 
 	// page: uninstall
 	mygo.Bind(services.NewUninstall(uninstall.New(uninstall.Config{

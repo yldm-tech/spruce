@@ -123,6 +123,39 @@ func TestCleanRecordsHistory(t *testing.T) {
 	}
 }
 
+func TestSmartCleanRecordsOneLinePerSource(t *testing.T) {
+	c, store, _ := newTestCleanup(t)
+	started := time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC)
+	RegisterCleaner(c, CleanerSmartScan, &fakeScanner{clean: cleanup.CleanResult{
+		Freed: 3000, Trashed: 500, Removed: 9, StartedAt: started, Duration: time.Second, Partial: true,
+		Failed: []cleanup.Failure{{CategoryID: "installers:dmg", Reason: "「磁盘映像」没有清理：扫描结果已过期，请重新扫描"}},
+		Categories: []cleanup.CategoryOutcome{
+			{CategoryID: "system-junk:app-caches", Title: "应用缓存", Source: "system-junk", Removed: 4, Freed: 2000},
+			{CategoryID: "system-junk:logs", Title: "日志", Source: "system-junk", Removed: 2, Freed: 500, Failed: 1},
+			{CategoryID: "dev-junk:tool-npm", Title: "npm 缓存", Source: "dev-junk", Removed: 1, Freed: 500},
+			{CategoryID: "dev-junk:tool-xcode-archives", Title: "Xcode 归档", Source: "dev-junk", Removed: 2, Trashed: 500},
+			{CategoryID: "installers:dmg", Title: "磁盘映像", Source: "installers", Failed: 3},
+		},
+	}})
+	if _, err := c.Clean(t.Context(), CleanerSmartScan, cleanup.CleanRequest{CategoryIDs: []string{"system-junk:app-caches"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.appended) != 1 {
+		t.Fatalf("history %+v", store.appended)
+	}
+	r := store.appended[0]
+	bin := binName()
+	want := []string{
+		"系统垃圾：已清理 6 项，1 项未能处理",
+		"开发者垃圾：已清理 1 项，已移到" + bin + " 2 项",
+		"安装包：3 项未能处理",
+		"「磁盘映像」没有清理：扫描结果已过期，请重新扫描",
+	}
+	if r.Kind != history.KindSmartScan || *r.Summary != (history.Totals{Freed: 3000, Trashed: 500, Items: 9, Failed: 1}) || strings.Join(r.Details, "\n") != strings.Join(want, "\n") {
+		t.Errorf("run %+v, details %q", r, r.Details)
+	}
+}
+
 func TestCleanupErrorsAreChinese(t *testing.T) {
 	c, store, _ := newTestCleanup(t)
 	s := &fakeScanner{}

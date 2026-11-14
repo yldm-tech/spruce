@@ -1,13 +1,13 @@
 package services
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -44,6 +44,13 @@ var cleanerKinds = map[CleanerID]history.Kind{
 	CleanerInstallers: history.KindInstallers,
 	CleanerUninstall:  history.KindUninstall,
 	CleanerSpace:      history.KindSpace,
+}
+
+// cleanerTitles are the page names the history uses for the cleaners a combined clean (智能扫描) reports by source.
+var cleanerTitles = map[CleanerID]string{
+	CleanerSystemJunk: "系统垃圾",
+	CleanerDevJunk:    "开发者垃圾",
+	CleanerInstallers: "安装包",
 }
 
 // progressEvery bounds how often scan and clean progress reaches the page.
@@ -157,27 +164,12 @@ func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.Clea
 	return res, nil
 }
 
-// details are the history lines of a clean: one per category, then the items left in place.
+// details are the history lines of a clean: one per category (one per source for a combined clean, whose outcomes carry their source), then the items left in place.
 func (c *Cleanup) details(res cleanup.CleanResult) []string {
-	bin := "废纸篓"
-	if runtime.GOOS == "windows" {
-		bin = "回收站"
-	}
 	var lines []string
-	for _, cat := range res.Categories {
-		var parts []string
-		if cat.Removed > 0 {
-			if cat.Trashed > 0 {
-				parts = append(parts, fmt.Sprintf("已移到%s %d 项", bin, cat.Removed))
-			} else {
-				parts = append(parts, fmt.Sprintf("已清理 %d 项", cat.Removed))
-			}
-		}
-		if cat.Failed > 0 {
-			parts = append(parts, fmt.Sprintf("%d 项未能处理", cat.Failed))
-		}
-		if len(parts) > 0 {
-			lines = append(lines, cat.Title+"："+strings.Join(parts, "，"))
+	for _, g := range groupOutcomes(res.Categories) {
+		if line := outcomeLine(g); line != "" {
+			lines = append(lines, line)
 		}
 	}
 	for i, f := range res.Failed {
@@ -185,12 +177,72 @@ func (c *Cleanup) details(res cleanup.CleanResult) []string {
 			lines = append(lines, fmt.Sprintf("另有 %d 项未能处理", len(res.Failed)-maxDetailFailures))
 			break
 		}
+		if f.Path == "" {
+			lines = append(lines, f.Reason)
+			continue
+		}
 		lines = append(lines, c.short(f.Path)+"："+f.Reason)
 	}
 	if res.Interrupted {
 		lines = append(lines, "清理在中途停止，其余项目没有改动")
 	}
 	return lines
+}
+
+// outcomeGroup is what one history line sums up: a category, or every category of one source.
+type outcomeGroup struct {
+	title                    string
+	removed, trashed, failed int
+}
+
+// groupOutcomes sums outcomes per source, in order of first appearance, when they carry one, and keeps one group per category otherwise.
+func groupOutcomes(outs []cleanup.CategoryOutcome) []outcomeGroup {
+	var groups []outcomeGroup
+	bySource := map[string]int{}
+	for _, o := range outs {
+		i := len(groups)
+		if o.Source != "" {
+			if j, ok := bySource[o.Source]; ok {
+				i = j
+			} else {
+				bySource[o.Source] = i
+			}
+		}
+		if i == len(groups) {
+			title := o.Title
+			if o.Source != "" {
+				title = cmp.Or(cleanerTitles[CleanerID(o.Source)], o.Source)
+			}
+			groups = append(groups, outcomeGroup{title: title})
+		}
+		g := &groups[i]
+		// A category whose items went to the Trash counts as moved there, as on its own page.
+		if o.Trashed > 0 {
+			g.trashed += o.Removed
+		} else {
+			g.removed += o.Removed
+		}
+		g.failed += o.Failed
+	}
+	return groups
+}
+
+// outcomeLine words a group, e.g. "系统缓存：已清理 34 项，1 项未能处理"; "" when nothing happened to it.
+func outcomeLine(g outcomeGroup) string {
+	var parts []string
+	if g.removed > 0 {
+		parts = append(parts, fmt.Sprintf("已清理 %d 项", g.removed))
+	}
+	if g.trashed > 0 {
+		parts = append(parts, fmt.Sprintf("已移到%s %d 项", binName(), g.trashed))
+	}
+	if g.failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d 项未能处理", g.failed))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return g.title + "：" + strings.Join(parts, "，")
 }
 
 // short replaces the home folder at the start of p with "~".

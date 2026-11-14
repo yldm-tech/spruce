@@ -84,6 +84,8 @@ export interface Category {
   command?: string;
   /** Warning is an optional caution in Simplified Chinese shown in the warning colour, e.g. "删除后 Xcode 需要重新建立索引". */
   warning?: string;
+  /** Source is, in a combined scan (智能扫描), the cleaner the category comes from, e.g. "system-junk"; empty on a cleaner's own page. */
+  source?: string;
 }
 
 /** CategoryKind is what sort of data a Category holds; the page may group or word categories by it. */
@@ -93,6 +95,8 @@ export type CategoryKind = "cache" | "log" | "trash" | "devCache" | "projectArti
 export interface CategoryOutcome {
   categoryId: string;
   title: string;
+  /** Source is the cleaner the category comes from in a combined clean (Category.Source). */
+  source?: string;
   removed: number;
   freed: number;
   trashed: number;
@@ -289,6 +293,8 @@ export interface Progress {
   total: number;
   /** Bytes is found so far while scanning and freed or trashed so far while cleaning. */
   bytes: number;
+  /** Sources is, while a combined scan (智能扫描) runs, the state of each of its cleaners. */
+  sources?: SourceState[];
 }
 
 /** ProgressEvent is streamed to the page while a run goes on. Each selected task gets one started and then one finished event. */
@@ -367,6 +373,8 @@ export interface ScanResult {
   denied: number;
   scannedAt: string;
   duration: number;
+  /** Sources is, for a combined scan (智能扫描), how each of its cleaners did; empty on a cleaner's own page. */
+  sources?: SourceState[];
 }
 
 /** SettingRange is the inclusive range Settings.Update clamps one number to. */
@@ -385,6 +393,27 @@ export interface SettingsLimits {
   /** MaxPaths is how many entries each folder list keeps. */
   maxPaths: number;
 }
+
+/** SourceState is how one cleaner of a combined scan (智能扫描) is doing: streamed in Progress.Sources while it scans, and in ScanResult.Sources once the scan is over. */
+export interface SourceState {
+  /** ID is the cleaner, e.g. "system-junk". */
+  id: string;
+  status: SourceStatus;
+  /** Done and Total count the cleaner's own scan steps while it scans; Total is 0 while unknown. */
+  done: number;
+  total: number;
+  /** Bytes is found so far while scanning, and the size of what it found once done. */
+  bytes: number;
+  /** Items is how many items it found, once done. */
+  items: number;
+  /** Denied counts locations it could not read (see ScanResult.Denied). */
+  denied: number;
+  /** Error is why the scan failed, a sentence in Simplified Chinese. */
+  error?: string;
+}
+
+/** SourceStatus is where one cleaner of a combined scan is. */
+export type SourceStatus = "scanning" | "done" | "failed";
 
 /** SpaceEntry is one folder, file or folded group of the last scan. */
 export interface SpaceEntry {
