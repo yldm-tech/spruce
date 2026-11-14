@@ -37,6 +37,8 @@ type Env struct {
 	Now func() time.Time
 	// Log receives what the page is not told; nil discards it.
 	Log *slog.Logger
+	// MayRead reports whether a folder may be read (the background read gate), asked after the exclusions and before each root and sub-folder is listed; a folder it refuses is skipped silently, neither read nor counted as denied. On macOS it keeps background checks out of Downloads and Desktop until a foreground read has entered them. Nil reads every folder.
+	MayRead func(path string) bool
 	// windows classifies as on Windows; set by New on Windows and by tests.
 	windows bool
 	// arrived is when a file arrived; nil means added. Tests replace it, since a file's creation time cannot be set back.
@@ -51,6 +53,9 @@ const (
 	catSystemImages = "system-images"
 	catRecent       = "recent-installers"
 )
+
+// warnMountedUnknown is the warning of the disk images a scan could not check against the attached ones.
+const warnMountedUnknown = "无法确认哪些磁盘映像正在使用"
 
 // minAge is how long ago an installer must have arrived to be checked by default: one downloaded this week may not be installed yet.
 const minAge = 7 * 24 * time.Hour
@@ -116,11 +121,13 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	roots := cleanRoots(s.InstallerRoots)
 
 	mounted := map[string]bool{}
-	if paths, err := c.env.Mounted(ctx); err != nil {
+	paths, err := c.env.Mounted(ctx)
+	unsure := err != nil
+	if err != nil {
 		if ctx.Err() != nil {
 			return cleanup.ScanResult{}, ctx.Err()
 		}
-		// Without the list an attached image looks like any other; it is still only moved to the Trash, and macOS refuses to trash a busy one.
+		// Without the list an attached image looks like any other; it is still only moved to the Trash, and macOS refuses to trash a busy one. The disk images carry a warning, which keeps automatic rules away from them.
 		c.env.Log.Warn("list attached disk images", "err", err)
 	} else {
 		for _, p := range paths {
@@ -147,6 +154,13 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	}
 
 	cats := c.categories(w.found, roots, mounted, started)
+	if unsure {
+		for i := range cats {
+			if cats[i].ID == catDiskImages {
+				cats[i].Warning = warnMountedUnknown
+			}
+		}
+	}
 	res := cleanup.NewResult(cats, started)
 	res.Denied = w.denied.Load()
 	if err := c.exec.Remember(res); err != nil {
@@ -248,8 +262,14 @@ type entry struct {
 	info fs.FileInfo
 }
 
-// list returns the visible plain files and folders in dir that are not excluded.
+// list returns the visible plain files and folders in dir that are not excluded. An excluded folder, and one the read gate (Env.MayRead) refuses, lists nothing without being read.
 func (w *walker) list(dir string) []entry {
+	if len(w.exclusions) > 0 && fsx.Excluded(dir, w.exclusions) {
+		return nil
+	}
+	if w.env.MayRead != nil && !w.env.MayRead(dir) {
+		return nil
+	}
 	des, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {

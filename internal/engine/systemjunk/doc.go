@@ -19,4 +19,6 @@
 // Every item is a direct child (or a named cache folder) of a category root, listed with os.ReadDir and os.Lstat, so symlinks are never followed; symlinks themselves are not offered. Items under the user's exclusions, or containing an excluded path, are left out. Each item is checked against fsx.CheckRemovable (or fsx.CheckTrashable) at scan time, and the cleanup.Executor deletes only what the last scan returned, through fsx.SafeRemove inside the category's roots. Nothing needs administrator rights.
 //
 // Cleaning the Trash together with items that go to the Trash empties it first, so this clean's own items stay recoverable.
+//
+// When the running apps cannot be listed, 应用缓存 and 浏览器缓存 carry the warning 「无法确认哪些应用正在运行」: the page still offers them, but automatic rules skip a category with a warning. Env.MayRead, the background read gate, is asked before each folder is listed (after the exclusions); a folder it refuses, on macOS the Downloads folder until a foreground read has entered it, is skipped silently.
 package systemjunk

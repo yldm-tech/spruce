@@ -44,6 +44,8 @@ type scanCtx struct {
 	// denied counts folders that could not be read for lack of permission.
 	denied atomic.Int64
 	report func(path string)
+	// exclusions are the user's exclusions; an excluded folder is not listed.
+	exclusions []string
 }
 
 // entry is one child of a folder: a plain file or folder, never a symlink.
@@ -53,8 +55,14 @@ type entry struct {
 	info fs.FileInfo
 }
 
-// entries lists the plain files and folders in dir, each with its Lstat info; symlinks, junctions and devices are left out, so nothing is ever followed. A missing folder lists nothing; an unreadable one counts as denied unless quiet.
+// entries lists the plain files and folders in dir, each with its Lstat info; symlinks, junctions and devices are left out, so nothing is ever followed. A missing folder lists nothing; an unreadable one counts as denied unless quiet. An excluded folder, whose items measure would drop anyway, and one the read gate (Env.MayRead) refuses list nothing without being read.
 func (sc *scanCtx) entries(dir string, quiet bool) []entry {
+	if len(sc.exclusions) > 0 && fsx.Excluded(dir, sc.exclusions) {
+		return nil
+	}
+	if sc.env.MayRead != nil && !sc.env.MayRead(dir) {
+		return nil
+	}
 	sc.report(dir)
 	des, err := os.ReadDir(dir)
 	if err != nil {

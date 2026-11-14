@@ -44,6 +44,8 @@ type Env struct {
 	Now func() time.Time
 	// Log receives what the page is not told; nil discards it.
 	Log *slog.Logger
+	// MayRead reports whether a folder may be read (the background read gate), asked after the exclusions and before the folder is listed; a folder it refuses is skipped silently, neither read nor counted as denied. On macOS it keeps background checks out of the Downloads folder until a foreground read has entered it. Nil reads every folder.
+	MayRead func(path string) bool
 }
 
 // Category IDs, stable across scans.
@@ -59,6 +61,9 @@ const (
 	catIncompleteDownload = "incomplete-downloads"
 	catTrash              = "trash"
 )
+
+// warnRunningUnknown is the warning of the caches a scan could not sort by running app.
+const warnRunningUnknown = "无法确认哪些应用正在运行"
 
 // maxItems caps the items of one category, keeping the largest: the page virtualizes long lists, but tens of thousands of crash reports help nobody. Items left out are not deleted.
 const maxItems = 3000
@@ -133,15 +138,17 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	rep := newReporter(progress)
 
 	running, err := c.env.Running(ctx)
+	unsure := err != nil
 	if err != nil {
 		if ctx.Err() != nil {
 			return cleanup.ScanResult{}, ctx.Err()
 		}
-		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open.
+		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open. The caches the list would have sorted carry a warning, which keeps automatic rules away from them.
 		c.env.Log.Warn("list running apps", "err", err)
 		running = Running{}
 	}
-	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path}
+	exclusions := c.exclusions()
+	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path, exclusions: exclusions}
 	specs := c.specs(c.env)
 
 	// The Trash is measured beside the other locations.
@@ -163,7 +170,7 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		}
 		cands[i] = s.collect(ctx, sc)
 	}
-	items, err := measure(ctx, sc, cands, c.exclusions(), rep)
+	items, err := measure(ctx, sc, cands, exclusions, rep)
 	<-trashDone
 	if err != nil {
 		return cleanup.ScanResult{}, err
@@ -183,6 +190,9 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 				return dup
 			})
 			if len(cat.Items) > 0 {
+				if unsure && (cat.ID == catAppCaches || cat.ID == catBrowserCaches) {
+					cat.Warning = warnRunningUnknown
+				}
 				cats = append(cats, cat)
 			}
 		}
