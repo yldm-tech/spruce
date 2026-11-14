@@ -179,7 +179,7 @@ function HealthSection({ settings, limits }: SectionProps) {
         settings={settings}
         spec={FIELDS.cpuThreshold}
         label="提醒阈值"
-        description="按单个处理器核心计算，100% 表示占满一个核心。"
+        description="按单个处理器核心计算：100% 表示占满一个核心，200% 表示占满两个核心。"
         range={limits.cpuThreshold}
         step={5}
         format={(v) => `${v}%`}

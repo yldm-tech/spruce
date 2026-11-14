@@ -43,7 +43,7 @@ vi.mock("mygo-runtime", async (importOriginal) => ({
 }));
 
 const LIMITS: SettingsLimits = {
-  cpuThreshold: { min: 20, max: 800 },
+  cpuThreshold: { min: 20, max: 400 },
   sustainMinutes: { min: 1, max: 120 },
   devArtifactMinAgeDays: { min: 0, max: 3650 },
   largeFileMinMB: { min: 10, max: 1048576 },
@@ -151,7 +151,7 @@ describe("SettingsPage health", () => {
       threshold.getAttribute("min"),
       threshold.getAttribute("max"),
       threshold.getAttribute("aria-valuetext"),
-    ]).toEqual(["20", "800", "40%"]);
+    ]).toEqual(["20", "400", "40%"]);
     fireEvent.change(threshold, { target: { value: "60" } });
     fireEvent.change(threshold, { target: { value: "75" } });
     expect(threshold.getAttribute("aria-valuetext")).toBe("75%");
@@ -170,13 +170,13 @@ describe("SettingsPage health", () => {
   it("says so when Go clamps a value", async () => {
     fakes.Settings.update.mockImplementation(async (next) => ({
       ...next,
-      health: { ...next.health, cpuThreshold: 800 },
+      health: { ...next.health, cpuThreshold: 400 },
     }));
     renderPage();
     const threshold = await screen.findByRole("slider", { name: "提醒阈值" });
-    fireEvent.change(threshold, { target: { value: "795" } });
-    expect(await within(section("健康监测")).findByText("已调整为 800%")).toBeTruthy();
-    expect(threshold.getAttribute("aria-valuetext")).toBe("800%");
+    fireEvent.change(threshold, { target: { value: "395" } });
+    expect(await within(section("健康监测")).findByText("已调整为 400%")).toBeTruthy();
+    expect(threshold.getAttribute("aria-valuetext")).toBe("400%");
   });
 });
 

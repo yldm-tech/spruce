@@ -61,7 +61,7 @@ type GeneralSettings struct {
 // Ranges Normalize clamps to.
 const (
 	MinCPUThreshold      = 20
-	MaxCPUThreshold      = 800
+	MaxCPUThreshold      = 400
 	MinSustainMinutes    = 1
 	MaxSustainMinutes    = 120
 	MinDevArtifactMinAge = 0
