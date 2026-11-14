@@ -87,7 +87,9 @@ func TestToastUndoAndView(t *testing.T) {
 	}
 	fakes.Overview = ov
 	a, stores := startShell(t, fakes, "")
-	a.Post(func() { stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "run-1", Duration: 10 * time.Second}) })
+	a.Post(func() {
+		stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
+	})
 	a.WaitFor("id:toast", wait)
 	if got := a.Find("id:toast-text").Text; got != "已移到废纸篓 3.1 GB" {
 		t.Errorf("toast %q", got)
@@ -111,7 +113,9 @@ func TestToastUndoAndView(t *testing.T) {
 
 func TestToastWithoutAController(t *testing.T) {
 	a, stores := startShell(t, storefake.New(t.TempDir()), "")
-	a.Post(func() { stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 1 GB", UndoRun: "run-1", Duration: 10 * time.Second}) })
+	a.Post(func() {
+		stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
+	})
 	a.WaitFor("id:toast-undo", wait)
 	a.Press("id:toast-undo")
 	a.WaitFor("id:toast >> text:概览还没有接入", wait)
