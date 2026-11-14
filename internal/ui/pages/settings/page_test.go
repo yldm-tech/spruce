@@ -121,7 +121,9 @@ func TestSwitchesSaveTheirOwnFieldAtOnce(t *testing.T) {
 	}
 
 	p.Press("role:switch 清理前确认")
-	if got := p.updates(2).General; got != (enginesettings.GeneralSettings{LaunchAtLogin: true, ConfirmBeforeClean: false}) {
+	wantGeneral := settingsfake.Defaults().General
+	wantGeneral.LaunchAtLogin, wantGeneral.ConfirmBeforeClean = true, false
+	if got := p.updates(2).General; got != wantGeneral {
 		t.Fatalf("general %+v", got)
 	}
 

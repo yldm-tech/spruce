@@ -35,7 +35,7 @@ func results(cx *core.Scope, f *cleanflow.Flow, cleanRef *core.Ref, reveal func(
 					FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, TextAlign: core.TextAlignCenter}},
 			}})
 	} else {
-		meta := nav.SmartScan.Meta()
+		meta := nav.Overview.Meta()
 		children = append(children, kit.EmptyState{Title: "没有找到需要清理的内容", Description: "系统垃圾、开发者垃圾和安装包都很干净，过段时间再来看看。",
 			Tone: meta.Tone, Glyph: meta.Glyph, TestID: "empty"})
 	}

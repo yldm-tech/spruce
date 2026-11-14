@@ -148,7 +148,7 @@ func TestKindsIn(t *testing.T) {
 }
 
 func TestKindMeta(t *testing.T) {
-	for kind, want := range map[enginehist.Kind]string{enginehist.KindDevJunk: "开发者垃圾", enginehist.KindMaintenance: "维护", "future": "其他操作"} {
+	for kind, want := range map[enginehist.Kind]string{enginehist.KindDevJunk: "开发者", enginehist.KindMaintenance: "维护", "future": "其他操作"} {
 		if got := KindMeta(kind).Title; got != want {
 			t.Errorf("KindMeta(%s) = %q", kind, got)
 		}

@@ -35,7 +35,7 @@ var kindRoutes = map[enginehist.Kind]nav.Route{
 	enginehist.KindInstallers:  nav.Installers,
 	enginehist.KindUninstall:   nav.Uninstall,
 	enginehist.KindSpace:       nav.Space,
-	enginehist.KindSmartScan:   nav.SmartScan,
+	enginehist.KindSmartScan:   nav.Overview,
 }
 
 // KindMeta is the page a run's kind belongs to (its title, tile tone and glyph). A kind this build does not know, written by a newer version, shows as the history page's own, titled 其他操作.

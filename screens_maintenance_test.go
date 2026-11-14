@@ -11,19 +11,26 @@ import (
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/maintenance"
 	"github.com/yldm-tech/spruce/internal/ui/pages/maintenance/maintenancefake"
 	"github.com/yldm-tech/spruce/internal/ui/shell"
 	"github.com/yldm-tech/spruce/internal/ui/store/storefake"
 )
 
-// screensApp starts the shell on fakes and goes to page through the sidebar.
+// screensApp starts the shell on fakes and goes to page: through the sidebar for its pages, and by opening on it for a drill-down view, which has no entry there.
 func screensApp(t *testing.T, fakes *storefake.Services, d shell.Deps, page string) *nsgotest.App {
 	t.Helper()
 	d.Stores = fakes.Deps()
+	r := nav.Route(page)
+	if !r.InSidebar() {
+		d.Start = r
+	}
 	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
 	a.WaitFor("id:sidebar", 10*time.Second)
-	a.Press("id:nav-" + page)
+	if r.InSidebar() {
+		a.Press("id:nav-" + page)
+	}
 	return a
 }
 

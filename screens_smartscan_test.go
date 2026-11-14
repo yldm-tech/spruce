@@ -87,7 +87,7 @@ func TestScreensSmartScan(t *testing.T) {
 	fakes.Locations = app.SpaceLocations{Volumes: []app.SpaceVolume{{Path: "/", Name: "Macintosh HD", Total: 994_660_000_000, Free: 128_400_000_000, Startup: true}}}
 	ended := time.Now().Add(-9 * 24 * time.Hour)
 	fakes.Runs = []history.Run{{ID: "s", Kind: history.KindSmartScan, StartedAt: ended, EndedAt: ended, Summary: &history.Totals{Freed: 4_200_000_000, Items: 41}}}
-	a := screensApp(t, fakes, shell.Deps{SmartScan: smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "smart-scan")
+	a := screensApp(t, fakes, shell.Deps{SmartScan: smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "overview")
 	a.WaitFor("id:last-clean", 10*time.Second)
 	a.WaitFor("id:status-disk-note", 10*time.Second)
 	a.Screenshot("smart-scan-idle")
@@ -127,7 +127,7 @@ func TestScreensSmartScanEmpty(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	fakes.Alerts = []health.Alert{{PID: 4242, Name: "Xcode", CPUPercent: 148.6, Duration: 14 * time.Minute, Threshold: 40}}
 	fakes.Locations = app.SpaceLocations{Volumes: []app.SpaceVolume{{Path: "/", Name: "Macintosh HD", Total: 494_380_000_000, Free: 12_600_000_000, Startup: true}}}
-	a := screensApp(t, fakes, shell.Deps{SmartScan: smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "smart-scan")
+	a := screensApp(t, fakes, shell.Deps{SmartScan: smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "overview")
 	a.WaitFor("id:scan", 10*time.Second)
 	a.Press("id:scan")
 	a.WaitFor("id:empty", 10*time.Second)

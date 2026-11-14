@@ -217,7 +217,7 @@ func TestRefreshesWhenARunIsRecorded(t *testing.T) {
 	fresh.StartedAt, fresh.EndedAt = daysAgo(0, 11, 0, 0).UTC(), daysAgo(0, 11, 0, 1).UTC()
 	svc.Record(fresh)
 	p.WaitFor("id:run-j2", wait)
-	p.Find("id:run-j2 >> text:开发者垃圾")
+	p.Find("id:run-j2 >> text:开发者")
 	if got := p.rows("id:day-" + dayKey(0)); !reflect.DeepEqual(got, []string{"j2", "m1", "j1"}) {
 		t.Errorf("rows %v", got)
 	}

@@ -43,7 +43,7 @@ func Page(cx *core.Scope) core.Node {
 	})
 
 	rescan := kit.Button{Text: "重新扫描", Variant: kit.ButtonGhost, OnPress: f.Scan, TestID: "rescan"}
-	header := kit.PageHeader{Route: nav.SmartScan, Actions: []core.Node{
+	header := kit.PageHeader{Route: nav.Overview, Actions: []core.Node{
 		core.Show{When: func() bool { return phase() == cleanflow.PhaseResults }, Then: func(*core.Scope) core.Node { return rescan }},
 	}}
 
@@ -142,7 +142,7 @@ func hero(cx *core.Scope, f *cleanflow.Flow, scanRef *core.Ref) core.Node {
 		}
 		return ""
 	}
-	meta := nav.SmartScan.Meta()
+	meta := nav.Overview.Meta()
 	return core.View{Role: core.RoleRegion, Label: title, TestID: "hero",
 		Style: core.Style{FlexGrow: 1, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 12,
 			Padding: core.Edges{Top: 40, Bottom: 24}, TextAlign: core.TextAlignCenter},

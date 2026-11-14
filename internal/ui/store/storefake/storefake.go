@@ -40,6 +40,8 @@ type Services struct {
 	// ClearErr is what clearing the history fails with, clearing nothing; ClearRelease, when set, holds each clear until it receives.
 	ClearErr     error
 	ClearRelease chan struct{}
+	// Overview, when set, is 概览's controller; nil leaves it unwired, as in the app before it is.
+	Overview *Overview
 
 	settingsCh chan settings.AppSettings
 	alertsCh   chan []health.Alert
@@ -54,8 +56,12 @@ func New(home string) *Services {
 
 // Deps returns the fakes as store.Deps.
 func (s *Services) Deps() store.Deps {
-	return store.Deps{Settings: settingsSvc{s}, SettingsFeed: settingsSvc{s}, History: historySvc{s}, Alerts: alertSvc{s},
+	d := store.Deps{Settings: settingsSvc{s}, SettingsFeed: settingsSvc{s}, History: historySvc{s}, Alerts: alertSvc{s},
 		Permissions: permissionSvc{s}, Locations: locationSvc{s}}
+	if s.Overview != nil {
+		d.Overview = s.Overview
+	}
+	return d
 }
 
 // Alert broadcasts list as the monitor's current alerts.

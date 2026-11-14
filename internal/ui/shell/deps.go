@@ -6,7 +6,9 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/host/instance"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
 	"github.com/yldm-tech/spruce/internal/ui/pages/health"
 	"github.com/yldm-tech/spruce/internal/ui/pages/history"
@@ -44,4 +46,8 @@ type Deps struct {
 	// SetMainView shows the root view: nsgo.SetMainView in the app, core's in tests.
 	SetMainView func(cx *core.Scope, view func(cx *core.Scope) core.Node)
 	Log         *slog.Logger
+	// Start is the page the window opens on; "" means nav.Start. Screen tests of the drill-down views, which have no sidebar entry, open on them this way.
+	Start nav.Route
+	// Activity is the gate every clean and the background work go through: main ends it as the app quits, and the tray's 退出 says when a clean is running.
+	Activity *schedule.Activity
 }
