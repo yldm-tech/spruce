@@ -129,7 +129,8 @@ func TestScreensHistoryRestore(t *testing.T) {
 		r.RestoreOf = runID
 		r.Summary = &enginehist.Totals{Items: 2, Trashed: 1_400_000_000, Failed: 1}
 		r.Details = []string{"~/Downloads/Figma.dmg：原位置已有同名项目"}
-		fakes.SetRestorable("s1", "a1", "t1")
+		// The restore tried every item, so the run is no longer offered, though one stayed in the Trash.
+		fakes.SetRestorable("s1", "a1")
 		fakes.Record(r)
 		return app.RestoreOutcome{RunID: "r1", Restored: 2, Failed: 1, Bytes: 1_400_000_000}, nil
 	}
@@ -143,7 +144,13 @@ func TestScreensHistoryRestore(t *testing.T) {
 	a.WaitFor("id:run-t1-restored", 10*time.Second)
 	a.WaitFor("id:toast", 10*time.Second)
 	a.WaitFor("id:run-r1", 10*time.Second)
+	a.WaitForGone("id:run-t1-restore", 10*time.Second)
 	a.Screenshot("history-restored")
+
+	// 查看 in the toast, pressed while 操作历史 is open, expands the restore's record.
+	a.Press("id:toast-details")
+	a.WaitFor("id:run-r1 >> id:run-details", 10*time.Second)
+	a.Find("id:run-r1 >> text:~/Downloads/Figma.dmg：原位置已有同名项目")
 
 	a.Press("id:chip-auto")
 	a.WaitForGone("id:run-t1", 10*time.Second)
@@ -153,7 +160,7 @@ func TestScreensHistoryRestore(t *testing.T) {
 
 	a.Press("id:chip-restore")
 	a.WaitFor("id:run-r1", 10*time.Second)
-	a.Press("id:run-r1-head")
+	// 查看 asked for it, so it opens again with the filter.
 	a.WaitFor("id:run-r1 >> id:run-details", 10*time.Second)
 	a.Screenshot("history-restore-kind")
 }
