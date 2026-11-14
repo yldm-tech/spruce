@@ -10,14 +10,16 @@ import (
 	"github.com/yldm-tech/spruce/internal/app"
 	enginehist "github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/ui/async"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// State is the 操作历史 page's controller: the recorded runs, loaded again whenever the history's generation changes (a run recorded anywhere, 清空历史), the chosen filter and the maintenance catalog that names a maintenance run's tasks. Make it in the page's component (NewState); its methods run on the engine goroutine.
+// State is the 操作历史 page's controller: the recorded runs, loaded again whenever the history's generation changes (a run recorded anywhere, 清空历史), which of them 放回原处 can put back, the chosen filter and the maintenance catalog that names a maintenance run's tasks. Make it in the page's component (NewState); its methods run on the engine goroutine.
 type State struct {
-	cx   *core.Scope
-	ctx  context.Context
-	hist *store.History
+	cx     *core.Scope
+	ctx    context.Context
+	hist   *store.History
+	stores *store.Stores
 
 	// Runs are the recorded runs, newest first, as the last successful load left them.
 	Runs *core.Signal[[]enginehist.Run]
@@ -29,20 +31,34 @@ type State struct {
 	Filter *core.Signal[enginehist.Kind]
 	// Catalog is the maintenance tasks, which name a maintenance run's tasks; nil until loaded.
 	Catalog *core.Signal[[]app.TaskView]
+	// Restorable are the IDs of the runs 放回原处 can put back, as of the last load.
+	Restorable *core.Signal[map[string]bool]
+	// Restoring is the run being put back, "" for none.
+	Restoring *core.Signal[string]
+	// Opened is the run GoHistory asked to show expanded, "" for none.
+	Opened string
 
 	kinds *core.Memo[[]enginehist.Kind]
 	// seq numbers the loads, so only the latest one's answer is shown.
 	seq int
 }
 
-// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation.
-func NewState(cx *core.Scope, hist *store.History, catalog Catalog) *State {
-	s := &State{cx: cx, ctx: cx.Context(), hist: hist,
-		Runs:    core.NewSignalFunc[[]enginehist.Run](cx, nil, nil),
-		Loaded:  core.NewSignal(cx, false),
-		LoadErr: core.NewSignal(cx, ""),
-		Filter:  core.NewSignal[enginehist.Kind](cx, ""),
-		Catalog: core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
+// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation. The filter and the expanded run start as GoHistory asked, when it did (nav, nil in tests that mount the page alone).
+func NewState(cx *core.Scope, stores *store.Stores, catalog Catalog, n *nav.Navigator) *State {
+	hist := stores.History
+	s := &State{cx: cx, ctx: cx.Context(), hist: hist, stores: stores,
+		Runs:       core.NewSignalFunc[[]enginehist.Run](cx, nil, nil),
+		Loaded:     core.NewSignal(cx, false),
+		LoadErr:    core.NewSignal(cx, ""),
+		Filter:     core.NewSignal[enginehist.Kind](cx, ""),
+		Catalog:    core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
+		Restorable: core.NewSignalFunc[map[string]bool](cx, nil, nil),
+		Restoring:  core.NewSignal(cx, ""),
+	}
+	if n != nil {
+		kind, run := n.TakeHistoryFilter()
+		s.Filter.Set(kind)
+		s.Opened = run
 	}
 	s.kinds = core.NewMemoFunc(cx, func() []enginehist.Kind { return KindsIn(s.Runs.Get()) }, slices.Equal)
 	if catalog != nil {
@@ -71,6 +87,34 @@ func (s *State) Load() {
 		s.LoadErr.Set("")
 		s.Runs.Set(runs)
 		s.Loaded.Set(true)
+		s.hist.Restorable(s.cx, s.ctx, runs, func(ids map[string]bool) {
+			if seq == s.seq {
+				s.Restorable.Set(ids)
+			}
+		})
+	})
+}
+
+// CanRestore reports whether the run id shows 放回原处; reading it subscribes.
+func (s *State) CanRestore(id string) bool { return s.Restorable.Get()[id] }
+
+// Restore puts back what the run id moved to the Trash, through 概览's controller (which then checks again), shows the outcome in the toast and loads the runs again. One at a time: it does nothing while anything is being cleaned or put back.
+func (s *State) Restore(id string) {
+	if s.Restoring.GetUntracked() != "" || s.stores.Overview.Busy() {
+		return
+	}
+	s.Restoring.Set(id)
+	s.stores.Overview.Undo(s.cx, id, func(out app.RestoreOutcome, err error) {
+		s.Restoring.Set("")
+		s.stores.Trash.Bump()
+		s.stores.Locations.Bump()
+		if err != nil {
+			s.stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
+		} else {
+			text, view, d := RestoreToast(out)
+			s.stores.Toasts.Show(store.Toast{Text: text, ViewRun: view, Duration: d})
+		}
+		s.Load()
 	})
 }
 

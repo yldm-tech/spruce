@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -34,6 +35,8 @@ type HistoryService interface {
 	List(limit int) ([]history.Run, error)
 	Clear() error
 	Subscribe() (<-chan history.Run, func(), bool)
+	// Restorable returns the IDs of the runs among runs that 放回原处 can put back at now.
+	Restorable(runs []history.Run, now time.Time) map[string]bool
 }
 
 // AlertService is the CPU monitor: *app.Health.
@@ -224,6 +227,12 @@ func (h *History) Clear(done func(error)) {
 // Load lists up to limit runs on a goroutine and calls done in cx, the caller's scope, with ctx the caller's.
 func (h *History) Load(cx *core.Scope, ctx context.Context, limit int, done func([]history.Run, error)) {
 	async.Do(cx, ctx, func(context.Context) ([]history.Run, error) { return h.svc.List(limit) }, done)
+}
+
+// Restorable finds, on a goroutine, which of runs 放回原处 can put back now (it reads the undo ledger) and calls done with their IDs in cx, the caller's scope, with ctx the caller's.
+func (h *History) Restorable(cx *core.Scope, ctx context.Context, runs []history.Run, done func(map[string]bool)) {
+	async.Do(cx, ctx, func(context.Context) (map[string]bool, error) { return h.svc.Restorable(runs, time.Now()), nil },
+		func(ids map[string]bool, _ error) { done(ids) })
 }
 
 // Alerts holds the current CPU alerts, most CPU first.
