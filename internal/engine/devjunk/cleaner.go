@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,8 +18,12 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
 	"github.com/yldm-tech/spruce/internal/engine/fsx"
+	"github.com/yldm-tech/spruce/internal/engine/gitstate"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 )
+
+// gitWorkers bounds how many projects git is asked about at once.
+const gitWorkers = 4
 
 // measureWorkers bounds how many items are measured at once; each measurement walks with its own pool of fsx.DirSize workers.
 const measureWorkers = 4
@@ -48,6 +53,10 @@ type Options struct {
 	Trashable func(path string, roots []string) error
 	// Excluded matches the user's exclusions; default fsx.Excluded.
 	Excluded func(path string, exclusions []string) bool
+	// Git asks git about a project's build output, at scan time and again for each project when it is cleaned. Nil uses a gitstate.Checker over Runner with the git program the scan located (gitstate.DefaultTimeout per run); without one every project in a repository is GitUnknown.
+	Git func(ctx context.Context, repo, project string, artifacts []gitstate.Artifact) (gitstate.Result, error)
+	// MayRead reports whether the project walk may read a folder (the background read gate), asked after the exclusions and before the first read; a folder it refuses is skipped silently. Nil reads every folder.
+	MayRead func(path string) bool
 }
 
 // Cleaner is the 开发者垃圾 cleaner. It is safe for concurrent use.
@@ -122,7 +131,7 @@ func New(opts Options) *Cleaner {
 	if opts.Settings == nil {
 		opts.Settings = func() settings.CleanupSettings { return settings.CleanupSettings{} }
 	}
-	del := &scopedDeleter{base: opts.Deleter, roots: map[string]string{}}
+	del := &scopedDeleter{base: opts.Deleter, roots: map[string]string{}, log: opts.Log}
 	return &Cleaner{
 		opts: opts,
 		env:  env{goos: opts.GOOS, home: opts.Home, getenv: opts.Getenv},
@@ -162,20 +171,24 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		progress = func(cleanup.Progress) {}
 	}
 	devices := filepath.Join(c.opts.Home, "Library", "Developer", "CoreSimulator", "Devices")
-	loc := locate(ctx, c.env, c.opts.Runner, c.opts.LookPath, devices)
+	loc := locate(ctx, c.env, c.opts.Runner, c.opts.LookPath, devices, len(cfg.DevProjectRoots) > 0)
 	loc.vscodeRunning = c.opts.VSCodeRunning(ctx)
+	git := c.opts.Git
+	if git == nil {
+		git = gitstate.Checker{Runner: c.opts.Runner, Git: loc.bins["git"]}.Check
+	}
 	tools := catalog(c.env, loc)
 	rep := &reporter{fn: progress, total: len(tools) + len(cfg.DevProjectRoots)}
 	rep.at("")
 
-	b := &builder{seen: map[string]bool{}, commands: map[string]*commandJob{}, projects: map[string]string{}}
+	b := &builder{seen: map[string]bool{}, commands: map[string]*commandJob{}, projects: map[string]string{}, artifacts: map[string][]gitstate.Artifact{}}
 	for _, t := range tools {
 		if err := c.scanTool(ctx, t, cfg.Exclusions, rep, b); err != nil {
 			return cleanup.ScanResult{}, err
 		}
 		rep.step()
 	}
-	if err := c.scanProjects(ctx, cfg, rep, b); err != nil {
+	if err := c.scanProjects(ctx, cfg, git, rep, b); err != nil {
 		return cleanup.ScanResult{}, err
 	}
 
@@ -187,6 +200,8 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 			files.Categories = append(files.Categories, cat)
 		}
 	}
+	// The deleter learns the build output before the Executor can plan a clean of it, so the git re-check never misses an item.
+	c.del.set(b.projects, b.artifacts, git)
 	if err := c.exec.Remember(files); err != nil {
 		return cleanup.ScanResult{}, err
 	}
@@ -197,7 +212,6 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 			snap.items[it.ID] = cat.ID
 		}
 	}
-	c.del.set(b.projects)
 	c.mu.Lock()
 	c.last = snap
 	c.mu.Unlock()
@@ -212,7 +226,9 @@ type builder struct {
 	commands map[string]*commandJob
 	// projects maps an artifact's path to its project folder, its only allowed root.
 	projects map[string]string
-	denied   int64
+	// artifacts are each project's build output folders, for asking git about it again when it is cleaned.
+	artifacts map[string][]gitstate.Artifact
+	denied    int64
 }
 
 // add appends cat with the items whose IDs no earlier category has, each starting checked (Item.Selected) when checked says so; cleanup.NewResult then checks the category as a whole when all of them are. A category left empty is dropped.
@@ -430,8 +446,16 @@ func (c *Cleaner) binName() string {
 	return "废纸篓"
 }
 
-// scanProjects walks the project roots and adds a category per kind of build output (and one more per kind for output that goes to the Trash).
-func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings, rep *reporter, b *builder) error {
+// Hold reasons and notes of build output whose project git says must not be cleaned or could not be asked about.
+const (
+	holdDirty     = "项目有未提交的改动"
+	holdTracked   = "构建产物文件夹里有纳入版本控制的文件"
+	noteDirty     = "有未提交的改动"
+	noteGitUnsure = "无法确定 Git 状态"
+)
+
+// scanProjects walks the project roots and adds a category per kind of build output (and one more per kind for output that goes to the Trash). Each item carries its project and what git says about it: only output of a project that is clean or not in a repository, has no tracked file in its build output and was idle long enough starts checked; a dirty project's output and output holding tracked files are held (Item.Hold).
+func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error), rep *reporter, b *builder) error {
 	seen := map[string]bool{}
 	var arts []sized
 	for _, root := range cfg.DevProjectRoots {
@@ -439,7 +463,7 @@ func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings
 			rep.step()
 			continue
 		}
-		found, denied, err := walkProjects(ctx, filepath.Clean(root), cfg.Exclusions, c.opts.Excluded, rep.at)
+		found, denied, err := walkProjects(ctx, filepath.Clean(root), cfg.Exclusions, c.opts.Excluded, c.opts.MayRead, rep.at)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -478,6 +502,7 @@ func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings
 	checked := map[string]bool{}
 	minAge := time.Duration(cfg.DevArtifactMinAgeDays) * 24 * time.Hour
 	now := c.opts.Now()
+	var kept []sized
 	for _, a := range arts {
 		roots := []string{a.project}
 		var trash bool
@@ -489,29 +514,55 @@ func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings
 			c.opts.Log.Debug("build output in a protected place", "path", a.path)
 			continue
 		}
-		k := key{a.kind, trash}
+		a.trash = trash
+		kept = append(kept, a)
+	}
+	byProject := map[string][]gitstate.Artifact{}
+	for _, a := range kept {
+		byProject[a.project] = append(byProject[a.project], gitstate.Artifact{Path: a.path, Generated: a.generated})
+	}
+	states := c.gitStates(ctx, git, byProject)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, a := range kept {
+		k := key{a.kind, a.trash}
 		cat := cats[k]
 		if cat == nil {
-			cat = c.artifactCategory(a.kind, trash)
+			cat = c.artifactCategory(a.kind, a.trash)
 			cats[k] = cat
 		}
 		it := cleanup.NewItem(a.path, a.info, a.size)
 		if !a.active.IsZero() {
 			it.ModTime = a.active
 		}
+		st := states[a.project]
+		it.Project = a.project
+		it.Git = st.State
 		notes := []string{projectLabel(a.root, a.project)}
 		recent := minAge > 0 && !a.active.IsZero() && now.Sub(a.active) < minAge
 		if recent {
 			notes = append(notes, fmt.Sprintf("最近 %d 天内有改动", cfg.DevArtifactMinAgeDays))
+		}
+		switch {
+		case st.State == cleanup.GitDirty:
+			it.Hold = holdDirty
+			notes = append(notes, noteDirty)
+		case st.Tracked:
+			it.Hold = holdTracked
+		case st.State == cleanup.GitUnknown:
+			notes = append(notes, noteGitUnsure)
 		}
 		it.Note = strings.Join(notes, " · ")
 		cat.Items = append(cat.Items, it)
 		if !slices.Contains(cat.Roots, a.project) {
 			cat.Roots = append(cat.Roots, a.project)
 		}
-		checked[it.ID] = !recent
+		gitOK := st.State == cleanup.GitClean || st.State == cleanup.GitNone
+		checked[it.ID] = !recent && gitOK && it.Hold == ""
 		b.mu.Lock()
 		b.projects[a.path] = a.project
+		b.artifacts[a.project] = byProject[a.project]
 		b.mu.Unlock()
 	}
 	for _, kind := range artifactKinds {
@@ -524,10 +575,75 @@ func (c *Cleaner) scanProjects(ctx context.Context, cfg settings.CleanupSettings
 	return nil
 }
 
+// gitStates asks git about every project of byProject, gitWorkers at a time: GitNone without asking for a project in no repository (gitstate.RepoOf), and GitUnknown when git fails.
+func (c *Cleaner) gitStates(ctx context.Context, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error), byProject map[string][]gitstate.Artifact) map[string]gitstate.Result {
+	out := make(map[string]gitstate.Result, len(byProject))
+	var mu sync.Mutex
+	sem := make(chan struct{}, gitWorkers)
+	var wg sync.WaitGroup
+	for project, arts := range byProject {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-sem }()
+			res := askGit(ctx, git, project, arts, c.opts.Log)
+			mu.Lock()
+			out[project] = res
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	return out
+}
+
+// askGit is what git says about project: GitNone when no .git lies above it, otherwise git's answer, and GitUnknown when git fails or git is nil. It resolves the project's symlinks first, since a project reached through a link into the middle of a repository only finds that repository's .git from its real path; when that fails the project counts as being in a repository.
+func askGit(ctx context.Context, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error), project string, arts []gitstate.Artifact, log *slog.Logger) gitstate.Result {
+	unknown := gitstate.Result{State: cleanup.GitUnknown}
+	real, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		log.Debug("resolve a project folder", "project", project, "err", err)
+		return unknown
+	}
+	repo, found := gitstate.RepoOf(real)
+	if !found {
+		return gitstate.Result{State: cleanup.GitNone}
+	}
+	if git == nil {
+		return unknown
+	}
+	// git answers about real paths, so the artifacts move along with the project.
+	realArts := make([]gitstate.Artifact, 0, len(arts))
+	for _, a := range arts {
+		rel, err := filepath.Rel(project, a.Path)
+		if err != nil {
+			log.Debug("build output outside its project", "project", project, "path", a.Path, "err", err)
+			return unknown
+		}
+		realArts = append(realArts, gitstate.Artifact{Path: filepath.Join(real, rel), Generated: a.Generated})
+	}
+	res, err := git(ctx, repo, real, realArts)
+	if err != nil {
+		log.Debug("git state of a project", "project", project, "err", err)
+		// A failed check is never clean; a known reason to hold (dirty, tracked) still holds.
+		if res.State != cleanup.GitDirty {
+			res.State = cleanup.GitUnknown
+		}
+	}
+	if res.State == "" || res.State == cleanup.GitNone {
+		// git ran because a .git was found: whatever it answered, the project is in a repository.
+		res.State = cleanup.GitUnknown
+	}
+	return res
+}
+
 // sized is an artifact with its measured size.
 type sized struct {
 	artifact
 	size int64
+	// trash is set when it goes to the Trash rather than being deleted for good.
+	trash bool
 }
 
 // artifactCategory starts the category of a kind of build output; trash is the variant whose items go to the Trash.
@@ -561,17 +677,52 @@ func projectLabel(root, project string) string {
 	return rel
 }
 
-// scopedDeleter narrows the allowed roots of each build output folder to its own project folder; other items keep their category's roots.
+// scopedDeleter narrows the allowed roots of each build output folder to its own project folder; other items keep their category's roots. Before deleting or trashing build output it asks git about the project again, once per project and clean: a project that became dirty or holds tracked files in its build output is refused, and in ModeTrashOnly (automatic cleaning) so is one whose state cannot be confirmed as clean or not in a repository.
 type scopedDeleter struct {
-	base  cleanup.Deleter
+	base cleanup.Deleter
+	log  *slog.Logger
+
 	mu    sync.RWMutex
 	roots map[string]string
+	arts  map[string][]gitstate.Artifact
+	git   func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error)
+
+	// mode and checked belong to the clean in progress; Cleaner.Clean runs one clean at a time.
+	cmu     sync.Mutex
+	mode    cleanup.CleanMode
+	checked map[string]gitstate.Result
 }
 
-func (d *scopedDeleter) set(roots map[string]string) {
+// set adds what a scan found. Build output is added to what earlier scans found, never replaced: a clean works from the Executor's copy of a scan, which a scan finishing during the clean may no longer list (now excluded, refused by the read gate, measured empty), and every build output folder a clean can name must still be found here, or its git re-check would be skipped. A path keeps the project of the latest scan that found it; a project's build output only grows, so the re-check's ls-files covers every folder a clean may take.
+func (d *scopedDeleter) set(roots map[string]string, arts map[string][]gitstate.Artifact, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error)) {
 	d.mu.Lock()
-	d.roots = roots
-	d.mu.Unlock()
+	defer d.mu.Unlock()
+	if d.roots == nil {
+		d.roots = map[string]string{}
+	}
+	if d.arts == nil {
+		d.arts = map[string][]gitstate.Artifact{}
+	}
+	maps.Copy(d.roots, roots)
+	for project, list := range arts {
+		// Clip so a reader holding the old slice never sees it change.
+		merged := slices.Clip(d.arts[project])
+		for _, a := range list {
+			if !slices.ContainsFunc(merged, func(m gitstate.Artifact) bool { return m.Path == a.Path }) {
+				merged = append(merged, a)
+			}
+		}
+		d.arts[project] = merged
+	}
+	d.git = git
+}
+
+// setMode starts a clean in mode, forgetting what git said during the last one.
+func (d *scopedDeleter) setMode(mode cleanup.CleanMode) {
+	d.cmu.Lock()
+	d.mode = mode
+	d.checked = map[string]gitstate.Result{}
+	d.cmu.Unlock()
 }
 
 func (d *scopedDeleter) scope(path string, roots []string) []string {
@@ -583,10 +734,51 @@ func (d *scopedDeleter) scope(path string, roots []string) []string {
 	return roots
 }
 
+// recheck asks git about the project of the build output at path, once per clean, and returns why it must not go; nil for other items.
+func (d *scopedDeleter) recheck(ctx context.Context, path string) error {
+	d.mu.RLock()
+	project, ok := d.roots[path]
+	arts, git := d.arts[project], d.git
+	d.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	d.cmu.Lock()
+	mode := d.mode
+	res, done := d.checked[project]
+	d.cmu.Unlock()
+	if !done {
+		res = askGit(ctx, git, project, arts, d.log)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		d.cmu.Lock()
+		if d.checked != nil {
+			d.checked[project] = res
+		}
+		d.cmu.Unlock()
+	}
+	switch {
+	case res.State == cleanup.GitDirty:
+		return cleanup.NewUserError("项目有未提交的改动，已跳过", nil)
+	case res.Tracked:
+		return cleanup.NewUserError("构建产物文件夹里有纳入版本控制的文件，已跳过", nil)
+	case mode == cleanup.ModeTrashOnly && res.State != cleanup.GitClean && res.State != cleanup.GitNone:
+		return cleanup.NewUserError("无法确认 Git 状态，自动清理已跳过", nil)
+	}
+	return nil
+}
+
 func (d *scopedDeleter) Remove(ctx context.Context, path string, roots []string) (fsx.Removal, error) {
+	if err := d.recheck(ctx, path); err != nil {
+		return fsx.Removal{}, err
+	}
 	return d.base.Remove(ctx, path, d.scope(path, roots))
 }
 
 func (d *scopedDeleter) Trash(ctx context.Context, path string, roots []string) (cleanup.Trashed, error) {
+	if err := d.recheck(ctx, path); err != nil {
+		return cleanup.Trashed{}, err
+	}
 	return d.base.Trash(ctx, path, d.scope(path, roots))
 }

@@ -28,6 +28,8 @@ func binaryCandidates(e env, name string) []string {
 			out = append(out, filepath.Join(pf, "nodejs", "npm.cmd"))
 		case "pnpm":
 			out = append(out, filepath.Join(e.localAppData(), "pnpm", "pnpm.exe"))
+		case "git":
+			out = append(out, filepath.Join(pf, "Git", "cmd", "git.exe"))
 		}
 		return out
 	}
@@ -61,14 +63,17 @@ func findBinary(e env, lookPath func(string) (string, error), name string) strin
 	return ""
 }
 
-// locate finds the tools' binaries and asks them where their caches are. A tool that is missing or does not answer leaves its fields empty; the catalog then falls back to the default folders. devicesDir is the CoreSimulator devices folder: xcode-select runs only when it exists.
-func locate(ctx context.Context, e env, runner execx.Runner, lookPath func(string) (string, error), devicesDir string) located {
+// locate finds the tools' binaries and asks them where their caches are. A tool that is missing or does not answer leaves its fields empty; the catalog then falls back to the default folders. devicesDir is the CoreSimulator devices folder: xcode-select runs only when it exists, or to find git. wantGit also looks for git (for the projects' Git state): on PATH and in the usual install folders, then on macOS in the selected developer folder (xcode-select -p, which never opens the tools installer, unlike the /usr/bin/git stub).
+func locate(ctx context.Context, e env, runner execx.Runner, lookPath func(string) (string, error), devicesDir string, wantGit bool) located {
 	l := located{bins: map[string]string{}}
 	names := []string{"npm", "pnpm", "go"}
 	if e.windows() {
 		names = append(names, "pip")
 	} else {
 		names = append(names, "brew", "pip3")
+	}
+	if wantGit {
+		names = append(names, "git")
 	}
 	for _, n := range names {
 		if p := findBinary(e, lookPath, n); p != "" {
@@ -97,8 +102,29 @@ func locate(ctx context.Context, e env, runner execx.Runner, lookPath func(strin
 		if lines := query("brew", "--cache"); len(lines) == 1 {
 			l.brewCache = lines[0]
 		}
+		var devDir string
+		asked := false
+		developer := func() string {
+			if !asked {
+				asked = true
+				devDir = developerDir(ctx, runner)
+			}
+			return devDir
+		}
 		if _, err := os.Stat(devicesDir); err == nil {
-			l.xcrun = findSimctl(ctx, runner)
+			if dev := developer(); dev != "" {
+				if _, err := os.Stat(filepath.Join(dev, "usr", "bin", "simctl")); err == nil {
+					l.xcrun = xcrunPath
+				}
+			}
+		}
+		if wantGit && l.bins["git"] == "" {
+			if dev := developer(); dev != "" {
+				p := filepath.Join(dev, "usr", "bin", "git")
+				if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+					l.bins["git"] = p
+				}
+			}
 		}
 	}
 	return l
@@ -120,8 +146,8 @@ func absLines(e env, s string) []string {
 	return out
 }
 
-// findSimctl returns xcrunPath when the selected developer folder has simctl, which only Xcode (not the Command Line Tools) installs. xcode-select -p only prints the folder; it never opens the tools installer.
-func findSimctl(ctx context.Context, runner execx.Runner) string {
+// developerDir is the selected developer folder (xcode-select -p): Xcode's, whose usr/bin has simctl and git, or the Command Line Tools', which has git only; "" when neither is installed. xcode-select -p only prints the folder; it never opens the tools installer.
+func developerDir(ctx context.Context, runner execx.Runner) string {
 	out, err := runner.Run(ctx, execx.Command{Name: xcodeSelectPath, Args: []string{"-p"}, Timeout: queryTimeout})
 	if err != nil {
 		return ""
@@ -130,10 +156,7 @@ func findSimctl(ctx context.Context, runner execx.Runner) string {
 	if !filepath.IsAbs(dev) {
 		return ""
 	}
-	if _, err := os.Stat(filepath.Join(dev, "usr", "bin", "simctl")); err != nil {
-		return ""
-	}
-	return xcrunPath
+	return dev
 }
 
 // simDevice is one device of simctl list devices -j.

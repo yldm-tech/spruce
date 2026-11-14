@@ -104,7 +104,7 @@ func (f *Fake) Run(ctx context.Context, cmd execx.Command) (execx.Output, error)
 	return match.do(ctx, cmd)
 }
 
-// Calls returns every command run so far, in order.
+// Calls returns every command run so far, in order, as given to Run (Env, Unset, Dir and Timeout included), so a test can check how a command was set up.
 func (f *Fake) Calls() []execx.Command {
 	f.mu.Lock()
 	defer f.mu.Unlock()

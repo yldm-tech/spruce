@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -21,6 +22,8 @@ type Command struct {
 	Stdin []byte
 	// Env, when non-nil, is appended to the current process environment as KEY=VALUE entries (later entries win). Nil inherits the environment unchanged.
 	Env []string
+	// Unset names variables of the current process environment the program must not inherit, removed before Env is appended; a name ending in "*" removes every variable starting with the rest (GIT_CONFIG_KEY_*). Names compare without case on Windows.
+	Unset []string
 	// Dir is the working directory; empty means the current one.
 	Dir string
 	// Timeout, when positive, bounds this command in addition to the context passed to Run.
@@ -83,8 +86,8 @@ func (OSRunner) Run(ctx context.Context, c Command) (Output, error) {
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
 	cmd.WaitDelay = waitDelay
-	if c.Env != nil {
-		cmd.Env = append(os.Environ(), c.Env...)
+	if c.Env != nil || len(c.Unset) > 0 {
+		cmd.Env = append(withoutVars(os.Environ(), c.Unset, runtime.GOOS == "windows"), c.Env...)
 	}
 	if c.Stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.Stdin)
@@ -110,6 +113,41 @@ func (OSRunner) Run(ctx context.Context, c Command) (Output, error) {
 		return out, &ExitError{Command: c.String(), ExitCode: out.ExitCode, Stderr: Tail(out.Stderr, stderrTail)}
 	}
 	return out, fmt.Errorf("%s: %w", c.String(), err)
+}
+
+// withoutVars returns env (KEY=VALUE entries) without the variables unset names; fold compares names without case, as Windows does.
+func withoutVars(env, unset []string, fold bool) []string {
+	if len(unset) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !unsets(name, unset, fold) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// unsets reports whether one of unset names the variable name.
+func unsets(name string, unset []string, fold bool) bool {
+	if fold {
+		name = strings.ToUpper(name)
+	}
+	for _, u := range unset {
+		if fold {
+			u = strings.ToUpper(u)
+		}
+		if prefix, ok := strings.CutSuffix(u, "*"); ok {
+			if strings.HasPrefix(name, prefix) {
+				return true
+			}
+		} else if name == u {
+			return true
+		}
+	}
+	return false
 }
 
 // Tail returns at most n bytes from the end of b as trimmed text, for putting command output into Result.Detail.
