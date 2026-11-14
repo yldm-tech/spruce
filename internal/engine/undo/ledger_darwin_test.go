@@ -1,11 +1,13 @@
 package undo
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -250,9 +252,99 @@ func TestRestoreReportsEachFailure(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.root, "app 2.dmg")); err != nil {
 		t.Errorf("the installer did not come back as app 2.dmg: %v", err)
 	}
-	// The cache in its place is the new one, untouched.
-	if items, _, ok := f.l.Restorable("run2", time.Now()); !ok || items != 4 {
-		t.Errorf("Restorable %d %v, want the 4 failures", items, ok)
+	// Every item was tried: 放回原处 no longer offers the run, though the failures stay in the entry, marked.
+	if items, _, ok := f.l.Restorable("run2", time.Now()); ok || items != 0 {
+		t.Errorf("Restorable %d %v after a restore that tried everything", items, ok)
+	}
+	if n := f.l.Pending(time.Now()); n != 0 {
+		t.Errorf("Pending = %d", n)
+	}
+	e, err := f.l.Load("run2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tried := 0
+	for _, m := range e.Moves {
+		if m.Tried == m.Restored {
+			t.Errorf("move %s: restored %v, tried %v", m.Path, m.Restored, m.Tried)
+		}
+		if m.Tried {
+			tried++
+		}
+	}
+	if tried != 4 {
+		t.Errorf("%d moves marked tried, want 4", tried)
+	}
+	// Asked again explicitly, Restore tries them again (the command line can); nothing is overwritten.
+	if err := os.Remove(cache.Path); err != nil {
+		t.Fatal(err)
+	}
+	outs, err = f.l.Restore(t.Context(), "run2", trash.SystemRestorer())
+	if err != nil || len(outs) != 4 {
+		t.Fatalf("second restore %d outcomes, %v", len(outs), err)
+	}
+	if e, _ := f.l.Load("run2"); !slicesContainsRestored(e, cache.Path) {
+		t.Error("the cache did not come back on the second try")
+	}
+}
+
+// slicesContainsRestored reports whether e holds the move of path as put back, and not as tried.
+func slicesContainsRestored(e Entry, path string) bool {
+	for _, m := range e.Moves {
+		if m.Path == path {
+			return m.Restored && !m.Tried
+		}
+	}
+	return false
+}
+
+// cancelAfter is a Restorer that puts back through trash.SystemRestorer and cancels its context after n items, as quitting Spruce does mid-restore.
+type cancelAfter struct {
+	n      int
+	cancel func()
+}
+
+func (c *cancelAfter) Restore(ctx context.Context, req trash.RestoreRequest) (string, error) {
+	to, err := trash.SystemRestorer().Restore(ctx, req)
+	if c.n--; c.n == 0 {
+		c.cancel()
+	}
+	return to, err
+}
+
+func TestRestoreStoppedPartWayStaysOffered(t *testing.T) {
+	f := newFixture(t)
+	gone := f.trash(t, f.item(t, "gone"), cleanup.KindCache)
+	ok := f.trash(t, f.item(t, "ok"), cleanup.KindCache)
+	later := f.trash(t, f.item(t, "later"), cleanup.KindCache)
+	if _, err := f.l.Record("run3", time.Now(), []cleanup.Moved{gone, ok, later}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(gone.TrashedPath); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	outs, err := f.l.Restore(ctx, "run3", &cancelAfter{n: 2, cancel: cancel})
+	if !errors.Is(err, context.Canceled) || len(outs) != 2 {
+		t.Fatalf("outcomes %+v, err %v", outs, err)
+	}
+	// The item it did not get to is still offered; the one it tried in vain is not.
+	if items, _, ok := f.l.Restorable("run3", time.Now()); !ok || items != 1 {
+		t.Errorf("Restorable %d %v, want the untried item", items, ok)
+	}
+	e, _ := f.l.Load("run3")
+	for _, m := range e.Moves {
+		want := Move{Moved: m.Moved}
+		switch m.Path {
+		case gone.Path:
+			want.Tried = true
+		case ok.Path:
+			want.Restored, want.RestoredTo = true, ok.Path
+		}
+		if m != want {
+			t.Errorf("move %+v, want %+v", m, want)
+		}
 	}
 }
 
@@ -385,6 +477,13 @@ func TestPruneByAgeHistoryAndCount(t *testing.T) {
 	}
 	record("expired", now.Add(-Window-time.Minute))
 	record("forgotten", now.Add(-time.Hour))
+	// Entries whose run the history lacks go once their file is older than orphanGrace.
+	old := now.Add(-orphanGrace - time.Minute)
+	for _, id := range []string{"expired", "forgotten"} {
+		if err := os.Chtimes(f.l.entryPath(id), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for i := range MaxEntries + 1 {
 		record(fmt.Sprintf("n%03d", i), now.Add(-time.Duration(MaxEntries+1-i)*time.Second))
 	}
@@ -413,6 +512,26 @@ func TestPruneByAgeHistoryAndCount(t *testing.T) {
 	}
 }
 
+func TestPruneSparesAnEntryJustWritten(t *testing.T) {
+	f := newFixture(t)
+	now := time.Now()
+	m := cleanup.Moved{Path: filepath.Join(f.root, "a"), TrashedPath: filepath.Join(f.bin, "a"), Root: f.root, Ino: 1, Size: 1}
+	// Recover writes the entry of a clean that ended hours ago just before it appends the history run; a prune in between, whose list of runs predates that run, must not drop it.
+	if _, err := f.l.Record("recovered", now.Add(-3*time.Hour), []cleanup.Moved{m}); err != nil {
+		t.Fatal(err)
+	}
+	orphan := func(string) bool { return false }
+	if n, err := f.l.Prune(now, orphan); err != nil || n != 0 {
+		t.Fatalf("dropped %d %v", n, err)
+	}
+	if _, err := f.l.Load("recovered"); err != nil {
+		t.Fatalf("the entry just written was dropped: %v", err)
+	}
+	if n, err := f.l.Prune(now.Add(orphanGrace+time.Minute), orphan); err != nil || n != 1 {
+		t.Errorf("an orphan past the grace: dropped %d %v", n, err)
+	}
+}
+
 func TestClearKeepsTheRestoredSet(t *testing.T) {
 	f := newFixture(t)
 	a := f.trash(t, f.item(t, "a"), cleanup.KindCache)
@@ -426,19 +545,38 @@ func TestClearKeepsTheRestoredSet(t *testing.T) {
 	if _, err := f.l.Restore(t.Context(), "one", trash.SystemRestorer()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.l.Begin(JournalMeta{RunID: "three", Started: time.Now()}); err != nil {
+	// A journal left by a Spruce that ended goes; one this ledger is still writing stays, and its clean records it when it ends.
+	earlier, err := Open(f.l.dir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := earlier.Begin(JournalMeta{RunID: "three", Started: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := f.l.Begin(JournalMeta{RunID: "four", Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer running.Close()
 	if err := f.l.Clear(); err != nil {
 		t.Fatal(err)
 	}
 	names, _ := os.ReadDir(f.l.dir)
-	if len(names) != 1 || names[0].Name() != restoredFile {
-		var got []string
-		for _, n := range names {
-			got = append(got, n.Name())
-		}
-		t.Errorf("left %v, want only %s", got, restoredFile)
+	var got []string
+	for _, n := range names {
+		got = append(got, n.Name())
+	}
+	if want := []string{"four" + journalExt, restoredFile}; !slices.Equal(got, want) {
+		t.Errorf("left %v, want %v", got, want)
+	}
+	if err := running.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := f.l.Record("four", time.Now(), nil); err != nil || kept != 0 {
+		t.Errorf("Record after Clear: %d %v", kept, err)
+	}
+	if _, err := os.Stat(f.l.journalPath("four")); !os.IsNotExist(err) {
+		t.Errorf("the finished journal is still there: %v", err)
 	}
 	if _, ok := f.l.Restored(time.Now())[cleanup.ItemID(a.Path)]; !ok {
 		t.Error("the restored set was cleared")

@@ -36,6 +36,11 @@ func systemRestorer() Restorer { return newRestorer(trashDirs) }
 
 func inTrash(path string) bool { return directlyIn(path, trashDirs()) }
 
+func inTrashNow() func(string) bool {
+	dirs := trashDirs()
+	return func(path string) bool { return directlyIn(path, dirs) }
+}
+
 func (r *darwinRestorer) Restore(ctx context.Context, req RestoreRequest) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

@@ -122,15 +122,19 @@ func (r *Restore) Run(ctx context.Context, runID string) (RestoreOutcome, error)
 	case errors.Is(err, undo.ErrNotSaved):
 		r.log.Error("record what was put back", "run", runID, "err", err)
 	}
-	interrupted := clean.Err() != nil
-	if len(outs) == 0 {
-		if interrupted {
-			return RestoreOutcome{}, errors.New("已取消")
-		}
-		return RestoreOutcome{}, errors.New("这条记录里的项目都已放回原处")
+	// Items the restore did not get to (it stopped with ctx) stay offered by the ledger; they count as left in the Trash, so the run does not read as wholly put back.
+	untried := 0
+	if clean.Err() != nil {
+		untried, _, _ = r.ledger.Restorable(runID, time.Now())
 	}
+	interrupted := untried > 0
 	out := RestoreOutcome{}
+	tried := 0
 	for _, o := range outs {
+		if errors.Is(o.Err, context.Canceled) || errors.Is(o.Err, context.DeadlineExceeded) {
+			continue
+		}
+		tried++
 		if o.Err == nil {
 			out.Restored++
 			out.Bytes += o.Move.Size
@@ -139,6 +143,12 @@ func (r *Restore) Run(ctx context.Context, runID string) (RestoreOutcome, error)
 		out.Failed++
 		r.log.Info("could not put back", "run", runID, "path", o.Move.Path, "err", o.Err)
 		out.Reasons = append(out.Reasons, shortPath(r.home, o.Move.Path)+"："+o.Reason)
+	}
+	if tried == 0 {
+		if interrupted {
+			return RestoreOutcome{}, errors.New("已取消")
+		}
+		return RestoreOutcome{}, errors.New("这条记录里的项目都已放回原处")
 	}
 	lines := slices.Clone(out.Reasons)
 	if len(lines) > maxDetailFailures {
@@ -152,8 +162,8 @@ func (r *Restore) Run(ctx context.Context, runID string) (RestoreOutcome, error)
 		Kind:      history.KindRestore,
 		StartedAt: started,
 		EndedAt:   time.Now(),
-		// Items and Trashed of a KindRestore run are what came back out of the Trash; Failed what stayed there.
-		Summary:   &history.Totals{Items: out.Restored, Trashed: out.Bytes, Failed: out.Failed},
+		// Items and Trashed of a KindRestore run are what came back out of the Trash; Failed what stayed there, tried or not.
+		Summary:   &history.Totals{Items: out.Restored, Trashed: out.Bytes, Failed: out.Failed + untried},
 		Details:   lines,
 		RestoreOf: runID,
 	}

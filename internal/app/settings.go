@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/health"
@@ -155,10 +154,7 @@ func FollowSettings(ctx context.Context, store *settings.Store, mon health.Monit
 	}
 }
 
-// ledgerGrace is how long the ledger keeps an entry whose run is not in the history: a clean records the ledger just before it appends its run.
-const ledgerGrace = time.Hour
-
-// pruneLedger prunes l (nil for none) as of now, keeping the entries of the runs h holds and of runs that began within ledgerGrace.
+// pruneLedger prunes l (nil for none) as of now, keeping the entries of the runs h holds; undo.Ledger.Prune itself spares an entry written within the last hour, whose history run may not be appended yet.
 func pruneLedger(l *undo.Ledger, h history.Store, now time.Time, log *slog.Logger) {
 	if l == nil {
 		return
@@ -173,20 +169,10 @@ func pruneLedger(l *undo.Ledger, h history.Store, now time.Time, log *slog.Logge
 	for _, r := range runs {
 		held[r.ID] = true
 	}
-	n, err := l.Prune(now, func(runID string) bool { return held[runID] || recentRunID(runID, now) })
+	n, err := l.Prune(now, func(runID string) bool { return held[runID] })
 	if err != nil {
 		log.Warn("prune undo ledger", "err", err)
 	} else if n > 0 {
 		log.Info("pruned undo ledger", "entries", n)
 	}
-}
-
-// recentRunID reports whether runID (newRunID's form, "20261114T010412Z-3f9a") began within ledgerGrace of now; an ID of another form is not recent.
-func recentRunID(runID string, now time.Time) bool {
-	stamp, _, ok := strings.Cut(runID, "-")
-	if !ok {
-		return false
-	}
-	t, err := time.Parse("20060102T150405Z", stamp)
-	return err == nil && now.Sub(t) < ledgerGrace && t.Sub(now) < ledgerGrace
 }

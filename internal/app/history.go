@@ -45,12 +45,13 @@ func (h *History) List(limit int) ([]history.Run, error) {
 	return h.store.List(limit)
 }
 
-// Restorable returns the IDs of the runs among runs that 放回原处 can put back at now: on macOS, a run that recorded Run.Undo, within undo.Window, not wholly put back by a later KindRestore run, whose ledger entry still holds an unrestored move.
+// Restorable returns the IDs of the runs among runs that 放回原处 can put back at now: on macOS, a run that recorded Run.Undo, within undo.Window, not wholly put back by a later KindRestore run, whose ledger entry still offers a move (one neither put back nor tried by a 放回原处 that ran to its end, so the button goes once a restore covered every item, even when some could not come back).
 func (h *History) Restorable(runs []history.Run, now time.Time) map[string]bool {
 	out := map[string]bool{}
 	if !h.canRestore || h.ledger == nil {
 		return out
 	}
+	// A KindRestore with nothing left in the Trash put everything back; one that stopped part-way counts what it did not try as Failed.
 	done := map[string]bool{}
 	for _, r := range runs {
 		if r.Kind == history.KindRestore && r.RestoreOf != "" && r.Summary != nil && r.Summary.Failed == 0 {

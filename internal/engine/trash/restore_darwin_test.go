@@ -251,8 +251,12 @@ func TestInTrashOnlyAcceptsTheTrashFolders(t *testing.T) {
 	if !InTrash(filepath.Join(home, ".Trash", "a.dmg")) {
 		t.Error("an item in ~/.Trash is not in the Trash")
 	}
+	now := InTrashNow()
+	if !now(filepath.Join(home, ".Trash", "a.dmg")) {
+		t.Error("InTrashNow: an item in ~/.Trash is not in the Trash")
+	}
 	for _, p := range []string{filepath.Join(home, "Library", "Mobile Documents", ".Trash", "a"), filepath.Join(home, ".Trash"), ""} {
-		if InTrash(p) {
+		if InTrash(p) || now(p) {
 			t.Errorf("InTrash(%q)", p)
 		}
 	}

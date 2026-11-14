@@ -11,6 +11,8 @@ func systemRestorer() Restorer { return windowsRestorer{} }
 
 func inTrash(string) bool { return false }
 
+func inTrashNow() func(string) bool { return inTrash }
+
 func (windowsRestorer) Restore(context.Context, RestoreRequest) (string, error) {
 	return "", ErrRestoreUnsupported
 }

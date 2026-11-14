@@ -28,6 +28,8 @@ const (
 	MaxBytes   = 32 << 20
 	// MaxMoves is how many moves one entry keeps; a larger clean keeps the first MaxMoves and is marked Partial.
 	MaxMoves = 20000
+	// orphanGrace is how long Prune keeps an entry whose run keep rejects, counted from when its file was last written: a clean (or Recover) writes its entry just before the history run, which a prune in between must not outrun.
+	orphanGrace = time.Hour
 )
 
 // File names inside the ledger's folder.
@@ -56,7 +58,12 @@ type Move struct {
 	cleanup.Moved
 	Restored   bool   `json:"restored,omitempty"`
 	RestoredTo string `json:"restoredTo,omitempty"`
+	// Tried is set when a 放回原处 tried this move and could not put it back (not when it stopped before): the run is then no longer offered for 放回原处, which never retries by itself.
+	Tried bool `json:"tried,omitempty"`
 }
+
+// open reports whether m is still offered for 放回原处: neither put back nor tried.
+func (m Move) open() bool { return !m.Restored && !m.Tried }
 
 // Entry is what the ledger keeps of one run.
 type Entry struct {
@@ -99,8 +106,11 @@ func Open(dir string) (*Ledger, error) {
 }
 
 // Keepable reports whether Spruce can put m back later: the system said where the item went, directly inside a Trash folder the restorer accepts (trash.InTrash; never on Windows), with its identity, and the original lies strictly inside the recorded root.
-func Keepable(m cleanup.Moved) bool {
-	if m.Ino == 0 || m.Root == "" || !trash.InTrash(m.TrashedPath) {
+func Keepable(m cleanup.Moved) bool { return keepable(m, trash.InTrash) }
+
+// keepable is Keepable with inTrash in place of trash.InTrash, so a run of moves reads the Trash folders once (trash.InTrashNow).
+func keepable(m cleanup.Moved, inTrash func(string) bool) bool {
+	if m.Ino == 0 || m.Root == "" || !inTrash(m.TrashedPath) {
 		return false
 	}
 	rel, err := filepath.Rel(m.Root, m.Path)
@@ -109,11 +119,12 @@ func Keepable(m cleanup.Moved) bool {
 
 // Kept returns how many of moves, and how many bytes, Record keeps: the Keepable ones, at most MaxMoves.
 func Kept(moves []cleanup.Moved) (items int, bytes int64) {
+	inTrash := trash.InTrashNow()
 	for _, m := range moves {
 		if items == MaxMoves {
 			break
 		}
-		if Keepable(m) {
+		if keepable(m, inTrash) {
 			items++
 			bytes += m.Size
 		}
@@ -151,8 +162,9 @@ func (l *Ledger) Record(runID string, at time.Time, moves []cleanup.Moved) (kept
 		}
 	}()
 	e := Entry{Version: Version, RunID: runID, At: at.UTC()}
+	inTrash := trash.InTrashNow()
 	for _, m := range moves {
-		if !Keepable(m) {
+		if !keepable(m, inTrash) {
 			continue
 		}
 		if len(e.Moves) == MaxMoves {
@@ -199,14 +211,14 @@ func (l *Ledger) loadLocked(runID string) (Entry, error) {
 // within reports whether e can still be put back at now.
 func within(e Entry, now time.Time) bool { return now.Sub(e.At) <= Window }
 
-// Restorable reports how many moves of runID, and how many bytes, can still be put back at now; ok is false when none can.
+// Restorable reports how many moves of runID, and how many bytes, 放回原处 still offers at now (neither put back nor tried by an earlier 放回原处 that ran to its end); ok is false when none.
 func (l *Ledger) Restorable(runID string, now time.Time) (items int, bytes int64, ok bool) {
 	e, err := l.Load(runID)
 	if err != nil || !within(e, now) {
 		return 0, 0, false
 	}
 	for _, m := range e.Moves {
-		if !m.Restored {
+		if m.open() {
 			items++
 			bytes += m.Size
 		}
@@ -214,7 +226,7 @@ func (l *Ledger) Restorable(runID string, now time.Time) (items int, bytes int64
 	return items, bytes, items > 0
 }
 
-// Pending counts the unrestored moves of the entries within Window at now, for the 清空废纸篓 dialog.
+// Pending counts the moves of the entries within Window at now that 放回原处 still offers (as Restorable), for the 清空废纸篓 dialog.
 func (l *Ledger) Pending(now time.Time) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -225,7 +237,7 @@ func (l *Ledger) Pending(now time.Time) int {
 			continue
 		}
 		for _, m := range e.Moves {
-			if !m.Restored {
+			if m.open() {
 				n++
 			}
 		}
@@ -297,7 +309,7 @@ func Reason(m cleanup.Moved, err error) string {
 	return "没能放回，可以在废纸篓里手动放回"
 }
 
-// Restore puts back every unrestored move of runID through r, one at a time, then rewrites the entry and adds every restored move's item ID to restored.json. Moves are independent: one that fails is reported with its reason and the rest go on; nothing is overwritten or retried. KeepBoth is set for the user's own files (installers, large files, an app and its leftovers, 空间透视's moves), never for caches, logs and build output. The error is non-nil only for a missing or expired entry (ErrNoEntry), a restore of the same run already going on (ErrRestoring), ctx (the outcomes then hold what was done before it ended) or a ledger that could not be rewritten afterwards (ErrNotSaved, with every outcome).
+// Restore puts back every unrestored move of runID through r, one at a time, then rewrites the entry (restored moves, and tried ones that failed for another reason than ctx) and adds every restored move's item ID to restored.json. Moves are independent: one that fails is reported with its reason and the rest go on; nothing is overwritten or retried. KeepBoth is set for the user's own files (installers, large files, an app and its leftovers, 空间透视's moves), never for caches, logs and build output. The error is non-nil only for a missing or expired entry (ErrNoEntry), a restore of the same run already going on (ErrRestoring), ctx (the outcomes then hold what was done before it ended) or a ledger that could not be rewritten afterwards (ErrNotSaved, with every outcome).
 func (l *Ledger) Restore(ctx context.Context, runID string, r trash.Restorer) ([]Outcome, error) {
 	if !validRunID(runID) {
 		return nil, fmt.Errorf("%w: %q", ErrBadRunID, runID)
@@ -345,15 +357,19 @@ func (l *Ledger) Restore(ctx context.Context, runID string, r trash.Restorer) ([
 	}
 
 	restored := map[string]string{}
+	tried := map[string]bool{}
 	var ids []string
 	for _, o := range outs {
-		if o.Err == nil {
+		switch {
+		case o.Err == nil:
 			restored[o.Move.Path] = o.To
 			ids = append(ids, cleanup.ItemID(o.Move.Path))
+		case !errors.Is(o.Err, context.Canceled) && !errors.Is(o.Err, context.DeadlineExceeded):
+			tried[o.Move.Path] = true
 		}
 	}
-	if len(restored) > 0 {
-		if err := l.markRestored(runID, restored, ids, time.Now()); err != nil {
+	if len(restored) > 0 || len(tried) > 0 {
+		if err := l.markRestored(runID, restored, tried, ids, time.Now()); err != nil {
 			// The items are back either way; the caller reports the outcomes and logs this.
 			return outs, errors.Join(ctxErr, fmt.Errorf("%w: %w", ErrNotSaved, err))
 		}
@@ -361,8 +377,8 @@ func (l *Ledger) Restore(ctx context.Context, runID string, r trash.Restorer) ([
 	return outs, ctxErr
 }
 
-// markRestored rewrites runID's entry with the moves restored names put back (keyed by original path) and records ids in restored.json.
-func (l *Ledger) markRestored(runID string, restored map[string]string, ids []string, now time.Time) error {
+// markRestored rewrites runID's entry with the moves restored names put back and those tried names tried in vain (both keyed by original path) and records ids in restored.json.
+func (l *Ledger) markRestored(runID string, restored map[string]string, tried map[string]bool, ids []string, now time.Time) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var errs []error
@@ -370,16 +386,20 @@ func (l *Ledger) markRestored(runID string, restored map[string]string, ids []st
 	if e, err := l.loadLocked(runID); err == nil {
 		for i, m := range e.Moves {
 			if to, ok := restored[m.Path]; ok {
-				e.Moves[i].Restored, e.Moves[i].RestoredTo = true, to
+				e.Moves[i].Restored, e.Moves[i].RestoredTo, e.Moves[i].Tried = true, to, false
+			} else if tried[m.Path] {
+				e.Moves[i].Tried = true
 			}
 		}
 		errs = append(errs, l.writeJSON(l.entryPath(runID), e))
 	}
-	errs = append(errs, l.addRestoredLocked(ids, now))
+	if len(ids) > 0 {
+		errs = append(errs, l.addRestoredLocked(ids, now))
+	}
 	return errors.Join(errs...)
 }
 
-// Prune drops the entries older than Window at now, those whose run keep rejects (nil keeps every run), and then the oldest beyond MaxEntries or MaxBytes in all, and returns how many it dropped. Journals of running cleans are left alone. It also drops expired IDs from restored.json.
+// Prune drops the entries older than Window at now, those whose run keep rejects (nil keeps every run) once their file is older than orphanGrace (the history run is appended just after the entry is written), and then the oldest beyond MaxEntries or MaxBytes in all, and returns how many it dropped. Journals of running cleans are left alone. It also drops expired IDs from restored.json.
 func (l *Ledger) Prune(now time.Time, keep func(runID string) bool) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -400,12 +420,16 @@ func (l *Ledger) Prune(now time.Time, keep func(runID string) bool) (int, error)
 	}
 	for _, id := range l.entryIDsLocked() {
 		e, err := l.loadLocked(id)
-		if err != nil || !within(e, now) || (keep != nil && !keep(id)) {
+		if err != nil || !within(e, now) {
 			drop(id)
 			continue
 		}
 		st, err := os.Stat(l.entryPath(id))
 		if err != nil {
+			continue
+		}
+		if keep != nil && !keep(id) && now.Sub(st.ModTime()) >= orphanGrace {
+			drop(id)
 			continue
 		}
 		live = append(live, info{id: id, at: e.At, size: st.Size()})
@@ -425,7 +449,7 @@ func (l *Ledger) Prune(now time.Time, keep func(runID string) bool) (int, error)
 	return dropped, errors.Join(errs...)
 }
 
-// Clear deletes every entry and journal, keeping restored.json: it holds only hashes of item IDs, which keep the automatic rules away from what the user put back.
+// Clear deletes every entry and journal, keeping restored.json (it holds only hashes of item IDs, which keep the automatic rules away from what the user put back) and the journals of the cleans this ledger is running, which go on writing to them and record their entry when they end.
 func (l *Ledger) Clear() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -439,7 +463,7 @@ func (l *Ledger) Clear() error {
 	var errs []error
 	for _, n := range names {
 		name := n.Name()
-		if name == restoredFile || !n.Type().IsRegular() {
+		if name == restoredFile || !n.Type().IsRegular() || (strings.HasSuffix(name, journalExt) && l.open[strings.TrimSuffix(name, journalExt)]) {
 			continue
 		}
 		if strings.HasSuffix(name, entryExt) || strings.HasSuffix(name, journalExt) || strings.HasSuffix(name, ".tmp") {

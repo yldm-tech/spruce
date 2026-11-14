@@ -53,6 +53,9 @@ func CanRestore() bool { return canRestore }
 // InTrash reports whether path lies directly inside one of the Trash folders Restore accepts (macOS: ~/.Trash and /Volumes/*/.Trashes/<uid>); false on Windows. A move the system put elsewhere (iCloud Drive, a File Provider's own trash) is not restorable by Spruce.
 func InTrash(path string) bool { return inTrash(path) }
 
+// InTrashNow returns InTrash over the Trash folders as they are now, read once, for checking many paths in a row without reading the folders again for each.
+func InTrashNow() func(path string) bool { return inTrashNow() }
+
 // directlyIn reports whether path is a direct child of one of dirs, comparing cleaned absolute paths.
 func directlyIn(path string, dirs []string) bool {
 	if path == "" || !filepath.IsAbs(path) {

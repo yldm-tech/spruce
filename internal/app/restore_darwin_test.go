@@ -439,6 +439,53 @@ func TestRestoreRecordsWhatCouldNotComeBack(t *testing.T) {
 	if !slices.Equal(rec.Details, []string{want}) || rec.Summary.Failed != 1 {
 		t.Errorf("restore run %+v", rec)
 	}
+	// It tried every item, so the run no longer offers 放回原处 (2.11), though one item could not come back.
+	h := NewHistory(store, l, slog.New(slog.DiscardHandler))
+	if got := h.Restorable(store.appended, time.Now()); got[run.RunID] {
+		t.Errorf("the run is still offered after a restore that tried everything: %v", got)
+	}
+}
+
+// cancelling is a Restorer that puts back through trash.SystemRestorer and cancels after the first item, as quitting Spruce does mid-restore.
+type cancelling struct{ cancel func() }
+
+func (c cancelling) Restore(ctx context.Context, req trash.RestoreRequest) (string, error) {
+	defer c.cancel()
+	return trash.SystemRestorer().Restore(ctx, req)
+}
+
+func TestRestoreStoppedPartWayIsNotWhole(t *testing.T) {
+	home, bin, l := trashHome(t)
+	root := filepath.Join(home, "Downloads")
+	s := newExecCleaner(t, root, &binDeleter{bin: bin}, []string{"a.dmg", "b.dmg", "c.dmg"}, nil)
+	store := &fakeStore{}
+	c := NewCleanup(store, home, slog.New(slog.DiscardHandler), schedule.NewActivity(nil))
+	SetLedger(c, l)
+	RegisterCleaner(c, CleanerInstallers, s)
+	run, err := c.CleanWith(t.Context(), CleanerInstallers, cleanup.CleanRequest{CategoryIDs: []string{"installers"}}, CleanOptions{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	r := NewRestore(l, cancelling{cancel: cancel}, store, schedule.NewActivity(nil), home, slog.New(slog.DiscardHandler))
+	out, err := r.Run(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Restored != 1 || out.Failed != 0 {
+		t.Errorf("outcome %+v", out)
+	}
+	rec := store.appended[len(store.appended)-1]
+	if rec.Kind != history.KindRestore || rec.Summary.Items != 1 || rec.Summary.Failed != 2 ||
+		!slices.Contains(rec.Details, "放回在中途停止，其余项目还在废纸篓里") {
+		t.Errorf("restore run %+v", rec)
+	}
+	// The two items it did not get to can still be put back.
+	h := NewHistory(store, l, slog.New(slog.DiscardHandler))
+	if got := h.Restorable(store.appended, time.Now()); !got[run.RunID] {
+		t.Errorf("a restore that stopped part-way hid the run: %v", got)
+	}
 }
 
 func TestRecoverInterruptedAddsTheMissingRun(t *testing.T) {
@@ -537,10 +584,21 @@ func TestHistoryRestorable(t *testing.T) {
 }
 
 func TestHistoryClearClearsTheLedgerAndWhatGoesWithIt(t *testing.T) {
-	_, _, l := trashHome(t)
-	if _, err := l.Begin(undo.JournalMeta{RunID: "j", Started: time.Now()}); err != nil {
+	home, _, l := trashHome(t)
+	dir := filepath.Join(filepath.Dir(home), "data", "undo")
+	// A journal a Spruce that ended left behind, and one of a clean this process is running.
+	earlier, err := undo.Open(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := earlier.Begin(undo.JournalMeta{RunID: "j", Started: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := l.Begin(undo.JournalMeta{RunID: "k", Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer running.Close()
 	store := &fakeStore{}
 	h := NewHistory(store, l, slog.New(slog.DiscardHandler))
 	var mu sync.Mutex
@@ -553,8 +611,11 @@ func TestHistoryClearClearsTheLedgerAndWhatGoesWithIt(t *testing.T) {
 	if store.cleared != 1 || !slices.Equal(calls, []string{"cache", "growth"}) {
 		t.Errorf("cleared %d, calls %v", store.cleared, calls)
 	}
-	if recs, err := l.Recover(); err != nil || len(recs) != 0 {
-		t.Errorf("the journal survived: %+v %v", recs, err)
+	if _, err := os.Stat(filepath.Join(dir, "j.partial")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the left-over journal survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "k.partial")); err != nil {
+		t.Errorf("the running clean's journal was deleted: %v", err)
 	}
 	OnClear(h, func() error { return errors.New("disk full") })
 	if err := h.Clear(); err == nil || !strings.Contains(err.Error(), "操作历史已清空") {
@@ -566,7 +627,7 @@ func TestPruneLedgerKeepsTheRunsTheHistoryHolds(t *testing.T) {
 	home, bin, l := trashHome(t)
 	root := filepath.Join(home, "Downloads")
 	now := time.Now()
-	ids := []string{"20260101T000000Z-held", "20260101T000000Z-gone", newRunID(now.Add(-time.Minute))}
+	ids := []string{"20260101T000000Z-held", "20260101T000000Z-gone", "20260101T000000Z-new"}
 	for i, id := range ids {
 		p := filepath.Join(root, fmt.Sprint(i))
 		if err := os.MkdirAll(root, 0o755); err != nil {
@@ -583,6 +644,13 @@ func TestPruneLedgerKeepsTheRunsTheHistoryHolds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The first two were written long ago; the third a moment ago, its history run not appended yet.
+	long := now.Add(-2 * time.Hour)
+	for _, id := range ids[:2] {
+		if err := os.Chtimes(filepath.Join(filepath.Dir(home), "data", "undo", id+".json"), long, long); err != nil {
+			t.Fatal(err)
+		}
+	}
 	store := &fakeStore{runs: []history.Run{{ID: ids[0]}}}
 	pruneLedger(l, store, now, slog.New(slog.DiscardHandler))
 	if _, err := l.Load(ids[0]); err != nil {
@@ -591,11 +659,60 @@ func TestPruneLedgerKeepsTheRunsTheHistoryHolds(t *testing.T) {
 	if _, err := l.Load(ids[1]); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the orphaned run survived: %v", err)
 	}
-	// A run that began a minute ago may not be in the history yet.
+	// An entry written a moment ago may not have its history run yet.
 	if _, err := l.Load(ids[2]); err != nil {
-		t.Errorf("a recent run was pruned: %v", err)
+		t.Errorf("an entry just written was pruned: %v", err)
 	}
-	if !recentRunID(newRunID(now), now) || recentRunID("20260101T000000Z-x", now) || recentRunID("nonsense", now) {
-		t.Error("recentRunID")
+}
+
+// pruningStore is a history store whose Append first runs the daily prune of the ledger with the runs it held before, as FollowSettings' first prune can at launch, between RecoverInterrupted's ledger entry and its history run.
+type pruningStore struct {
+	fakeStore
+	ledger *undo.Ledger
+}
+
+func (s *pruningStore) Append(r history.Run) error {
+	stale := &fakeStore{runs: slices.Clone(s.runs)}
+	pruneLedger(s.ledger, stale, time.Now(), slog.New(slog.DiscardHandler))
+	s.mu.Lock()
+	s.runs = append(s.runs, r)
+	s.mu.Unlock()
+	return s.fakeStore.Append(r)
+}
+
+func TestRecoveredEntrySurvivesAPruneAtLaunch(t *testing.T) {
+	home, bin, l := trashHome(t)
+	root := filepath.Join(home, "Library", "Caches")
+	p := filepath.Join(root, "com.example")
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A clean that began three hours ago and was cut short.
+	runID := newRunID(time.Now().Add(-3 * time.Hour))
+	j, err := l.Begin(undo.JournalMeta{RunID: runID, Kind: history.KindSmartScan, Started: time.Now().Add(-3 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, dev, ino, err := moveIntoBin(bin, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Add(cleanup.Moved{ItemID: cleanup.ItemID(p), Kind: cleanup.KindCache, Path: p, TrashedPath: to, Root: root, Size: 3, Dir: true, Dev: dev, Ino: ino}); err != nil {
+		t.Fatal(err)
+	}
+	j.Close()
+	old := time.Now().Add(-3 * time.Hour)
+	if err := os.Chtimes(filepath.Join(filepath.Dir(home), "data", "undo", runID+".partial"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := undo.Open(filepath.Join(filepath.Dir(home), "data", "undo"))
+	store := &pruningStore{ledger: next}
+	RecoverInterrupted(t.Context(), next, store, schedule.NewActivity(nil), slog.New(slog.DiscardHandler))
+	if len(store.appended) != 1 || store.appended[0].Undo == nil {
+		t.Fatalf("history %+v", store.appended)
+	}
+	h := NewHistory(store, next, slog.New(slog.DiscardHandler))
+	if got := h.Restorable(store.appended, time.Now()); !got[runID] {
+		t.Errorf("the prune dropped the recovered entry: %v", got)
 	}
 }

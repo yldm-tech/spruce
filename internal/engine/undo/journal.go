@@ -82,7 +82,7 @@ func (j *Journal) writeLocked(line []byte) error {
 	if _, err := j.f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("undo: write journal: %w", err)
 	}
-	if err := j.f.Sync(); err != nil {
+	if err := syncJournal(j.f); err != nil {
 		return fmt.Errorf("undo: sync journal: %w", err)
 	}
 	return nil
