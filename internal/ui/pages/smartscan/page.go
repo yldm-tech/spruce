@@ -123,7 +123,7 @@ func Page(cx *core.Scope) core.Node {
 	})
 
 	return core.Group{
-		kit.Page{Children: []core.Node{header, body}},
+		kit.Page{TestID: "smart-scan-page", Children: []core.Node{header, body}},
 		live, confirm, overlay, done,
 	}
 }
