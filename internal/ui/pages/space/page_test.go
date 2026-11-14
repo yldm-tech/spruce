@@ -306,6 +306,35 @@ func TestTrashAfterConfirming(t *testing.T) {
 	}
 }
 
+// Escape while the move runs leaves the confirmation and the shell's block in place, so the sidebar stays out of reach until the move answers.
+func TestEscapeWhileMovingKeepsTheConfirmation(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	root := spacefake.Root
+	root.Size = 7e9
+	svc.TrashResult = app.SpaceTrashResult{Trashed: 3e9, Items: 1, Failed: []app.SpaceFailure{}, Root: root}
+	release := make(chan struct{})
+	svc.TrashRelease = release
+	p := start(t, svc, newFakes(t))
+	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.WaitFor("id:trash-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
+	p.Key("Escape")
+	p.Settle()
+	if !p.Exists("id:trash-confirm") || !p.stores.Block.Blocked() {
+		t.Fatalf("after Escape: confirmation %v, shell blocked %v", p.Exists("id:trash-confirm"), p.stores.Block.Blocked())
+	}
+	close(release)
+	p.WaitForGone("id:trash-confirm", wait)
+	if got := p.WaitFor("id:space-notice", wait).Text; got != "已把「big.iso」移到废纸篓，清倒废纸篓后可释放 3 GB" {
+		t.Errorf("notice %q", got)
+	}
+	if p.stores.Block.Blocked() {
+		t.Error("the shell stays blocked")
+	}
+}
+
 func TestCancelledConfirmationMovesNothing(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))

@@ -49,6 +49,8 @@ type Settings struct {
 	Clamp func(settings.AppSettings) settings.AppSettings
 	// UpdateErr and ResetErr, when set, are what Update and Reset fail with, storing nothing.
 	UpdateErr, ResetErr error
+	// ResetRelease, when set, holds each Reset until it receives.
+	ResetRelease chan struct{}
 	// Fail, when set, is what Update fails with for the settings it receives (nil stores them).
 	Fail func(settings.AppSettings) error
 	// Wait, when set, holds each Update, with what it received, before it answers.
@@ -177,6 +179,12 @@ func (s *Settings) Update(next settings.AppSettings) (settings.AppSettings, erro
 func (s *Settings) Reset() (settings.AppSettings, error) {
 	s.mu.Lock()
 	s.resets++
+	release := s.ResetRelease
+	s.mu.Unlock()
+	if release != nil {
+		<-release
+	}
+	s.mu.Lock()
 	if err := s.ResetErr; err != nil {
 		stored := clone(s.Stored)
 		s.mu.Unlock()

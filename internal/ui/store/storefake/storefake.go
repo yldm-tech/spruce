@@ -36,6 +36,9 @@ type Services struct {
 	// Guides counts the guide's calls.
 	Guides    int
 	Locations app.SpaceLocations
+	// ClearErr is what clearing the history fails with, clearing nothing; ClearRelease, when set, holds each clear until it receives.
+	ClearErr     error
+	ClearRelease chan struct{}
 
 	settingsCh chan settings.AppSettings
 	alertsCh   chan []health.Alert
@@ -142,7 +145,16 @@ func (f historySvc) List(limit int) ([]history.Run, error) {
 
 func (f historySvc) Clear() error {
 	f.s.mu.Lock()
+	release := f.s.ClearRelease
+	f.s.mu.Unlock()
+	if release != nil {
+		<-release
+	}
+	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
+	if f.s.ClearErr != nil {
+		return f.s.ClearErr
+	}
 	f.s.Runs = nil
 	return nil
 }

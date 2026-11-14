@@ -428,6 +428,36 @@ func TestClearHistoryCancel(t *testing.T) {
 	}
 }
 
+// Escape while the history is being cleared does nothing; a failure then shows in the dialog, which stays.
+func TestEscapeWhileClearingKeepsTheDialog(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	fakes.Runs = []history.Run{{ID: "1", Kind: history.KindMaintenance}}
+	fakes.ClearErr = errors.New("无法清空操作历史，详情已记录到日志")
+	release := make(chan struct{})
+	fakes.ClearRelease = release
+	p := start(t, options{fakes: fakes})
+	p.Press("id:clear-history-button")
+	p.WaitFor("id:clear-dialog", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return p.Find("id:confirm-ok").Props.Disabled })
+	p.Key("Escape")
+	p.Settle()
+	if !p.Exists("id:clear-dialog") || !p.stores.Block.Blocked() {
+		t.Fatalf("after Escape: dialog %v, shell blocked %v", p.Exists("id:clear-dialog"), p.stores.Block.Blocked())
+	}
+	close(release)
+	if got := p.WaitFor("id:clear-error", wait).Text; got != "无法清空操作历史，详情已记录到日志" {
+		t.Errorf("error %q", got)
+	}
+	p.Find("id:clear-dialog")
+	// Idle again, Escape is 取消.
+	p.Key("Escape")
+	p.WaitForGone("id:clear-dialog", wait)
+	if p.stores.Block.Blocked() {
+		t.Error("the shell stays blocked")
+	}
+}
+
 func TestFullDiskAccessGuide(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	fakes.Permission = maintenance.PermissionDenied
@@ -551,6 +581,32 @@ func TestResetFailureStaysInTheDialog(t *testing.T) {
 		t.Errorf("error %q", got)
 	}
 	p.Find("id:reset-dialog")
+}
+
+// Escape while the defaults are being restored does nothing, so a failure still shows in the dialog; idle again, Escape closes it and 恢复默认设置 opens it again.
+func TestEscapeWhileResettingKeepsTheDialog(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.ResetErr = errors.New("无法恢复默认设置，详情已记录到日志")
+	release := make(chan struct{})
+	svc.ResetRelease = release
+	p := start(t, options{svc: svc})
+	p.Press("id:reset")
+	p.WaitFor("id:reset-dialog", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return svc.Resets() == 1 })
+	p.Key("Escape")
+	p.Settle()
+	if !p.Exists("id:reset-dialog") || !p.stores.Block.Blocked() {
+		t.Fatalf("after Escape: dialog %v, shell blocked %v", p.Exists("id:reset-dialog"), p.stores.Block.Blocked())
+	}
+	close(release)
+	if got := p.WaitFor("id:reset-error", wait).Text; got != "无法恢复默认设置，详情已记录到日志" {
+		t.Errorf("error %q", got)
+	}
+	p.Key("Escape")
+	p.WaitForGone("id:reset-dialog", wait)
+	p.Press("id:reset")
+	p.WaitFor("id:reset-dialog", wait)
 }
 
 func equal(a, b enginesettings.AppSettings) bool {

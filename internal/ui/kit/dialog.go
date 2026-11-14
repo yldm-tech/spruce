@@ -16,7 +16,7 @@ type Blocker interface {
 // BlockerKey provides the shell's Blocker to dialogs and overlays.
 var BlockerKey = core.NewKey[Blocker]("spruce.blocker", nil)
 
-// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape closes it only when onClose is set; the scrim never does. initial takes the keyboard's focus as it opens and returnFocus as it goes.
+// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. initial takes the keyboard's focus as it opens and returnFocus as it goes.
 type layer struct {
 	open        func() bool
 	onClose     func()
@@ -47,13 +47,10 @@ func (l layer) render() core.Node {
 	return base.Dialog{
 		Open:                   l.open,
 		Animation:              core.ModalNone,
-		NoCloseOnEscape:        l.onClose == nil,
+		NoCloseOnEscape:        true,
 		NoCloseOnBackdropPress: true,
-		OnOpenChange: func(open bool, _ base.Reason) {
-			if !open && l.onClose != nil {
-				l.onClose()
-			}
-		},
+		// base.Dialog reports Escape here before it would close; NoCloseOnEscape keeps it open, so onClose decides.
+		OnCancel: l.onClose,
 		OnOpen: func() {
 			if l.initial != nil {
 				l.initial.Focus()

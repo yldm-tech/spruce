@@ -25,6 +25,8 @@ type Service struct {
 	// TrashResult and TrashErr are what Trash answers.
 	TrashResult app.SpaceTrashResult
 	TrashErr    error
+	// TrashRelease, when set, holds each Trash until it receives or its ctx ends.
+	TrashRelease chan struct{}
 
 	scans    []string
 	children []int
@@ -81,8 +83,18 @@ func (s *Service) LargeFiles(scanID string) ([]app.SpaceEntry, error) {
 // Trash implements the page's Service.
 func (s *Service) Trash(ctx context.Context, scanID string, paths []string) (app.SpaceTrashResult, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.trashes = append(s.trashes, paths)
+	release := s.TrashRelease
+	s.mu.Unlock()
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return app.SpaceTrashResult{}, ctx.Err()
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.TrashResult, s.TrashErr
 }
 
