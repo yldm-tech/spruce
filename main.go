@@ -22,6 +22,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
+	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 	"github.com/yldm-tech/spruce/internal/services"
 )
 
@@ -115,6 +116,13 @@ func main() {
 	// page: installers
 
 	// page: uninstall
+	mygo.Bind(services.NewUninstall(uninstall.New(uninstall.Config{
+		Home:       home,
+		IconCache:  filepath.Join(dataDir, "app-icons"),
+		Runner:     runner,
+		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
+		Self:       exe,
+	}), historyStore, home, logger))
 
 	// page: space
 

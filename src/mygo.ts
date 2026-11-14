@@ -300,6 +300,98 @@ export interface TrashUsage {
   items: number;
 }
 
+/** UninstallApp is one app of the 应用卸载 list. */
+export interface UninstallApp {
+  id: string;
+  name: string;
+  version?: string;
+  /** BundleID is the app's bundle identifier (macOS). */
+  bundleId?: string;
+  /** Publisher is the program's publisher (Windows). */
+  publisher?: string;
+  /** Path is the .app bundle (macOS) or the install folder, when known (Windows). */
+  path?: string;
+  /** AppStore marks a Mac App Store app. */
+  appStore: boolean;
+  /** Running is set when the app runs now; on macOS it cannot be uninstalled until it quits. */
+  running: boolean;
+  /** InstallDate is when the program was installed (Windows), when it says. */
+  installDate?: string;
+}
+
+/** UninstallAppDetails is one update of an app's details, streamed by Measure. Only the fields it carries are set. */
+export interface UninstallAppDetails {
+  id: string;
+  /** Size is the space the app takes, in bytes. */
+  size?: number;
+  /** Usage, with LastUsed when used. */
+  usage?: UninstallUsage;
+  lastUsed?: string;
+  /** Icon is a data: URL of a PNG. */
+  icon?: string;
+}
+
+/** UninstallLeftover is one file or folder offered with an app. */
+export interface UninstallLeftover {
+  id: string;
+  path: string;
+  kind: UninstallLeftoverKind;
+  size: number;
+  dir: boolean;
+  /** Selected is whether it starts checked. */
+  selected: boolean;
+  /** Note is an optional short line in Simplified Chinese. */
+  note?: string;
+}
+
+/** UninstallLeftoverKind is where a leftover lies. */
+export type UninstallLeftoverKind = "app" | "support" | "caches" | "preferences" | "containers" | "groupContainers" | "savedState" | "httpStorage" | "webkit" | "logs" | "cookies" | "launchAgents" | "appData" | "localAppData" | "programs";
+
+/** UninstallOutcome is what Remove did. */
+export interface UninstallOutcome {
+  app: string;
+  /** BundleRemoved is set when the app is in the Trash (macOS). */
+  bundleRemoved: boolean;
+  /** BundleFailure explains why the app stayed; its leftovers are then left alone too. */
+  bundleFailure?: string;
+  result: CleanResult;
+}
+
+/** UninstallPlan is what uninstalling an app would move to the Trash. */
+export interface UninstallPlan {
+  appId: string;
+  /** Bundle is the app itself (macOS); null on Windows. */
+  bundle: UninstallLeftover | null;
+  leftovers: UninstallLeftover[];
+  /** Denied counts locations that could not be read, so the list may be incomplete. */
+  denied: number;
+  running: boolean;
+  /** SharedWith is another installed copy of the app whose files the leftovers may be; they then start unchecked. */
+  sharedWith?: string;
+}
+
+/** UninstallRequest names what Remove moves to the Trash: the planned app's bundle (always, on macOS) and the leftovers by ID. */
+export interface UninstallRequest {
+  appId: string;
+  leftoverIds: string[];
+}
+
+/** UninstallUsage is what is known about when an app was last used. */
+export type UninstallUsage = "used" | "never" | "unknown";
+
+/** UninstallerOutcome is what running a Windows program's uninstaller achieved. */
+export interface UninstallerOutcome {
+  /** Removed is set when the program is gone from the installed programs. */
+  removed: boolean;
+  /** Waited is false when the page stopped waiting before the uninstaller exited. */
+  waited: boolean;
+}
+
+/** UninstallerStatus is sent once the uninstaller runs. */
+export interface UninstallerStatus {
+  running: boolean;
+}
+
 // ---- Services ----
 
 /** Maintenance is the bound service of the 维护 page. */
@@ -395,6 +487,34 @@ export const Cleanup = {
   /** Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese. */
   scan(cleaner: CleanerID, progress: Channel<Progress>): Promise<ScanResult> {
     return call("Cleanup.Scan", cleaner, progress);
+  },
+} as const;
+
+/** Uninstall is the bound service of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history. */
+export const Uninstall = {
+  /** Apps lists the installed apps, sorted by name, without their sizes, icons and last use (Measure streams those). */
+  apps(): Promise<UninstallApp[]> {
+    return call("Uninstall.Apps");
+  },
+  /** CheckRemoved checks again whether a Windows program is gone, for an uninstaller that went on after the process Spruce started exited. */
+  checkRemoved(appID: string): Promise<UninstallerOutcome> {
+    return call("Uninstall.CheckRemoved", appID);
+  },
+  /** Leftovers finds what the app left in the user's folders and measures it with the app; the result is what Remove picks from. On Windows it answers only after the program's uninstaller removed it. */
+  leftovers(appID: string): Promise<UninstallPlan> {
+    return call("Uninstall.Leftovers", appID);
+  },
+  /** Measure streams the size, icon and last use of every app of the last Apps call as each becomes known, and returns when all are measured. Closing the channel stops it. */
+  measure(details: Channel<UninstallAppDetails>): Promise<void> {
+    return call("Uninstall.Measure", details);
+  },
+  /** Remove moves the planned app (macOS) and the chosen leftovers to the Trash, streams progress and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Closing the channel stops after the current item. */
+  remove(req: UninstallRequest, progress: Channel<Progress>): Promise<UninstallOutcome> {
+    return call("Uninstall.Remove", req, progress);
+  },
+  /** RunUninstaller runs a Windows program's own uninstaller, so its UI and the UAC prompt appear, sends one status once it runs, waits for it to exit and checks whether the program is gone; closing the channel stops the wait (never the uninstaller). The run is recorded in the history. */
+  runUninstaller(appID: string, status: Channel<UninstallerStatus>): Promise<UninstallerOutcome> {
+    return call("Uninstall.RunUninstaller", appID, status);
   },
 } as const;
 
