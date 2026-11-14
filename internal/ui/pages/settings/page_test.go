@@ -13,6 +13,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	enginesettings "github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/settings"
 	"github.com/yldm-tech/spruce/internal/ui/pages/settings/settingsfake"
 	"github.com/yldm-tech/spruce/internal/ui/store"
@@ -59,8 +60,15 @@ func start(t *testing.T, o options) *page {
 		p.shown = core.NewSignal(cx, true)
 		return core.Show{When: p.shown.Get, Then: func(*core.Scope) core.Node { return core.Func(settings.Page) }}
 	}, nsgotest.Size(1052, 2600))
-	p.WaitFor("id:section-about", wait)
+	p.WaitFor("id:settings-tab-general", wait)
 	return p
+}
+
+// tab shows the page's tab (general, cleanup, health, history or about).
+func (p *page) tab(name string) {
+	p.t.Helper()
+	p.Press("id:tab-" + name)
+	p.WaitFor("id:settings-tab-"+name, wait)
 }
 
 // updates waits until Update has been called n times and returns the last settings it received.
@@ -117,6 +125,7 @@ func TestSwitchesSaveTheirOwnFieldAtOnce(t *testing.T) {
 		t.Fatalf("general %+v", got)
 	}
 
+	p.tab("health")
 	p.Press("role:switch 启用高 CPU 提醒")
 	if got := p.updates(3).Health; got != (enginesettings.HealthSettings{CPUThreshold: 40, SustainMinutes: 10, Enabled: false}) {
 		t.Fatalf("health %+v", got)
@@ -134,9 +143,13 @@ func TestFollowsChangesFromElsewhereAndShowsWhatGoStored(t *testing.T) {
 		s.Health.CPUThreshold = 75
 		s.General.LaunchAtLogin = true
 	})
-	p.WaitUntil(wait, func() bool { return p.valueText("提醒阈值") == "75%" && p.checked("登录时启动 Spruce") })
+	p.WaitUntil(wait, func() bool { return p.checked("登录时启动 Spruce") })
 	if svc.Gets() != gets+1 {
 		t.Errorf("read the settings %d times for one change", svc.Gets()-gets)
+	}
+	p.tab("health")
+	if got := p.valueText("提醒阈值"); got != "75%" {
+		t.Fatalf("threshold reads %q", got)
 	}
 
 	// Go clamps the 25 sent to 20, the minimum: the slider shows what Go stored.
@@ -210,6 +223,7 @@ func TestOnlyTheLatestSaveCounts(t *testing.T) {
 
 func TestSlidersSaveOnceTheUserStops(t *testing.T) {
 	p := start(t, options{})
+	p.tab("health")
 	v := p.Find(p.slider("提醒阈值")).Props.Value
 	if v.Min != 20 || v.Max != 400 || v.Text != "40%" {
 		t.Fatalf("threshold %+v", v)
@@ -253,6 +267,7 @@ func TestClampedValueSaysSo(t *testing.T) {
 		return next
 	}
 	p := start(t, options{svc: svc})
+	p.tab("health")
 	p.AccessibilityAction(p.slider("提醒阈值"), core.ActionIncrement)
 	p.Advance(debounce)
 	note := p.WaitFor("id:section-health >> id:cpu-threshold-note", wait)
@@ -266,6 +281,7 @@ func TestClampedValueSaysSo(t *testing.T) {
 
 func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	p := start(t, options{})
+	p.tab("history")
 	if got := p.field("retention-days"); got != "180" {
 		t.Fatalf("retention shows %q", got)
 	}
@@ -290,6 +306,7 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	}
 
 	// Leaving the field saves at once.
+	p.tab("cleanup")
 	p.Clear("id:large-file-min-field")
 	p.Type("id:large-file-min-field", "2000")
 	p.Focus("id:dev-artifact-min-age-field")
@@ -311,9 +328,10 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 
 func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 	p := start(t, options{})
+	p.tab("history")
 	p.Clear("id:retention-days-field")
 	p.Type("id:retention-days-field", "5")
-	p.Focus("id:large-file-min-field")
+	p.Key("Tab")
 	p.Advance(debounce)
 	p.Settle()
 	if n := len(p.svc.Updates()); n != 0 {
@@ -327,10 +345,23 @@ func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 
 func TestLeavingThePageSendsThePendingSave(t *testing.T) {
 	p := start(t, options{})
+	p.tab("history")
 	p.Clear("id:retention-days-field")
 	p.Type("id:retention-days-field", "90")
 	p.Post(func() { p.shown.Set(false) })
-	p.WaitForGone("id:section-about", wait)
+	p.WaitForGone("id:settings-page", wait)
+	if got := p.updates(1).History.RetentionDays; got != 90 {
+		t.Fatalf("retention %d", got)
+	}
+}
+
+// Another tab is another part of the page: a save still waiting goes out as its tab goes.
+func TestSwitchingTabsSendsThePendingSave(t *testing.T) {
+	p := start(t, options{})
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "90")
+	p.tab("about")
 	if got := p.updates(1).History.RetentionDays; got != 90 {
 		t.Fatalf("retention %d", got)
 	}
@@ -338,6 +369,7 @@ func TestLeavingThePageSendsThePendingSave(t *testing.T) {
 
 func TestFolderPickerAddsRefusesDuplicatesIgnoresCancelAndRemoves(t *testing.T) {
 	p := start(t, options{})
+	p.tab("cleanup")
 	p.Find("id:exclusions-list >> text:\"/Users/me/Keep\"")
 	p.pick("/Users/me/Movies", "/users/ME/keep", "")
 
@@ -371,6 +403,7 @@ func TestFolderPickerAddsRefusesDuplicatesIgnoresCancelAndRemoves(t *testing.T) 
 
 func TestFolderListsWriteTheirOwnFieldAndStopAtTheMaximum(t *testing.T) {
 	p := start(t, options{})
+	p.tab("cleanup")
 	p.pick("/Users/me/code", "/Volumes/Data/Installers")
 	p.Press("id:dev-project-roots-add")
 	got := p.updates(1)
@@ -394,6 +427,7 @@ func TestEmptyFolderList(t *testing.T) {
 	svc := settingsfake.New(dataDir)
 	svc.Stored.Cleanup.Exclusions = nil
 	p := start(t, options{svc: svc})
+	p.tab("cleanup")
 	p.Find("id:exclusions-list >> text:还没有添加文件夹")
 }
 
@@ -401,6 +435,7 @@ func TestClearHistoryAfterConfirming(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	fakes.Runs = []history.Run{{ID: "1", Kind: history.KindMaintenance}}
 	p := start(t, options{fakes: fakes})
+	p.tab("history")
 	gen := p.stores.History.Generation()
 	p.Press("id:clear-history-button")
 	p.WaitFor("id:clear-dialog", wait)
@@ -419,6 +454,7 @@ func TestClearHistoryCancel(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	fakes.Runs = []history.Run{{ID: "1", Kind: history.KindMaintenance}}
 	p := start(t, options{fakes: fakes})
+	p.tab("history")
 	p.Press("id:clear-history-button")
 	p.WaitFor("id:clear-dialog", wait)
 	p.Press("id:confirm-cancel")
@@ -436,6 +472,7 @@ func TestEscapeWhileClearingKeepsTheDialog(t *testing.T) {
 	release := make(chan struct{})
 	fakes.ClearRelease = release
 	p := start(t, options{fakes: fakes})
+	p.tab("history")
 	p.Press("id:clear-history-button")
 	p.WaitFor("id:clear-dialog", wait)
 	p.Press("id:confirm-ok")
@@ -490,7 +527,7 @@ func TestFullDiskAccessIsCheckedAsThePageOpens(t *testing.T) {
 	// Granted in System Settings while the app runs: the page shows it as it opens again.
 	fakes.SetPermission(maintenance.PermissionGranted)
 	p.Post(func() { p.shown.Set(false) })
-	p.WaitForGone("id:section-about", wait)
+	p.WaitForGone("id:settings-page", wait)
 	p.Post(func() { p.shown.Set(true) })
 	p.WaitFor("id:section-permissions >> text:已授权", wait)
 	p.WaitForGone("id:grant-full-disk-access", wait)
@@ -513,13 +550,14 @@ func TestNoPermissionsSectionWhereNotRequired(t *testing.T) {
 	fakes.Permission = maintenance.PermissionNotRequired
 	p := start(t, options{fakes: fakes})
 	p.WaitForGone("id:section-permissions", wait)
-	p.Find("role:button 在" + format.FileManagerName() + "中显示")
+	p.Find("role:switch 清理前确认")
 }
 
 func TestAboutShowsTheVersionAndRevealsTheDataFolder(t *testing.T) {
 	p := start(t, options{})
 	p.Find("role:header 设置")
 	p.Find("text:调整提醒、清理范围、排除的文件夹和历史记录")
+	p.tab("about")
 	p.Find("id:section-about >> text:版本 0.1.0")
 	p.Find("id:section-about >> text:\"" + dataDir + "\"")
 	for _, l := range settings.Licenses {
@@ -535,6 +573,7 @@ func TestAboutShowsTheVersionAndRevealsTheDataFolder(t *testing.T) {
 func TestRevealFailureShows(t *testing.T) {
 	files := &settingsfake.Files{RevealErr: errors.New("这个项目已经不存在了")}
 	p := start(t, options{files: files})
+	p.tab("about")
 	p.Press("id:reveal-data-dir")
 	if got := p.WaitFor("id:data-dir-error", wait).Text; got != "这个项目已经不存在了" {
 		t.Errorf("error %q", got)
@@ -545,6 +584,7 @@ func TestDevelopmentBuild(t *testing.T) {
 	svc := settingsfake.New("")
 	svc.AboutInfo.Version = ""
 	p := start(t, options{svc: svc})
+	p.tab("about")
 	p.Find("id:section-about >> text:版本 开发版")
 	if p.Enabled("id:reveal-data-dir") {
 		t.Error("reveal is enabled without a data folder")
@@ -556,10 +596,12 @@ func TestResetRestoresTheDefaultsAfterConfirming(t *testing.T) {
 	svc.Stored.History.RetentionDays = 30
 	svc.Stored.Health.CPUThreshold = 90
 	p := start(t, options{svc: svc})
+	p.tab("history")
 	if got := p.field("retention-days"); got != "30" {
 		t.Fatalf("retention shows %q", got)
 	}
 
+	p.tab("general")
 	p.Press("id:reset")
 	p.WaitFor("id:reset-dialog", wait)
 	p.Find("id:reset-dialog >> text:恢复默认设置？")
@@ -569,9 +611,11 @@ func TestResetRestoresTheDefaultsAfterConfirming(t *testing.T) {
 		t.Fatal("reset without confirming")
 	}
 
-	// A draft goes with the reset.
+	// A draft is not saved on the way.
+	p.tab("cleanup")
 	p.Clear("id:large-file-min-field")
 	p.Type("id:large-file-min-field", "abc")
+	p.tab("general")
 	p.Press("id:reset")
 	p.WaitFor("id:reset-dialog", wait)
 	p.Press("id:confirm-ok")
@@ -579,10 +623,13 @@ func TestResetRestoresTheDefaultsAfterConfirming(t *testing.T) {
 	if svc.Resets() != 1 {
 		t.Fatalf("resets %d", svc.Resets())
 	}
+	p.tab("history")
 	p.WaitUntil(wait, func() bool { return p.field("retention-days") == "180" })
+	p.tab("health")
 	if got := p.valueText("提醒阈值"); got != "40%" {
 		t.Errorf("threshold reads %q", got)
 	}
+	p.tab("cleanup")
 	if got := p.field("large-file-min"); got != "500" {
 		t.Errorf("large files shows %q", got)
 	}
@@ -638,4 +685,34 @@ func equal(a, b enginesettings.AppSettings) bool {
 		a.Cleanup.DevArtifactMinAgeDays == b.Cleanup.DevArtifactMinAgeDays && a.Cleanup.LargeFileMinMB == b.Cleanup.LargeFileMinMB &&
 		slices.Equal(a.Cleanup.Exclusions, b.Cleanup.Exclusions) && slices.Equal(a.Cleanup.DevProjectRoots, b.Cleanup.DevProjectRoots) &&
 		slices.Equal(a.Cleanup.InstallerRoots, b.Cleanup.InstallerRoots)
+}
+
+// A link elsewhere that names a setting opens the page on its tab, once: the next visit opens on 通用.
+func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
+	var n *nav.Navigator
+	p := &page{t: t, svc: settingsfake.New(dataDir), files: &settingsfake.Files{}, fakes: storefake.New(t.TempDir())}
+	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		p.stores = storefake.Provide(cx, p.svc.Use(p.fakes.Deps()))
+		settings.DepsKey.Provide(cx, settings.Deps{Files: p.files})
+		n = nav.NewNavigator(cx, nav.Health)
+		nav.Key.Provide(cx, n)
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if n.Current() != nav.Settings {
+				return core.Text{Content: "elsewhere"}
+			}
+			return core.Func(settings.Page)
+		})
+	}, nsgotest.Size(1052, 2600))
+	p.WaitFor("text:elsewhere", wait)
+
+	p.Post(func() { n.GoSettings(nav.SettingsCleanup) })
+	p.WaitFor("id:settings-tab-cleanup", wait)
+	if !p.Find("id:tab-cleanup").Props.Selected {
+		t.Error("清理 is not the selected tab")
+	}
+
+	p.Post(func() { n.Go(nav.Health) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.Go(nav.Settings) })
+	p.WaitFor("id:settings-tab-general", wait)
 }

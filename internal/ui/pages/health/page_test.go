@@ -307,6 +307,9 @@ func TestStatesTheAlertSettingsAndLinksToSettings(t *testing.T) {
 	p.WaitFor("id:alert-settings >> text:高 CPU 提醒：单个进程持续 10 分钟占用超过 40% CPU 时提醒", wait)
 	p.Press(`role:link "调整阈值"`)
 	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
+	if got := p.nav.TakeSettingsTab(); got != nav.SettingsHealth {
+		t.Errorf("设置 opens on %q", got)
+	}
 }
 
 func TestSaysWhenTheAlertIsOff(t *testing.T) {
@@ -316,4 +319,7 @@ func TestSaysWhenTheAlertIsOff(t *testing.T) {
 	p.WaitFor("id:alert-settings >> text:高 CPU 提醒已关闭", wait)
 	p.Press(`role:link "去设置开启"`)
 	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
+	if got := p.nav.TakeSettingsTab(); got != nav.SettingsHealth {
+		t.Errorf("设置 opens on %q", got)
+	}
 }

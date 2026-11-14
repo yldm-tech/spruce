@@ -80,7 +80,7 @@ func (a alertSettings) Render(cx *core.Scope) core.Node {
 			BorderWidth: 1, BorderColor: kit.BorderCard},
 		Children: []core.Node{
 			kit.TextFunc(text, kit.FontBody, kit.Regular, kit.ColorTextSecondary),
-			core.View{Role: core.RoleLink, LabelFunc: link, TestID: "alert-settings-link", OnPress: func(core.PressEvent) { nav.Use(cx).Go(nav.Settings) },
+			core.View{Role: core.RoleLink, LabelFunc: link, TestID: "alert-settings-link", OnPress: func(core.PressEvent) { nav.Use(cx).GoSettings(nav.SettingsHealth) },
 				Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorWarning, Cursor: core.CursorPointer,
 					Hover:        &core.Style{Color: kit.ColorTextLinkHover, TextDecoration: core.TextDecorationUnderline},
 					FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}},

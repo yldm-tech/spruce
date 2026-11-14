@@ -14,6 +14,8 @@ type Files interface {
 // Deps are what the page reads, provided by the shell with DepsKey.
 type Deps struct {
 	Files Files
+	// Icon is the app's icon as a PNG, which 关于 shows; without it 关于 shows the page's tile.
+	Icon []byte
 }
 
 // DepsKey provides the page's Deps.

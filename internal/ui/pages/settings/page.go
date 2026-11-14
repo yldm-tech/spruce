@@ -1,4 +1,4 @@
-// Package settings is the 设置 page: one glass card per area (通用, 健康监测, 清理, 历史记录, 权限 on macOS, 关于) and 恢复默认设置. Every control saves on its own as it changes; there is no Save button.
+// Package settings is the 设置 page: a tab per area (通用, 清理, 健康监测, 历史记录, 关于), each a column of grouped rows with the label and its description on the left and the control on the right. Every control saves on its own as it changes; there is no Save button.
 package settings
 
 import (
@@ -17,31 +17,51 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// Page is the 设置 page.
+// tabs are the page's tabs, in order.
+var tabs = []kit.Option[nav.SettingsTab]{
+	{Value: nav.SettingsGeneral, Label: "通用", TestID: "tab-general"},
+	{Value: nav.SettingsCleanup, Label: "清理", TestID: "tab-cleanup"},
+	{Value: nav.SettingsHealth, Label: "健康监测", TestID: "tab-health"},
+	{Value: nav.SettingsHistory, Label: "历史记录", TestID: "tab-history"},
+	{Value: nav.SettingsAbout, Label: "关于", TestID: "tab-about"},
+}
+
+// Page is the 设置 page. It opens on the tab a link asked for (nav.Navigator.GoSettings), else on 通用.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	stores := store.Use(cx)
 	ctx := cx.Context()
+	start := nav.SettingsGeneral
+	if n := nav.Use(cx); n != nil {
+		if t := n.TakeSettingsTab(); t != "" {
+			start = t
+		}
+	}
+	tab := core.NewSignal(cx, start)
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)
 
-	// 恢复默认设置 counts a generation, which draws the sections again so every control drops its draft and its notes.
-	sections := core.Show{When: stores.Settings.Loaded, Then: func(*core.Scope) core.Node {
+	// 恢复默认设置 counts a generation, which draws the tab again so every control drops its draft and its notes.
+	content := core.Show{When: stores.Settings.Loaded, Then: func(*core.Scope) core.Node {
 		return core.Dynamic(func(*core.Scope) core.Node {
 			stores.Settings.Generation()
+			t := tab.Get()
 			return core.Func(func(cx *core.Scope) core.Node {
-				return core.View{Style: core.Style{Gap: 14}, Children: []core.Node{
-					generalSection(),
-					healthSection(stores.Settings),
-					cleanupSection(stores.Settings),
-					historySection(stores.Settings, clearRef, func() { clearing.Set(true) }),
-					permissionsSection(stores.Permission),
-					aboutSection(cx, ctx, stores.Settings, deps.Files),
-					core.View{Style: core.Style{Direction: core.Row, JustifyContent: core.JustifyCenter, Padding: core.Edges{Top: 6, Bottom: 4}},
-						Children: []core.Node{kit.Button{Text: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset",
-							OnPress: func() { resetErr.Set(""); resetting.Set(true) }}}},
-				}}
+				var groups []core.Node
+				switch t {
+				case nav.SettingsCleanup:
+					groups = cleanupTab(stores.Settings)
+				case nav.SettingsHealth:
+					groups = healthTab(stores.Settings)
+				case nav.SettingsHistory:
+					groups = historyTab(stores.Settings, clearRef, func() { clearing.Set(true) })
+				case nav.SettingsAbout:
+					groups = aboutTab(cx, ctx, stores.Settings, deps)
+				default:
+					groups = generalTab(stores.Permission, resetRef, func() { resetErr.Set(""); resetting.Set(true) })
+				}
+				return core.View{TestID: "settings-tab-" + string(t), Style: core.Style{Gap: 22}, Children: groups}
 			})
 		})
 	}}
@@ -67,7 +87,11 @@ func Page(cx *core.Scope) core.Node {
 	clear := shared.ClearHistoryDialog{Open: clearing.Get, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef}
 
 	return core.Group{
-		kit.Page{TestID: "settings-page", Children: []core.Node{kit.PageHeader{Route: nav.Settings}, sections}},
+		kit.Page{TestID: "settings-page", Children: []core.Node{
+			kit.PageHeader{Route: nav.Settings},
+			kit.Tabs[nav.SettingsTab]{Label: "设置分类", Options: tabs, Value: tab.Get, OnChange: tab.Set},
+			content,
+		}},
 		reset, clear,
 	}
 }
@@ -78,74 +102,83 @@ func confirmMessage(text string, err func() string, testID string) core.Node {
 		Children: []core.Node{core.Text{Content: text}, kit.ErrorLine{Text: err, TestID: testID}}}
 }
 
-// section is one area's card (.settings-card): its tile and title, then its rows with a line between each two.
-func section(title string, tone kit.Tone, glyph, testID string, rows ...core.Node) core.Node {
-	children := []core.Node{core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Padding: core.Edges{Bottom: 6}},
-		Children: []core.Node{
-			kit.IconTile{Tone: tone, Size: 32, GlyphSize: 17, Glyph: glyph},
-			core.Text{Content: title, Role: core.RoleHeader, Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontSize: kit.FontCardTitle,
-				FontWeight: kit.FaceWeight(kit.Bold), Color: kit.ColorText}},
-		}}}
-	for i, r := range rows {
-		if i > 0 {
-			children = append(children, core.View{Style: core.Style{Height: core.Pt(1), FlexShrink: 0, Background: kit.BorderSubtle}})
-		}
-		children = append(children, r)
+// group is a titled group of rows: its title over a glass card holding the rows, with a line between each two. A row that is itself several rows (a folder list) draws its own lines.
+func group(title, testID string, rows ...core.Node) core.Node {
+	var head []core.Node
+	if title != "" {
+		head = []core.Node{core.View{Style: core.Style{Padding: core.Edges{Left: 4}}, Children: []core.Node{kit.SectionTitle(title)}}}
 	}
-	return core.View{Role: core.RoleGroup, Label: title, TestID: testID, Children: []core.Node{
-		kit.Card{Padding: core.Edges{Top: 18, Right: 22, Bottom: 6, Left: 22}, Children: children},
-	}}
+	return core.View{Role: core.RoleGroup, Label: title, TestID: testID, Style: core.Style{Gap: 8},
+		Children: append(head, kit.Card{Clip: true, Children: withLines(rows)})}
 }
 
-func generalSection() core.Node {
-	m := nav.Settings.Meta()
-	return section("通用", m.Tone, m.Glyph, "section-general",
-		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", Description: "登录系统后自动打开 Spruce。", TestID: "launch-at-login"},
-		switchSetting{Field: FieldConfirmBeforeClean, Label: "清理前确认", Description: "每次清理前先说明要清理多少、能否恢复，确认后才开始。",
-			TestID: "confirm-before-clean"},
-	)
+func generalTab(perm *store.Permission, resetRef *core.Ref, onReset func()) []core.Node {
+	return []core.Node{
+		group("", "section-general",
+			switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", Description: "登录系统后自动打开 Spruce。", TestID: "launch-at-login"},
+			switchSetting{Field: FieldConfirmBeforeClean, Label: "清理前确认", Description: "每次清理前先说明要清理多少、能否恢复，确认后才开始。",
+				TestID: "confirm-before-clean"},
+		),
+		permissionsGroup(perm),
+		group("", "section-reset",
+			row{Label: "恢复默认设置", Description: "所有设置回到初始值，「登录时启动」会关闭。操作历史不受影响。", TestID: "reset-row",
+				Control: []core.Node{kit.Button{Text: "恢复默认设置…", Label: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset", OnPress: onReset}}},
+		),
+	}
 }
 
-func healthSection(st *store.Settings) core.Node {
-	m, limits := nav.Health.Meta(), st.Limits()
-	return section("健康监测", m.Tone, m.Glyph, "section-health",
-		switchSetting{Field: FieldHealthEnabled, Label: "启用高 CPU 提醒", Description: "有进程长时间占用大量 CPU 时提醒你。只提醒，不会结束进程。",
-			TestID: "health-enabled"},
-		sliderSetting{Field: FieldCPUThreshold, Label: "提醒阈值", Description: "按单个处理器核心计算：100% 表示占满一个核心，200% 表示占满两个核心。",
-			Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, TestID: "cpu-threshold"},
-		sliderSetting{Field: FieldSustainMinutes, Label: "持续时间", Description: "进程连续超过阈值这么久才提醒。",
-			Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, TestID: "sustain-minutes"},
-	)
+func cleanupTab(st *store.Settings) []core.Node {
+	limits := st.Limits()
+	return []core.Node{
+		group("所有清理", "section-cleanup",
+			folderListSetting{Field: FieldExclusions, Label: "排除的文件夹", Description: "任何清理功能都不会删除这些位置里的内容。",
+				MaxPaths: limits.MaxPaths, TestID: "exclusions"},
+		),
+		group("开发者垃圾", "section-dev-junk",
+			folderListSetting{Field: FieldDevProjectRoots, Label: "项目所在文件夹", Description: "在这些文件夹里查找项目的构建产物。",
+				MaxPaths: limits.MaxPaths, TestID: "dev-project-roots"},
+			numberSetting{Field: FieldDevArtifactMinAgeDays, Label: "最少闲置天数", Description: "项目超过这么多天没有改动，才会列出它的构建产物。",
+				Range: limits.DevArtifactMinAgeDays, Unit: "天", TestID: "dev-artifact-min-age"},
+		),
+		group("安装包", "section-installers",
+			folderListSetting{Field: FieldInstallerRoots, Label: "查找位置", Description: "在这些文件夹和它们的下一层子文件夹里查找安装包和磁盘映像。",
+				MaxPaths: limits.MaxPaths, TestID: "installer-roots"},
+		),
+		group("空间透视", "section-space",
+			numberSetting{Field: FieldLargeFileMinMB, Label: "大文件阈值", Description: "不小于这个大小的文件算作大文件。",
+				Range: limits.LargeFileMinMB, Unit: "MB", TestID: "large-file-min"},
+		),
+	}
 }
 
-func cleanupSection(st *store.Settings) core.Node {
-	m, limits := nav.SystemJunk.Meta(), st.Limits()
-	return section("清理", m.Tone, m.Glyph, "section-cleanup",
-		folderListSetting{Field: FieldExclusions, Label: "排除的文件夹", Description: "任何清理功能都不会删除这些位置里的内容。",
-			MaxPaths: limits.MaxPaths, TestID: "exclusions"},
-		folderListSetting{Field: FieldDevProjectRoots, Label: "开发项目所在文件夹", Description: "开发者垃圾在这些文件夹里查找项目的构建产物。",
-			MaxPaths: limits.MaxPaths, TestID: "dev-project-roots"},
-		numberSetting{Field: FieldDevArtifactMinAgeDays, Label: "项目构建产物最少闲置天数", Description: "项目超过这么多天没有改动，才会列出它的构建产物。",
-			Range: limits.DevArtifactMinAgeDays, Unit: "天", TestID: "dev-artifact-min-age"},
-		folderListSetting{Field: FieldInstallerRoots, Label: "安装包查找位置", Description: "安装包在这些文件夹里查找安装包和磁盘映像。",
-			MaxPaths: limits.MaxPaths, TestID: "installer-roots"},
-		numberSetting{Field: FieldLargeFileMinMB, Label: "大文件阈值", Description: "空间透视把不小于这个大小的文件算作大文件。",
-			Range: limits.LargeFileMinMB, Unit: "MB", TestID: "large-file-min"},
-	)
+func healthTab(st *store.Settings) []core.Node {
+	limits := st.Limits()
+	return []core.Node{
+		group("高 CPU 提醒", "section-health",
+			switchSetting{Field: FieldHealthEnabled, Label: "启用高 CPU 提醒", Description: "有进程长时间占用大量 CPU 时提醒你。只提醒，不会结束进程。",
+				TestID: "health-enabled"},
+			sliderSetting{Field: FieldCPUThreshold, Label: "提醒阈值", Description: "按单个处理器核心计算：100% 表示占满一个核心，200% 表示占满两个核心。",
+				Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, TestID: "cpu-threshold"},
+			sliderSetting{Field: FieldSustainMinutes, Label: "持续时间", Description: "进程连续超过阈值这么久才提醒。",
+				Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, TestID: "sustain-minutes"},
+		),
+	}
 }
 
-func historySection(st *store.Settings, clearRef *core.Ref, onClear func()) core.Node {
-	m, limits := nav.History.Meta(), st.Limits()
-	return section("历史记录", m.Tone, m.Glyph, "section-history",
-		numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: limits.RetentionDays, Unit: "天",
-			TestID: "retention-days"},
-		row{Label: "清空历史", Description: "删除全部操作记录，无法恢复。", TestID: "clear-history",
-			Control: []core.Node{kit.Button{Text: "清空历史…", Variant: kit.ButtonGhost, Ref: clearRef, OnPress: onClear, TestID: "clear-history-button"}}},
-	)
+func historyTab(st *store.Settings, clearRef *core.Ref, onClear func()) []core.Node {
+	limits := st.Limits()
+	return []core.Node{
+		group("", "section-history",
+			numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: limits.RetentionDays, Unit: "天",
+				TestID: "retention-days"},
+			row{Label: "清空历史", Description: "删除全部操作记录，无法恢复。", TestID: "clear-history",
+				Control: []core.Node{kit.Button{Text: "清空历史…", Variant: kit.ButtonGhost, Ref: clearRef, OnPress: onClear, TestID: "clear-history-button"}}},
+		),
+	}
 }
 
-// permissionsSection shows Full Disk Access on macOS, with the guide the 维护 page uses; it reads the state again as it shows, and says 正在检查… until the store first answers. Windows has no such permission, so it shows nothing there.
-func permissionsSection(perm *store.Permission) core.Node {
+// permissionsGroup shows Full Disk Access on macOS, with the guide the 维护 page uses; it reads the state again as it shows, and says 正在检查… until the store first answers. Windows has no such permission, so it shows nothing there.
+func permissionsGroup(perm *store.Permission) core.Node {
 	perm.Recheck()
 	return core.Show{When: func() bool {
 		return runtime.GOOS != "windows" && perm.FullDiskAccess() != maintenance.PermissionNotRequired
@@ -179,7 +212,7 @@ func permissionsSection(perm *store.Permission) core.Node {
 						perm.Guide(func(_ maintenance.PermissionState, err error) { failed.Set(err != nil) })
 					}}
 			}}
-			return section("权限", kit.ToneAmber, "lock", "section-permissions",
+			return group("权限", "section-permissions",
 				row{Label: "完全磁盘访问权限", TestID: "full-disk-access",
 					Description: "优化 Safari 和邮件的数据库、读取" + format.TrashName() + "和查找部分应用的残留文件时需要这项权限。",
 					Error: func() string {
@@ -192,36 +225,69 @@ func permissionsSection(perm *store.Permission) core.Node {
 		}}
 }
 
-func aboutSection(cx *core.Scope, ctx context.Context, st *store.Settings, files Files) core.Node {
+func aboutTab(cx *core.Scope, ctx context.Context, st *store.Settings, deps Deps) []core.Node {
 	about := st.About()
 	revealErr := core.NewSignal(cx, "")
 	reveal := func() {
 		revealErr.Set("")
-		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, files.Reveal(ctx, about.DataDir) },
+		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, deps.Files.Reveal(ctx, about.DataDir) },
 			func(_ struct{}, err error) {
 				if err != nil {
 					revealErr.Set(err.Error())
 				}
 			})
 	}
+
+	var icon core.Node = kit.IconTile{Tone: nav.Settings.Meta().Tone, Size: 72, GlyphSize: 36, Glyph: nav.Settings.Meta().Glyph, Radius: 18}
+	if len(deps.Icon) > 0 {
+		icon = core.Image{Source: core.ImageSource{Data: deps.Icon}, ElementsHidden: true, Style: core.Style{Width: core.Pt(88), Height: core.Pt(88)}}
+	}
+	hero := core.View{TestID: "version", Style: core.Style{AlignItems: core.AlignCenter, Gap: 6, Padding: core.Edges{Top: 8, Bottom: 6}},
+		Children: []core.Node{
+			icon,
+			core.View{Style: core.Style{Height: core.Pt(6)}},
+			core.Text{Content: "Spruce", Role: core.RoleHeader, Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontSize: kit.FontTitle,
+				FontWeight: kit.FaceWeight(kit.Bold), Color: kit.ColorText}},
+			kit.Tabular(kit.Text(Version(about.Version), kit.FontBody, kit.Regular, kit.ColorTextSecondary)),
+			kit.Text("清理磁盘、保养系统的桌面工具。", kit.FontBody, kit.Regular, kit.ColorTextMuted),
+		}}
+
 	licenses := make([]core.Node, len(Licenses))
 	for i, l := range Licenses {
-		licenses[i] = core.View{Style: core.Style{Direction: core.Row, JustifyContent: core.JustifySpaceBetween, Gap: 12},
+		licenses[i] = core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, JustifyContent: core.JustifySpaceBetween, Gap: 12,
+			MinHeight: core.Pt(40), Padding: core.Symmetric(8, 18)},
 			Children: []core.Node{
 				kit.Text(l.Name, kit.FontBody, kit.Regular, kit.ColorText),
-				kit.Text(l.License, kit.FontBody, kit.Regular, kit.ColorTextMuted),
+				kit.Text(l.License, kit.FontSmall, kit.Regular, kit.ColorTextMuted),
 			}}
 	}
-	return section("关于", kit.ToneViolet, "info", "section-about",
-		row{Label: "Spruce", Description: "清理磁盘、保养系统的桌面工具。", TestID: "version",
-			Control: []core.Node{kit.Tabular(kit.Text(Version(about.Version), kit.FontBody, kit.Regular, kit.ColorTextSecondary))}},
-		row{Label: "数据文件夹", Description: about.DataDir, Error: revealErr.Get, TestID: "data-dir",
-			Control: []core.Node{kit.Button{Text: "在" + format.FileManagerName() + "中显示", Variant: kit.ButtonGhost, TestID: "reveal-data-dir",
-				Disabled: func() bool { return about.DataDir == "" }, OnPress: reveal}}},
-		row{Label: "开源许可", Description: "Spruce 使用了以下开源软件：", Stacked: true, TestID: "licenses",
-			Control: []core.Node{core.View{Role: core.RoleGroup, Label: "开源许可", TestID: "license-list",
-				Style: core.Style{AlignSelf: core.AlignStretch, Width: core.Pct(100), Display: core.DisplayGrid, GridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-					RowGap: 6, ColumnGap: 24},
-				Children: licenses}}},
-	)
+
+	return []core.Node{
+		core.View{TestID: "section-about", Style: core.Style{Gap: 22}, Children: []core.Node{
+			hero,
+			group("", "section-data",
+				row{Label: "数据文件夹", Description: about.DataDir, Error: revealErr.Get, TestID: "data-dir",
+					Control: []core.Node{kit.Button{Text: "在" + format.FileManagerName() + "中显示", Variant: kit.ButtonGhost, TestID: "reveal-data-dir",
+						Disabled: func() bool { return about.DataDir == "" }, OnPress: reveal}}},
+			),
+			group("开源许可", "license-list", licenses...),
+		}},
+	}
+}
+
+// withLines puts a line between each two of rows.
+func withLines(rows []core.Node) []core.Node {
+	out := make([]core.Node, 0, 2*len(rows))
+	for i, r := range rows {
+		if i > 0 {
+			out = append(out, line())
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// line is the line between two rows of a group, inset from the left as the rows' text is.
+func line() core.Node {
+	return core.View{Style: core.Style{Height: core.Pt(1), FlexShrink: 0, Margin: core.Edges{Left: 18}, Background: kit.BorderSubtle}}
 }

@@ -169,6 +169,9 @@ func TestIdleListsProjectFolders(t *testing.T) {
 	}
 	p.Press("role:link 更改文件夹")
 	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
+	if got := p.nav.TakeSettingsTab(); got != nav.SettingsCleanup {
+		t.Errorf("设置 opens on %q", got)
+	}
 }
 
 // Ported from DevJunkPage.test.tsx: says only tool caches are scanned when no project folder is set.
@@ -180,6 +183,9 @@ func TestIdleWithoutProjectFolders(t *testing.T) {
 	}
 	p.Press("role:link 去设置")
 	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
+	if got := p.nav.TakeSettingsTab(); got != nav.SettingsCleanup {
+		t.Errorf("设置 opens on %q", got)
+	}
 }
 
 // Ported from DevJunkPage.test.tsx: shows scan progress and stops the scan.

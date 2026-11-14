@@ -61,6 +61,8 @@ var glyphs = map[string]glyph{
 	"error": {round: true, paths: `<path d="M12 7v6M12 17v.5"/>`},
 	// Remove from a list.
 	"close": {round: true, paths: `<path d="M6 6l12 12M18 6L6 18"/>`},
+	// Add to a list.
+	"plus": {round: true, paths: `<path d="M12 5v14M5 12h14"/>`},
 	// Collapsed section.
 	"chevron-down": {round: true, paths: `<path d="M6 9l6 6 6-6"/>`},
 	// Expanded category.

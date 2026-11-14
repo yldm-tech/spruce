@@ -7,56 +7,57 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 
 	"github.com/yldm-tech/spruce/internal/app"
+	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// row is one setting in a section card (.setting-row): the label and its description on the left, the control on the right (or below, Stacked), and the lines saying a save failed (Error, in the warning color, announced at once) or was adjusted (Note, announced politely).
+// rowPadding is a row's inset inside its group: rows, folders and the add row line up on it.
+var rowPadding = core.Symmetric(12, 18)
+
+// row is one setting in a group: the label and its description on the left, the control on the right, and the lines saying a save failed (Error, in the warning color, announced at once) or was adjusted (Note, announced politely).
 type row struct {
 	Label, Description string
 	// DescriptionFunc replaces Description as it changes.
 	DescriptionFunc func() string
 	Error, Note     func() string
-	Stacked         bool
 	Control         []core.Node
 	TestID          string
 }
 
 // Render implements core.Node.
 func (r row) Render(*core.Scope) core.Node {
-	text := []core.Node{kit.Text(r.Label, kit.FontSubheading, kit.Semibold, kit.ColorText)}
-	if r.Description != "" || r.DescriptionFunc != nil {
-		text = append(text, core.Text{Content: r.Description, ContentFunc: r.DescriptionFunc, Style: lineStyle(kit.ColorTextMuted)})
-	}
-	text = append(text, kit.ErrorLine{Text: r.Error, TestID: r.TestID + "-error"}, note{Text: r.Note, TestID: r.TestID + "-note"})
-	st := core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, JustifyContent: core.JustifySpaceBetween,
-		RowGap: 10, ColumnGap: 24, Padding: core.Symmetric(14, 0)}
-	textStyle := core.Style{FlexGrow: 1, FlexShrink: 1, FlexBasis: core.Pt(280), MinWidth: core.Pt(0), Gap: 3}
-	control := core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, Gap: 10}
-	if r.Stacked {
-		st.Direction, st.AlignItems, st.Wrap = core.Column, core.AlignStretch, core.NoWrap
-		textStyle.FlexBasis = core.Length{}
-		control.Direction, control.AlignItems = core.Column, core.AlignStart
-	}
-	return core.View{TestID: r.TestID, Style: st, Children: []core.Node{
-		core.View{Style: textStyle, Children: text},
-		core.View{Style: control, Children: r.Control},
-	}}
+	return core.View{TestID: r.TestID,
+		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding},
+		Children: []core.Node{
+			rowText(r.Label, r.Description, r.DescriptionFunc, r.Error, r.Note, r.TestID),
+			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, FlexShrink: 0}, Children: r.Control},
+		}}
 }
 
-// lineStyle is a description or note line (.setting-description, .setting-note).
+// rowText is a row's label over its description, then its error and note lines; it takes the room the control leaves.
+func rowText(label, description string, descriptionFunc, err, note func() string, testID string) core.Node {
+	text := []core.Node{kit.Text(label, kit.FontSubheading, kit.Medium, kit.ColorText)}
+	if description != "" || descriptionFunc != nil {
+		text = append(text, core.Text{Content: description, ContentFunc: descriptionFunc, Style: lineStyle(kit.ColorTextMuted)})
+	}
+	text = append(text, kit.ErrorLine{Text: err, TestID: testID + "-error"}, noteLine{Text: note, TestID: testID + "-note"})
+	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 3}, Children: text}
+}
+
+// lineStyle is a description or note line under a row's label.
 func lineStyle(c core.Color) core.Style {
-	return core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: c}
+	return core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, LineHeightMultiple: 1.4, Color: c}
 }
 
-// note is a row's line in the secondary color that is there only while Text returns something, announced politely as it appears (.setting-note, role=status).
-type note struct {
+// noteLine is a row's line in the secondary color that is there only while Text returns something, announced politely as it appears (.setting-note, role=status).
+type noteLine struct {
 	Text   func() string
 	TestID string
 }
 
 // Render implements core.Node.
-func (n note) Render(*core.Scope) core.Node {
+func (n noteLine) Render(*core.Scope) core.Node {
 	return core.Show{When: func() bool { return n.Text != nil && n.Text() != "" }, Then: func(*core.Scope) core.Node {
 		return core.Text{ContentFunc: n.Text, LiveRegion: core.LiveRegionPolite, TestID: n.TestID, Style: lineStyle(kit.ColorTextSecondary)}
 	}}
@@ -159,7 +160,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 			}}}}
 }
 
-// folderListSetting is a list of folders with a remove button each and 添加…, which opens the system's folder picker. Each change is saved at once.
+// folderListSetting is a list of folders as rows of its group: its label and description, a row per folder with a remove button, and 添加文件夹…, which opens the system's folder picker. Each change is saved at once.
 type folderListSetting struct {
 	Field              Field[[]string]
 	Label, Description string
@@ -194,13 +195,25 @@ func (c folderListSetting) Render(cx *core.Scope) core.Node {
 			}
 		})
 	}
+	header := core.View{TestID: c.TestID, Style: core.Style{Padding: rowPadding, MinHeight: core.Pt(56), JustifyContent: core.JustifyCenter},
+		Children: []core.Node{rowText(c.Label, c.Description, nil,
+			func() string {
+				if p := problem.Get(); p != "" {
+					return p
+				}
+				return s.err.Get()
+			},
+			func() string {
+				if full() {
+					return "最多 " + strconv.Itoa(c.MaxPaths) + " 项"
+				}
+				return s.note.Get()
+			}, c.TestID)}}
 	list := core.View{Role: core.RoleGroup, Label: c.Label, TestID: c.TestID + "-list",
-		Style: core.Style{AlignSelf: core.AlignStretch, Width: core.Pct(100), Padding: core.Symmetric(4, 0), CornerRadius: 12, Background: kit.SurfaceList,
-			BorderWidth: 1, BorderColor: kit.BorderSubtle},
 		Children: []core.Node{
 			core.Show{When: func() bool { return len(s.value()) == 0 }, Then: func(*core.Scope) core.Node {
-				return core.Text{Content: "还没有添加文件夹", Style: core.Style{Padding: core.Symmetric(8, 14), FontFamily: kit.FontSans,
-					FontSize: kit.FontBody, Color: kit.ColorTextMuted}}
+				return core.Group{line(), core.View{Style: core.Style{Padding: rowPadding},
+					Children: []core.Node{kit.Text("还没有添加文件夹", kit.FontBody, kit.Regular, kit.ColorTextMuted)}}}
 			}},
 			core.Each(s.value, func(p string) string { return p }, func(_ *core.Scope, path func() string, _ func() int) core.Node {
 				p := path()
@@ -210,43 +223,43 @@ func (c folderListSetting) Render(cx *core.Scope) core.Node {
 				})
 			}),
 		}}
-	return row{Label: c.Label, Description: c.Description, Stacked: true, TestID: c.TestID,
-		Error: func() string {
-			if p := problem.Get(); p != "" {
-				return p
+	add := addRow{TestID: c.TestID + "-add", OnPress: choose,
+		Text: func() string {
+			if choosing.Get() {
+				return "正在选择…"
 			}
-			return s.err.Get()
+			return "添加文件夹…"
 		},
-		Note: func() string {
-			if full() {
-				return "最多 " + strconv.Itoa(c.MaxPaths) + " 项"
-			}
-			return s.note.Get()
-		},
-		Control: []core.Node{list, smallButton{TestID: c.TestID + "-add", OnPress: choose,
-			Text: func() string {
-				if choosing.Get() {
-					return "正在选择…"
-				}
-				return "添加…"
-			},
-			Disabled: func() bool { return full() || choosing.Get() }}}}
+		Disabled: func() bool { return full() || choosing.Get() }}
+	return core.Group{header, list, add}
 }
 
-// folderRow is one folder of a list (.folder-row): its path on one line, cut at the end, and the button that removes it.
+// folderRow is one folder of a list: a folder glyph, the folder's name over its whole path (cut at the end), and the button that removes it.
 func folderRow(path string, remove func()) core.Node {
-	return core.View{
-		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, MinHeight: core.Pt(38), Padding: core.Edges{Right: 6, Left: 14},
+	name := format.BaseName(path)
+	if name == "" {
+		name = path
+	}
+	oneLine := func(s string, size core.Points, weight core.FontWeight, c core.Color) core.Text {
+		t := kit.Text(s, size, weight, c)
+		t.Style.NumberOfLines, t.Style.TextOverflow = 1, core.EllipsizeTail
+		return t
+	}
+	return core.Group{line(), core.View{
+		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(52), Padding: core.Edges{Top: 8, Right: 12, Bottom: 8, Left: 18},
 			Hover: &core.Style{Background: kit.SurfaceRowHover}},
 		Children: []core.Node{
-			core.Text{Content: path, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), NumberOfLines: 1,
-				TextOverflow: core.EllipsizeTail, FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorText}},
+			kit.Glyph{Name: "folder", Size: 18, Color: kit.ColorTextSecondary},
+			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
+				oneLine(name, kit.FontBody, kit.Medium, kit.ColorText),
+				oneLine(path, kit.FontSmall, kit.Regular, kit.ColorTextMuted),
+			}},
 			kit.IconButton{Glyph: "close", Label: "移除 " + path, OnPress: remove},
-		}}
+		}}}
 }
 
-// smallButton is the 32-point translucent pill under a folder list (.ghost-button.folder-add), a smaller kit.ButtonGhost.
-type smallButton struct {
+// addRow is the last row of a folder list: a plus and 添加文件夹…, which opens the system's folder picker.
+type addRow struct {
 	Text     func() string
 	Disabled func() bool
 	OnPress  func()
@@ -254,19 +267,19 @@ type smallButton struct {
 }
 
 // Render implements core.Node.
-func (b smallButton) Render(*core.Scope) core.Node {
+func (b addRow) Render(*core.Scope) core.Node {
 	disabled := func() bool { return b.Disabled != nil && b.Disabled() }
-	return core.View{Role: core.RoleButton, TestID: b.TestID, Disabled: disabled,
-		Style: core.Style{MinHeight: core.Pt(32), Padding: core.Symmetric(0, 14), CornerRadius: 16, Direction: core.Row,
-			AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Background: kit.SurfaceButtonGhost, Color: kit.ColorText,
-			FontFamily: kit.FontSans, FontSize: kit.FontBody, Cursor: core.CursorPointer, FlexShrink: 0,
-			Hover:        &core.Style{Color: kit.ColorTextLinkHover},
-			Disabled:     &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault, Color: kit.ColorText},
-			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}},
+	return core.Group{line(), core.View{Role: core.RoleButton, TestID: b.TestID, Disabled: disabled, LabelFunc: b.Text,
+		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(46), Padding: rowPadding,
+			Color: kit.ColorAccent, FontFamily: kit.FontFace(kit.Medium), FontSize: kit.FontBody,
+			FontWeight: kit.FaceWeight(kit.Medium), Cursor: core.CursorPointer,
+			Hover:        &core.Style{Background: kit.SurfaceRowHover, Color: kit.ColorAccentBright},
+			Disabled:     &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault, Color: kit.ColorAccent},
+			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: -2, OutlineColor: kit.ColorText}},
 		OnPress: func(core.PressEvent) {
 			if b.OnPress != nil && !disabled() {
 				b.OnPress()
 			}
 		},
-		Children: []core.Node{core.Text{ContentFunc: b.Text}}}
+		Children: []core.Node{kit.Glyph{Name: "plus", Size: 18, Color: core.CurrentColor}, core.Text{ContentFunc: b.Text}}}}
 }

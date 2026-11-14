@@ -231,6 +231,9 @@ func TestMaintenanceDueAndAlertsOff(t *testing.T) {
 	if got := p.nav.Current(); got != nav.Settings {
 		t.Errorf("去设置 went to %q", got)
 	}
+	if got := p.nav.TakeSettingsTab(); got != nav.SettingsHealth {
+		t.Errorf("设置 opens on %q", got)
+	}
 }
 
 // The maintenance card reads the history again when a run is recorded.
