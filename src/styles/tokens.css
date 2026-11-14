@@ -128,3 +128,25 @@
   --sidebar-width: 228px;
   --main-min-width: 560px;
 }
+
+/* ---- space ---- */
+/* 空间透视: the treemap's cells (the tile gradients, translucent so the glass shows through), the folded groups, the capacity bars of the disks and the share bars of the list. */
+:root {
+  --space-cell-1: linear-gradient(135deg, rgba(92, 240, 230, 0.72), rgba(16, 163, 196, 0.72));
+  --space-cell-2: linear-gradient(135deg, rgba(108, 196, 255, 0.72), rgba(47, 107, 255, 0.72));
+  --space-cell-3: linear-gradient(135deg, rgba(192, 139, 255, 0.72), rgba(122, 60, 255, 0.72));
+  --space-cell-4: linear-gradient(135deg, rgba(255, 143, 200, 0.72), rgba(230, 62, 140, 0.72));
+  --space-cell-5: linear-gradient(135deg, rgba(255, 178, 92, 0.72), rgba(255, 107, 44, 0.72));
+  --space-cell-6: linear-gradient(135deg, rgba(75, 227, 160, 0.72), rgba(19, 168, 107, 0.72));
+  --space-cell-group: rgba(255, 255, 255, 0.08);
+  --space-cell-group-border: rgba(255, 255, 255, 0.3);
+  --space-cell-edge: rgba(255, 255, 255, 0.16);
+  --space-cell-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --space-card-hover: rgba(255, 255, 255, 0.13);
+  --space-capacity-used: var(--gradient-cyan);
+  --space-capacity-full: var(--gradient-red);
+  --space-share-fill: var(--gradient-cyan);
+  --space-row-icon: rgba(255, 255, 255, 0.08);
+  --space-row-icon-dir: #5cf0e6;
+  --radius-space-cell: 8px;
+}

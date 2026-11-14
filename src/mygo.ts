@@ -268,6 +268,111 @@ export interface ScanResult {
   duration: number;
 }
 
+/** SpaceEntry is one folder, file or folded group of the last scan. */
+export interface SpaceEntry {
+  /** ID names the entry in Space.children; -1 for a large file the scan folded into a group. */
+  id: number;
+  kind: SpaceKind;
+  /** Name and Path are empty for the folded groups. */
+  name: string;
+  path: string;
+  /** Size is the space it takes on disk, in bytes. */
+  size: number;
+  /** Files counts the files at or below it. */
+  files: number;
+  /** Count is how many entries a folded group stands for. */
+  count?: number;
+  /** ModTime is set for files. */
+  modTime?: string;
+  /** Denied is set on a folder Spruce could not read. */
+  denied?: boolean;
+  /** Locked, when set, says why the entry cannot be moved to the Trash (a sentence to show); folded groups never can. */
+  locked?: string;
+}
+
+/** SpaceFailure is an entry Space.trash left in place, with why (a sentence to show). */
+export interface SpaceFailure {
+  path: string;
+  reason: string;
+}
+
+/** SpaceKind is what a SpaceEntry stands for. */
+export type SpaceKind = "dir" | "file" | "other" | "files";
+
+/** SpaceListing is one folder of the last scan: the folder, the folders from the root down to it, and its children, largest first. */
+export interface SpaceListing {
+  entry: SpaceEntry;
+  ancestors: SpaceEntry[];
+  children: SpaceEntry[];
+}
+
+/** SpaceLocations is what the start screen offers. */
+export interface SpaceLocations {
+  volumes: SpaceVolume[];
+  targets: SpaceTarget[];
+}
+
+/** SpaceProgress is streamed while a scan runs, at most every 80 ms. */
+export interface SpaceProgress {
+  files: number;
+  dirs: number;
+  bytes: number;
+  /** Path is the folder read last. */
+  path: string;
+}
+
+/** SpaceSummary is the last scan as a whole. */
+export interface SpaceSummary {
+  /** ScanID names the scan; Space.children, largeFiles and trash take it and refuse an older one. */
+  scanId: string;
+  /** Name is what the page calls the scanned location, e.g. "Macintosh HD" or "个人文件夹". */
+  name: string;
+  root: SpaceEntry;
+  /** Files and Dirs count what the scan read. */
+  files: number;
+  dirs: number;
+  /** Denied counts folders that could not be read for lack of permission; DeniedPaths names the first few. */
+  denied: number;
+  deniedPaths: string[];
+  /** Errors counts entries that could not be read otherwise. */
+  errors: number;
+  scannedAt: string;
+  duration: number;
+  /** LargeFileMin is the size from which the 大文件 tab lists a file (settings.Cleanup.LargeFileMinMB at the time of the scan), in bytes. */
+  largeFileMin: number;
+}
+
+/** SpaceTarget is a folder on the start screen of 空间透视: 个人文件夹, 下载, and 应用程序 or Program Files. */
+export interface SpaceTarget {
+  /** ID is "home", "downloads", "applications" or "programFiles". */
+  id: string;
+  name: string;
+  path: string;
+}
+
+/** SpaceTrashResult is what Space.trash did. */
+export interface SpaceTrashResult {
+  /** Trashed is the size moved to the Trash, in bytes; it is freed once the Trash is emptied. */
+  trashed: number;
+  /** Items counts the entries moved. */
+  items: number;
+  failed: SpaceFailure[];
+  /** Root is the scanned location with its sizes corrected. */
+  root: SpaceEntry;
+}
+
+/** SpaceVolume is a disk on the start screen of 空间透视. */
+export interface SpaceVolume {
+  /** Path is what Space.scan takes to scan the whole disk. */
+  path: string;
+  name: string;
+  /** Total and Free are in bytes. */
+  total: number;
+  free: number;
+  /** Startup is set on the disk the system runs from. */
+  startup: boolean;
+}
+
 /** TaskView is one card of the 维护 page. */
 export interface TaskView {
   id: string;
@@ -395,6 +500,38 @@ export const Cleanup = {
   /** Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese. */
   scan(cleaner: CleanerID, progress: Channel<Progress>): Promise<ScanResult> {
     return call("Cleanup.Scan", cleaner, progress);
+  },
+} as const;
+
+/** Space is the bound service of the 空间透视 page. It keeps the last scan's tree, so the page opens one folder at a time without scanning again; moving an entry to the Trash corrects the sizes above it in place. */
+export const Space = {
+  /** Children returns the folder id of the scan scanID with its children, largest first, and the folders above it. */
+  children(scanID: string, id: number): Promise<SpaceListing> {
+    return call("Space.Children", scanID, id);
+  },
+  /** ChooseFolder shows the system's folder picker over the calling window and returns the chosen folder, or "" when the user cancelled. */
+  chooseFolder(): Promise<string> {
+    return call("Space.ChooseFolder");
+  },
+  /** Current returns the last scan, or null before the first, so the page can show it again without scanning. */
+  current(): Promise<SpaceSummary | null> {
+    return call("Space.Current");
+  },
+  /** LargeFiles returns the largest files of the scan scanID (up to 200, from LargeFileMin up), largest first. */
+  largeFiles(scanID: string): Promise<SpaceEntry[]> {
+    return call("Space.LargeFiles", scanID);
+  },
+  /** Locations returns the disks and folders the start screen offers. A disk list the system cannot give is logged and left empty; the folders are still offered. */
+  locations(): Promise<SpaceLocations> {
+    return call("Space.Locations");
+  },
+  /** Scan walks the folder at path (a disk's path from Locations scans the whole disk), streams progress and keeps the result for children, largeFiles and trash, replacing the previous scan. Closing the channel cancels the scan; the previous result then stays. Errors are sentences in Simplified Chinese. */
+  scan(path: string, progress: Channel<SpaceProgress>): Promise<SpaceSummary> {
+    return call("Space.Scan", path, progress);
+  },
+  /** Trash moves the entries at paths of the scan scanID to the Trash (Recycle Bin), never deleting anything for good, corrects the sizes above them, records the move in the history and returns what it did. Only entries the scan found are moved, and only where space.Guard allows it (inside the home folder or the scanned folder, not a system location, not excluded in the settings); an entry that changed since the scan is left in place. */
+  trash(scanID: string, paths: string[]): Promise<SpaceTrashResult> {
+    return call("Space.Trash", scanID, paths);
   },
 } as const;
 
