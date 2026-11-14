@@ -32,7 +32,7 @@ var launch struct {
 	once           sync.Once
 }
 
-// WatchLaunch finds out whether the system started this run at login. Call it once before nsgo.Run: LoginArg on the command line (the launch agent of macOS 11 and 12) answers at once; otherwise an observer of NSApplicationDidFinishLaunchingNotification reads the Apple event the app was opened with, whose keyAEPropData is keyAELaunchedAsLogInItem for a login item (SMAppService on macOS 13 and later passes no arguments). When the observer cannot be set up the launch counts as known and not at login, so the window opens as before.
+// WatchLaunch finds out whether the system started this run at login. Call it once before nsgo.Run: LoginArg on the command line (the launch agent of macOS 11 and 12) answers at once; otherwise an observer of NSApplicationDidFinishLaunchingNotification reads the Apple event the app was opened with, whose keyAEPropData is keyAELaunchedAsLogInItem for a login item (SMAppService on macOS 13 and later passes no arguments). When the observer cannot be set up the launch counts as known and not at login, so the window opens as before. NSGo has no API for the launch reason yet: https://github.com/nsgo-dev/nsgo/issues/124
 func WatchLaunch() {
 	launch.once.Do(func() {
 		if atLoginArg(os.Args[1:]) {
