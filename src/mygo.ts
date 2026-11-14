@@ -37,6 +37,33 @@ export interface AppSettings {
   general: GeneralSettings;
 }
 
+/** BatteryState is what the battery is doing. */
+export type BatteryState = "charging" | "discharging" | "full" | "notCharging" | "unknown";
+
+/** BatteryStats is the internal battery (all of them together on a machine with several). */
+export interface BatteryStats {
+  present: boolean;
+  /** Percent is the charge, 0 to 100. */
+  percent: number;
+  state: BatteryState;
+  /** MinutesRemaining is the system's estimate until empty while discharging or until full while charging; nil while unknown (still calculating, or on external power without charging). */
+  minutesRemaining?: number;
+  /** CycleCount is nil when the battery does not report it. */
+  cycleCount?: number;
+  /** HealthPercent is the full charge capacity as a percent of the design capacity; nil when either is unknown. */
+  healthPercent?: number;
+}
+
+/** CPUStats is the CPU use since the previous sample. */
+export interface CPUStats {
+  /** Percent is the whole machine's use, 0 to 100. */
+  percent: number;
+  /** PerCore is each logical CPU's use, 0 to 100, in the system's order. */
+  perCore: number[];
+  /** Load is the load average; only macOS has one. */
+  load?: LoadAverage;
+}
+
 /** Category is one group of items the page lists, with one checkbox. */
 export interface Category {
   /** ID is stable across scans and unique within a ScanResult, e.g. "user-caches". */
@@ -133,6 +160,21 @@ export interface DevJunkDetails {
   commands: DevJunkCommand[];
 }
 
+/** DiskIO is the throughput of every physical disk together since the previous sample, in bytes per second. */
+export interface DiskIO {
+  readPerSec: number;
+  writePerSec: number;
+}
+
+/** DiskUsage is the system volume's space. */
+export interface DiskUsage {
+  total: number;
+  /** Used is Total minus Free, which on macOS includes the other volumes sharing the APFS container, as Finder counts it. */
+  used: number;
+  /** Free is the space available to the user. */
+  free: number;
+}
+
 /** Failure is one item that was not deleted. */
 export interface Failure {
   itemId: string;
@@ -190,6 +232,34 @@ export interface Item {
 /** Kind is what kind of operation a Run was. */
 export type Kind = "maintenance" | "systemJunk" | "devJunk" | "installers" | "uninstall" | "space" | "smartScan";
 
+/** LoadAverage is the number of runnable threads averaged over 1, 5 and 15 minutes. */
+export interface LoadAverage {
+  one: number;
+  five: number;
+  fifteen: number;
+}
+
+/** MemoryPressure is the kernel's memory pressure level (kern.memorystatus_vm_pressure_level), as Activity Monitor's memory pressure graph colours it. */
+export type MemoryPressure = "normal" | "warning" | "critical";
+
+/** MemoryStats is the physical memory and swap in use. */
+export interface MemoryStats {
+  total: number;
+  /** Used is what gopsutil counts as used: total minus what is available without swapping (on macOS free plus inactive pages). */
+  used: number;
+  percent: number;
+  /** Swap is the swap files on macOS and the page file on Windows; nil when it could not be read. */
+  swap: SwapStats | null;
+  /** Pressure is the kernel's memory pressure level; only macOS reports one. */
+  pressure?: MemoryPressure;
+}
+
+/** NetworkIO is the throughput of every interface except loopback together since the previous sample, in bytes per second. */
+export interface NetworkIO {
+  uploadPerSec: number;
+  downloadPerSec: number;
+}
+
 /** Outcome is how a maintenance task ended. */
 export type Outcome = "applied" | "unchanged" | "skipped" | "unavailable" | "failed";
 
@@ -198,6 +268,25 @@ export type PermissionState = "granted" | "denied" | "unknown" | "notRequired";
 
 /** Phase is the stage a Progress event belongs to. */
 export type Phase = "scanning" | "cleaning";
+
+/** ProcessLists are the processes using the most CPU and the most memory. */
+export interface ProcessLists {
+  /** TopCPU is most CPU first; processes first seen in this sample have no CPU figure yet and are not in it. */
+  topCpu: ProcessUsage[];
+  /** TopMemory is most memory first. */
+  topMemory: ProcessUsage[];
+}
+
+/** ProcessUsage is one process in a top list. */
+export interface ProcessUsage {
+  pid: number;
+  /** Name is the display name package health uses for alerts, e.g. "Google Chrome" for its helpers on macOS. */
+  name: string;
+  /** CPUPercent is the share of one logical CPU since the previous sample (a process busy on two cores is 200); nil when unknown. */
+  cpuPercent: number | null;
+  /** Memory is the resident set (RSS) on macOS and the working set on Windows, in bytes; nil when unknown. */
+  memory: number | null;
+}
 
 /** Progress is streamed to the page while a scan or a clean runs. */
 export interface Progress {
@@ -308,6 +397,138 @@ export interface SettingsLimits {
   maxPaths: number;
 }
 
+/** SpaceEntry is one folder, file or folded group of the last scan. */
+export interface SpaceEntry {
+  /** ID names the entry in Space.children; -1 for a large file the scan folded into a group. */
+  id: number;
+  kind: SpaceKind;
+  /** Name and Path are empty for the folded groups. */
+  name: string;
+  path: string;
+  /** Size is the space it takes on disk, in bytes. */
+  size: number;
+  /** Files counts the files at or below it. */
+  files: number;
+  /** Count is how many entries a folded group stands for. */
+  count?: number;
+  /** ModTime is set for files. */
+  modTime?: string;
+  /** Denied is set on a folder Spruce could not read. */
+  denied?: boolean;
+  /** Locked, when set, says why the entry cannot be moved to the Trash (a sentence to show); folded groups never can. */
+  locked?: string;
+}
+
+/** SpaceFailure is an entry Space.trash left in place, with why (a sentence to show). */
+export interface SpaceFailure {
+  path: string;
+  reason: string;
+}
+
+/** SpaceKind is what a SpaceEntry stands for. */
+export type SpaceKind = "dir" | "file" | "other" | "files";
+
+/** SpaceListing is one folder of the last scan: the folder, the folders from the root down to it, and its children, largest first. */
+export interface SpaceListing {
+  entry: SpaceEntry;
+  ancestors: SpaceEntry[];
+  children: SpaceEntry[];
+}
+
+/** SpaceLocations is what the start screen offers. */
+export interface SpaceLocations {
+  volumes: SpaceVolume[];
+  targets: SpaceTarget[];
+}
+
+/** SpaceProgress is streamed while a scan runs, at most every 80 ms. */
+export interface SpaceProgress {
+  files: number;
+  dirs: number;
+  bytes: number;
+  /** Path is the folder read last. */
+  path: string;
+}
+
+/** SpaceSummary is the last scan as a whole. */
+export interface SpaceSummary {
+  /** ScanID names the scan; Space.children, largeFiles and trash take it and refuse an older one. */
+  scanId: string;
+  /** Name is what the page calls the scanned location, e.g. "Macintosh HD" or "个人文件夹". */
+  name: string;
+  root: SpaceEntry;
+  /** Files and Dirs count what the scan read. */
+  files: number;
+  dirs: number;
+  /** Denied counts folders that could not be read for lack of permission; DeniedPaths names the first few. */
+  denied: number;
+  deniedPaths: string[];
+  /** Errors counts entries that could not be read otherwise. */
+  errors: number;
+  scannedAt: string;
+  duration: number;
+  /** LargeFileMin is the size from which the 大文件 tab lists a file (settings.Cleanup.LargeFileMinMB at the time of the scan), in bytes. */
+  largeFileMin: number;
+}
+
+/** SpaceTarget is a folder on the start screen of 空间透视: 个人文件夹, 下载, and 应用程序 or Program Files. */
+export interface SpaceTarget {
+  /** ID is "home", "downloads", "applications" or "programFiles". */
+  id: string;
+  name: string;
+  path: string;
+}
+
+/** SpaceTrashResult is what Space.trash did. */
+export interface SpaceTrashResult {
+  /** Trashed is the size moved to the Trash, in bytes; it is freed once the Trash is emptied. */
+  trashed: number;
+  /** Items counts the entries moved. */
+  items: number;
+  failed: SpaceFailure[];
+  /** Root is the scanned location with its sizes corrected. */
+  root: SpaceEntry;
+}
+
+/** SpaceVolume is a disk on the start screen of 空间透视. */
+export interface SpaceVolume {
+  /** Path is what Space.scan takes to scan the whole disk. */
+  path: string;
+  name: string;
+  /** Total and Free are in bytes. */
+  total: number;
+  free: number;
+  /** Startup is set on the disk the system runs from. */
+  startup: boolean;
+}
+
+/** SwapStats is the swap space in use. */
+export interface SwapStats {
+  total: number;
+  used: number;
+}
+
+/** SystemInfo is what does not change while the app runs. Fields that could not be read are empty. */
+export interface SystemInfo {
+  /** OSName is e.g. "macOS" or "Windows 11 Pro". */
+  osName: string;
+  /** OSVersion is e.g. "26.1" on macOS or "24H2" on Windows. */
+  osVersion: string;
+  /** OSBuild is e.g. "25B78" on macOS or "26100.2314" on Windows. */
+  osBuild: string;
+  /** Model is the hardware model: the identifier on macOS (hw.model, e.g. "Mac16,8"), the BIOS manufacturer and product name on Windows. */
+  model: string;
+  cpuModel: string;
+  /** PhysicalCores and LogicalCores are 0 when unknown. */
+  physicalCores: number;
+  logicalCores: number;
+  /** PerformanceCores and EfficiencyCores split PhysicalCores on Apple Silicon; 0 elsewhere. */
+  performanceCores?: number;
+  efficiencyCores?: number;
+  /** BootTime is when the system started; absent when unknown. */
+  bootTime?: string;
+}
+
 /** TaskView is one card of the 维护 page. */
 export interface TaskView {
   id: string;
@@ -338,6 +559,113 @@ export interface TrashUsage {
   bytes: number;
   /** Items counts the top-level items. */
   items: number;
+}
+
+/** UninstallApp is one app of the 应用卸载 list. */
+export interface UninstallApp {
+  id: string;
+  name: string;
+  version?: string;
+  /** BundleID is the app's bundle identifier (macOS). */
+  bundleId?: string;
+  /** Publisher is the program's publisher (Windows). */
+  publisher?: string;
+  /** Path is the .app bundle (macOS) or the install folder, when known (Windows). */
+  path?: string;
+  /** AppStore marks a Mac App Store app. */
+  appStore: boolean;
+  /** Running is set when the app runs now; on macOS it cannot be uninstalled until it quits. */
+  running: boolean;
+  /** InstallDate is when the program was installed (Windows), when it says. */
+  installDate?: string;
+}
+
+/** UninstallAppDetails is one update of an app's details, streamed by Measure. Only the fields it carries are set. */
+export interface UninstallAppDetails {
+  id: string;
+  /** Size is the space the app takes, in bytes. */
+  size?: number;
+  /** Usage, with LastUsed when used. */
+  usage?: UninstallUsage;
+  lastUsed?: string;
+  /** Icon is a data: URL of a PNG. */
+  icon?: string;
+}
+
+/** UninstallLeftover is one file or folder offered with an app. */
+export interface UninstallLeftover {
+  id: string;
+  path: string;
+  kind: UninstallLeftoverKind;
+  size: number;
+  dir: boolean;
+  /** Selected is whether it starts checked. */
+  selected: boolean;
+  /** Note is an optional short line in Simplified Chinese. */
+  note?: string;
+}
+
+/** UninstallLeftoverKind is where a leftover lies. */
+export type UninstallLeftoverKind = "app" | "support" | "caches" | "preferences" | "containers" | "groupContainers" | "savedState" | "httpStorage" | "webkit" | "logs" | "cookies" | "launchAgents" | "appData" | "localAppData" | "programs";
+
+/** UninstallOutcome is what Remove did. */
+export interface UninstallOutcome {
+  app: string;
+  /** BundleRemoved is set when the app is in the Trash (macOS). */
+  bundleRemoved: boolean;
+  /** BundleFailure explains why the app stayed; its leftovers are then left alone too. */
+  bundleFailure?: string;
+  result: CleanResult;
+}
+
+/** UninstallPlan is what uninstalling an app would move to the Trash. */
+export interface UninstallPlan {
+  appId: string;
+  /** Bundle is the app itself (macOS); null on Windows. */
+  bundle: UninstallLeftover | null;
+  leftovers: UninstallLeftover[];
+  /** Denied counts locations that could not be read, so the list may be incomplete. */
+  denied: number;
+  running: boolean;
+  /** SharedWith is another installed copy of the app whose files the leftovers may be; they then start unchecked. */
+  sharedWith?: string;
+}
+
+/** UninstallRequest names what Remove moves to the Trash: the planned app's bundle (always, on macOS) and the leftovers by ID. */
+export interface UninstallRequest {
+  appId: string;
+  leftoverIds: string[];
+}
+
+/** UninstallUsage is what is known about when an app was last used. */
+export type UninstallUsage = "used" | "never" | "unknown";
+
+/** UninstallerOutcome is what running a Windows program's uninstaller achieved. */
+export interface UninstallerOutcome {
+  /** Removed is set when the program is gone from the installed programs. */
+  removed: boolean;
+  /** Waited is false when the page stopped waiting before the uninstaller exited. */
+  waited: boolean;
+}
+
+/** UninstallerStatus is sent once the uninstaller runs. */
+export interface UninstallerStatus {
+  running: boolean;
+}
+
+/** Vitals is one sample of the machine. A nil metric could not be read for this sample; the others do not depend on it. */
+export interface Vitals {
+  at: string;
+  cpu: CPUStats | null;
+  memory: MemoryStats | null;
+  /** Disk is the system volume. */
+  disk: DiskUsage | null;
+  diskIo: DiskIO | null;
+  /** Network sums every interface except loopback. */
+  network: NetworkIO | null;
+  /** Battery is nil when it could not be read; Present is false on a machine without one. */
+  battery: BatteryStats | null;
+  processes: ProcessLists | null;
 }
 
 // ---- Services ----
@@ -455,6 +783,85 @@ export const DevJunk = {
   /** Details describes the last scan of Cleanup.scan("dev-junk"); empty before any scan. */
   details(): Promise<DevJunkDetails> {
     return call("DevJunk.Details");
+  },
+} as const;
+
+/** Uninstall is the bound service of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history. */
+export const Uninstall = {
+  /** Apps lists the installed apps, sorted by name, without their sizes, icons and last use (Measure streams those). */
+  apps(): Promise<UninstallApp[]> {
+    return call("Uninstall.Apps");
+  },
+  /** CheckRemoved checks again whether a Windows program is gone, for an uninstaller that went on after the process Spruce started exited. */
+  checkRemoved(appID: string): Promise<UninstallerOutcome> {
+    return call("Uninstall.CheckRemoved", appID);
+  },
+  /** Leftovers finds what the app left in the user's folders and measures it with the app; the result is what Remove picks from. On Windows it answers only after the program's uninstaller removed it. */
+  leftovers(appID: string): Promise<UninstallPlan> {
+    return call("Uninstall.Leftovers", appID);
+  },
+  /** Measure streams the size, icon and last use of every app of the last Apps call as each becomes known, and returns when all are measured. Closing the channel stops it. */
+  measure(details: Channel<UninstallAppDetails>): Promise<void> {
+    return call("Uninstall.Measure", details);
+  },
+  /** Remove moves the planned app (macOS) and the chosen leftovers to the Trash, streams progress and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Closing the channel stops after the current item. */
+  remove(req: UninstallRequest, progress: Channel<Progress>): Promise<UninstallOutcome> {
+    return call("Uninstall.Remove", req, progress);
+  },
+  /** RunUninstaller runs a Windows program's own uninstaller, so its UI and the UAC prompt appear, sends one status once it runs, waits for it to exit and checks whether the program is gone; closing the channel stops the wait (never the uninstaller). The run is recorded in the history. */
+  runUninstaller(appID: string, status: Channel<UninstallerStatus>): Promise<UninstallerOutcome> {
+    return call("Uninstall.RunUninstaller", appID, status);
+  },
+} as const;
+
+/** Space is the bound service of the 空间透视 page. It keeps the last scan's tree, so the page opens one folder at a time without scanning again; moving an entry to the Trash corrects the sizes above it in place. */
+export const Space = {
+  /** Children returns the folder id of the scan scanID with its children, largest first, and the folders above it. */
+  children(scanID: string, id: number): Promise<SpaceListing> {
+    return call("Space.Children", scanID, id);
+  },
+  /** ChooseFolder shows the system's folder picker over the calling window and returns the chosen folder, or "" when the user cancelled. */
+  chooseFolder(): Promise<string> {
+    return call("Space.ChooseFolder");
+  },
+  /** Current returns the last scan, or null before the first, so the page can show it again without scanning. */
+  current(): Promise<SpaceSummary | null> {
+    return call("Space.Current");
+  },
+  /** LargeFiles returns the largest files of the scan scanID (up to 200, from LargeFileMin up), largest first. */
+  largeFiles(scanID: string): Promise<SpaceEntry[]> {
+    return call("Space.LargeFiles", scanID);
+  },
+  /** Locations returns the disks and folders the start screen offers. A disk list the system cannot give is logged and left empty; the folders are still offered. */
+  locations(): Promise<SpaceLocations> {
+    return call("Space.Locations");
+  },
+  /** Scan walks the folder at path (a disk's path from Locations scans the whole disk), streams progress and keeps the result for children, largeFiles and trash, replacing the previous scan. Closing the channel cancels the scan; the previous result then stays. Errors are sentences in Simplified Chinese. */
+  scan(path: string, progress: Channel<SpaceProgress>): Promise<SpaceSummary> {
+    return call("Space.Scan", path, progress);
+  },
+  /** Trash moves the entries at paths of the scan scanID to the Trash (Recycle Bin), never deleting anything for good, corrects the sizes above them, records the move in the history and returns what it did. Only entries the scan found are moved, and only where space.Guard allows it (inside the home folder or the scanned folder, not a system location, not excluded in the settings); an entry that changed since the scan is left in place. */
+  trash(scanID: string, paths: string[]): Promise<SpaceTrashResult> {
+    return call("Space.Trash", scanID, paths);
+  },
+} as const;
+
+/**
+ * Sysinfo is the bound service behind the 健康监测 dashboard. The CPU alert on the same page comes from Health.
+ *
+ * Bound API (TypeScript view):
+ *
+ * 	Sysinfo.info(): Promise<SystemInfo>
+ * 	Sysinfo.watch(samples: Channel<Vitals>): Promise<void>
+ */
+export const Sysinfo = {
+  /** Info returns what does not change while the app runs: the OS, the model, the CPU and its cores, and the boot time. Fields that could not be read are empty. */
+  info(): Promise<SystemInfo> {
+    return call("Sysinfo.Info");
+  },
+  /** Watch streams the machine's vitals to the page: first the samples kept from the last two minutes (oldest first), then a new one every two seconds, until the page closes the channel or goes away. Sampling runs only while at least one page watches. */
+  watch(samples: Channel<Vitals>): Promise<void> {
+    return call("Sysinfo.Watch", samples);
   },
 } as const;
 
