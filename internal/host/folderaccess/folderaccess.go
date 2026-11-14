@@ -90,15 +90,24 @@ func (s *Store) PromptingFor(path string) (folder string, ok bool, err error) {
 	return promptingFor(s.goos, homes, path)
 }
 
-// Observe records that a foreground read entered the prompting folder containing path, so later background reads may enter it too; a path in no prompting folder records nothing. Only the read gate calls it, right after it has read the folder itself, never from the settings lists.
+// Observe records that a foreground read entered the prompting folder a read of path enters, found as Allow finds it (through any symlinks along path), so later background reads of path may enter it too; a path that enters no prompting folder records nothing, and one whose symlinks cannot be read records nothing and returns the error. Only the read gate calls it, right after it has read the folder itself, never from the settings lists.
 func (s *Store) Observe(path string) error {
+	if s.goos != "darwin" {
+		return nil
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.loadLocked()
-	folder, ok := prompting(s.goos, s.homes, path)
+	homes := s.homes
+	s.mu.Unlock()
+	folder, ok, err := promptingFor(s.goos, homes, path)
+	if err != nil {
+		return fmt.Errorf("folderaccess: observe: %w", err)
+	}
 	if !ok {
 		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	k := key(folder)
 	if _, seen := s.seen[k]; seen {
 		return nil

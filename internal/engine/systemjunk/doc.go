@@ -20,5 +20,5 @@
 //
 // Cleaning the Trash together with items that go to the Trash empties it first, so this clean's own items stay recoverable.
 //
-// When the running apps cannot be listed, 应用缓存 and 浏览器缓存 carry the warning 「无法确认哪些应用正在运行」: the page still offers them, but automatic rules skip a category with a warning. Env.MayRead, the background read gate, is asked before each folder is listed (after the exclusions); a folder it refuses, on macOS the Downloads folder until a foreground read has entered it, is skipped silently.
+// When the running apps cannot be listed, 应用缓存 and 浏览器缓存 carry the warning 「无法确认哪些应用正在运行」: the page still offers them, but automatic rules skip a category with a warning. Env.MayRead, the background read gate, is asked before each folder is listed (after the exclusions); a folder it refuses, on macOS the Downloads folder until a foreground read has entered it, is skipped silently. It is also asked about every Trash folder before the Trash is measured (on macOS the user's .Trashes folder on each mounted volume, which lies on a removable or network volume that prompts); when it refuses one, the Trash is left out of that check.
 package systemjunk

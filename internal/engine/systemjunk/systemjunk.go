@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -46,6 +48,9 @@ type Env struct {
 	Log *slog.Logger
 	// MayRead reports whether a folder may be read (the background read gate), asked after the exclusions and before the folder is listed; a folder it refuses is skipped silently, neither read nor counted as denied. On macOS it keeps background checks out of the Downloads folder until a foreground read has entered it. Nil reads every folder.
 	MayRead func(path string) bool
+
+	// volumes is the folder the mounted volumes appear in, whose Trash folders Bin measures besides TrashPath: /Volumes on macOS, none on Windows. Tests point it at a temporary folder.
+	volumes string
 }
 
 // Category IDs, stable across scans.
@@ -259,6 +264,34 @@ func assemble(s spec, found []candidate, log *slog.Logger) []cleanup.Category {
 	return out
 }
 
+// mayMeasureTrash asks the read gate (Env.MayRead) about every Trash folder Bin.Size reads: TrashPath and, on macOS, the user's .Trashes folder on each mounted volume, which lies in a prompting folder (a removable or network volume). Only the volumes folder itself is listed, which reads nothing on the volumes. Without a gate everything may be read.
+func (c *Cleaner) mayMeasureTrash() bool {
+	if c.env.MayRead == nil {
+		return true
+	}
+	if !c.env.MayRead(c.env.TrashPath) {
+		return false
+	}
+	if c.env.volumes == "" {
+		return true
+	}
+	vols, err := os.ReadDir(c.env.volumes)
+	if err != nil {
+		return true // no volumes to read: Bin.Size finds none either
+	}
+	uid := strconv.Itoa(os.Getuid())
+	for _, v := range vols {
+		// The startup volume appears there as a symlink to /; its Trash is TrashPath. Bin.Size skips it and anything that is not a folder in the same way.
+		if v.Type()&fs.ModeSymlink != 0 || !v.IsDir() {
+			continue
+		}
+		if !c.env.MayRead(filepath.Join(c.env.volumes, v.Name(), ".Trashes", uid)) {
+			return false
+		}
+	}
+	return true
+}
+
 // binName is what the system calls its Trash.
 func binName() string {
 	if runtime.GOOS == "windows" {
@@ -279,6 +312,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 		Deletion:    cleanup.DeletePermanent,
 		Warning:     "清空后无法恢复，默认不选",
 		Items:       []cleanup.Item{},
+	}
+	if !c.mayMeasureTrash() {
+		// Measuring would read a Trash folder the read gate refuses; the Trash is left out of this check rather than measured in part.
+		return nil, nil, nil
 	}
 	u, err := c.env.Bin.Size(ctx)
 	switch {

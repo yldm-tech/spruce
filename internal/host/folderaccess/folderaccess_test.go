@@ -196,6 +196,27 @@ func TestSymlinksIntoPromptingFolders(t *testing.T) {
 	if !s.Allow(f.at("code/app")) {
 		t.Error("observed Documents still refused through the link")
 	}
+
+	// Observe resolves a path as Allow does: a foreground read of a project root reached through a link opens that root to background reads.
+	o := folderaccess.OpenFor("darwin", f.data+"-observe", f.home, nil, time.Now)
+	if err := o.Observe(f.at("loop-a/x")); err == nil {
+		t.Error("no error observing through a loop")
+	}
+	if err := o.Observe(f.at("caches/x")); err != nil {
+		t.Fatal(err)
+	}
+	if o.Allow(f.at("code/app")) {
+		t.Error("allowed before the link was observed")
+	}
+	if err := o.Observe(f.at("code/app")); err != nil {
+		t.Fatal(err)
+	}
+	if !o.Allow(f.at("code/app")) || !o.Allow(f.at("Documents/other")) || o.Allow(f.at("Desktop")) {
+		t.Error("observing through the link did not record Documents alone")
+	}
+	if !folderaccess.OpenFor("darwin", f.data+"-observe", f.home, nil, time.Now).Allow(f.at("code/app")) {
+		t.Error("the link's folder was not saved")
+	}
 }
 
 func TestHomeThroughASymlink(t *testing.T) {
