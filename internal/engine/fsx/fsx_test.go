@@ -109,7 +109,7 @@ func TestDirSizeDeniedIsNotFatal(t *testing.T) {
 	if err := os.Chmod(locked, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 	res, err := DirSize(t.Context(), root, SizeOptions{})
 	if err != nil {
 		t.Fatal(err)

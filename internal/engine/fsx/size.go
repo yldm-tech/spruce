@@ -63,10 +63,10 @@ func DirSize(ctx context.Context, root string, opts SizeOptions) (SizeResult, er
 		return SizeResult{}, fmt.Errorf("fsx: %w", err)
 	}
 	w := newWalker(ctx, opts)
-	switch typ := info.Mode().Type(); {
-	case typ == 0:
+	switch info.Mode().Type() {
+	case 0:
 		w.addFile(info)
-	case typ == fs.ModeDir:
+	case fs.ModeDir:
 		if dev, ok := deviceOf(info); ok && !opts.CrossDevices {
 			w.rootDev, w.checkDev = dev, true
 		}
@@ -81,9 +81,6 @@ func DirSize(ctx context.Context, root string, opts SizeOptions) (SizeResult, er
 	}
 	return w.result(), nil
 }
-
-// fileID identifies a file across hard links (device and inode).
-type fileID struct{ dev, ino uint64 }
 
 type walker struct {
 	ctx      context.Context
@@ -168,8 +165,8 @@ func (w *walker) walkDir(dir string) error {
 				continue
 			}
 			// Only plain folders are descended and only regular files counted: symlinks, Windows junctions and other reparse points (ModeIrregular), devices and sockets are neither.
-			switch typ := e.Type(); {
-			case typ == fs.ModeDir:
+			switch e.Type() {
+			case fs.ModeDir:
 				if w.checkDev {
 					info, err := e.Info()
 					if err != nil {
@@ -182,7 +179,7 @@ func (w *walker) walkDir(dir string) error {
 					}
 				}
 				subdirs = append(subdirs, p)
-			case typ == 0:
+			case 0:
 				info, err := e.Info()
 				if err != nil {
 					w.fail(err)

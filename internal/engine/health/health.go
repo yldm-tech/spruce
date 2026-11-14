@@ -75,6 +75,8 @@ type Monitor interface {
 	Alerts() []Alert
 	// Subscribe returns a channel that receives the complete current alert list immediately and then on every change, and a function that unsubscribes and closes the channel. A slow subscriber only misses intermediate lists, never the latest one.
 	Subscribe() (<-chan []Alert, func())
+	// Tune replaces Threshold and Sustain and turns alerting on or off, from the next sample on, without a restart (main.go follows the user's settings with it). A disabled monitor takes no samples and publishes an empty list. It rejects a threshold not above Config.Hysteresis or a negative sustain.
+	Tune(threshold float64, sustain time.Duration, enabled bool) error
 }
 
 // ProcessSample is one process at one instant.

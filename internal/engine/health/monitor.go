@@ -45,6 +45,13 @@ type procState struct {
 	hotSince time.Time
 }
 
+// limits are the values Tune changes while the monitor runs.
+type limits struct {
+	threshold float64
+	sustain   time.Duration
+	enabled   bool
+}
+
 type monitor struct {
 	cfg    Config
 	src    ProcessSource
@@ -54,6 +61,8 @@ type monitor struct {
 	self int32
 
 	running atomic.Bool
+	// lim holds the tunable part of cfg (Tune).
+	lim atomic.Pointer[limits]
 
 	// Owned by the sampling goroutine.
 	procs   map[procKey]*procState
@@ -71,7 +80,7 @@ func newMonitor(cfg Config, src ProcessSource) *monitor {
 	for _, n := range cfg.Ignore {
 		ignore[n] = struct{}{}
 	}
-	return &monitor{
+	m := &monitor{
 		cfg:    cfg,
 		src:    src,
 		log:    slog.Default().With("component", "health"),
@@ -81,6 +90,20 @@ func newMonitor(cfg Config, src ProcessSource) *monitor {
 		alerts: []Alert{},
 		subs:   make(map[chan []Alert]struct{}),
 	}
+	m.lim.Store(&limits{threshold: cfg.Threshold, sustain: cfg.Sustain, enabled: true})
+	return m
+}
+
+// Tune implements Monitor.
+func (m *monitor) Tune(threshold float64, sustain time.Duration, enabled bool) error {
+	if threshold <= m.cfg.Hysteresis {
+		return fmt.Errorf("health: threshold %v must be above the hysteresis %v", threshold, m.cfg.Hysteresis)
+	}
+	if sustain < 0 {
+		return errors.New("health: sustain must not be negative")
+	}
+	m.lim.Store(&limits{threshold: threshold, sustain: sustain, enabled: enabled})
+	return nil
 }
 
 // Run samples immediately and then every Interval until ctx is done. Only one Run may be active at a time.
@@ -104,6 +127,13 @@ func (m *monitor) Run(ctx context.Context) error {
 
 // sample takes one snapshot and folds it in. A failed snapshot is logged once per run of failures and skipped.
 func (m *monitor) sample(ctx context.Context) {
+	if !m.lim.Load().enabled {
+		// Forget the history, so that turning the monitor back on starts every process afresh.
+		clear(m.procs)
+		m.lastAt = time.Time{}
+		m.publish(nil)
+		return
+	}
 	snap, err := m.src.Sample(ctx)
 	if err != nil {
 		if ctx.Err() == nil && !m.failing {
@@ -123,6 +153,7 @@ func (m *monitor) observe(snap Snapshot) {
 		return
 	}
 	m.lastAt = snap.At
+	lim := m.lim.Load()
 
 	seen := make(map[procKey]struct{}, len(snap.Processes))
 	var alerts []Alert
@@ -149,7 +180,7 @@ func (m *monitor) observe(snap Snapshot) {
 			st.hotSince = time.Time{}
 			continue
 		}
-		bar := m.cfg.Threshold
+		bar := lim.threshold
 		if !st.hotSince.IsZero() {
 			bar -= m.cfg.Hysteresis
 		}
@@ -160,14 +191,14 @@ func (m *monitor) observe(snap Snapshot) {
 		if st.hotSince.IsZero() {
 			st.hotSince = snap.At
 		}
-		if d := snap.At.Sub(st.hotSince); d >= m.cfg.Sustain {
+		if d := snap.At.Sub(st.hotSince); d >= lim.sustain {
 			alerts = append(alerts, Alert{
 				PID:        ps.PID,
 				Name:       ps.Name,
 				CPUPercent: pct,
 				Since:      st.hotSince,
 				Duration:   d,
-				Threshold:  m.cfg.Threshold,
+				Threshold:  lim.threshold,
 			})
 		}
 	}

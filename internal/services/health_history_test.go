@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,13 +12,38 @@ import (
 )
 
 type fakeStore struct {
-	limits []int
-	runs   []history.Run
+	mu       sync.Mutex
+	limits   []int
+	runs     []history.Run
+	appended []history.Run
+	cutoffs  []time.Time
+	cleared  int
 }
 
-func (f *fakeStore) Append(history.Run) error { return nil }
+func (f *fakeStore) Append(r history.Run) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.appended = append(f.appended, r)
+	return nil
+}
+
+func (f *fakeStore) Prune(cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cutoffs = append(f.cutoffs, cutoff)
+	return 0, nil
+}
+
+func (f *fakeStore) Clear() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleared++
+	return nil
+}
 
 func (f *fakeStore) List(limit int) ([]history.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.limits = append(f.limits, limit)
 	return f.runs, nil
 }
@@ -39,9 +65,14 @@ func TestHistoryListLimit(t *testing.T) {
 	if len(store.limits) != 2 || store.limits[0] != 1 || store.limits[1] != history.MaxRuns {
 		t.Errorf("store saw limits %v", store.limits)
 	}
+	if err := h.Clear(); err != nil || store.cleared != 1 {
+		t.Errorf("Clear = %v, store cleared %d times", err, store.cleared)
+	}
 }
 
 type fakeMonitor struct{ alerts []health.Alert }
+
+func (f fakeMonitor) Tune(float64, time.Duration, bool) error { return nil }
 
 func (f fakeMonitor) Run(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 func (f fakeMonitor) Alerts() []health.Alert        { return f.alerts }

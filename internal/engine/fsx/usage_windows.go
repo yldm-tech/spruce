@@ -2,6 +2,9 @@ package fsx
 
 import "io/fs"
 
+// fileID is empty on Windows, where hard links are not detected.
+type fileID struct{}
+
 // usage returns a file's size: Windows reports no allocation size without opening the file, and Explorer's sizes are file sizes too. Hard links are not detected (that needs a handle per file), so linked files count once per link.
 func usage(info fs.FileInfo) (alloc int64, id fileID, linked bool) {
 	return info.Size(), fileID{}, false

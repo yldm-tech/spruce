@@ -20,8 +20,8 @@ type Outcome struct {
 	Err error
 }
 
-// Usage is how much the Trash holds.
-type Usage struct {
+// TrashUsage is how much the Trash holds.
+type TrashUsage struct {
 	Bytes int64 `json:"bytes"`
 	// Items counts the top-level items.
 	Items int64 `json:"items"`
@@ -30,8 +30,8 @@ type Usage struct {
 // Bin is a Trash: the system's (System) or a fake in tests.
 type Bin interface {
 	MoveToTrash(ctx context.Context, paths []string) ([]Outcome, error)
-	Size(ctx context.Context) (Usage, error)
-	Empty(ctx context.Context) (Usage, error)
+	Size(ctx context.Context) (TrashUsage, error)
+	Empty(ctx context.Context) (TrashUsage, error)
 }
 
 // mover moves one absolute, cleaned path to the Trash and returns where it went.
@@ -48,10 +48,10 @@ func MoveToTrash(ctx context.Context, paths []string) ([]Outcome, error) {
 }
 
 // TrashSize returns how much the system Trash holds.
-func TrashSize(ctx context.Context) (Usage, error) { return System().Size(ctx) }
+func TrashSize(ctx context.Context) (TrashUsage, error) { return System().Size(ctx) }
 
 // Empty empties the system Trash for good.
-func Empty(ctx context.Context) (Usage, error) { return System().Empty(ctx) }
+func Empty(ctx context.Context) (TrashUsage, error) { return System().Empty(ctx) }
 
 // moveAll moves each path with m, one at a time, checking ctx between them.
 func moveAll(ctx context.Context, m mover, paths []string) ([]Outcome, error) {

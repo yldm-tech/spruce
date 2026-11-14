@@ -1,6 +1,8 @@
 // Command spruce is the Spruce desktop app: a disk cleaner and system maintenance tool for macOS and Windows.
 //
 // main does three things, in this order: it serves the elevated child when started with elevate.Flag (before any mygo code runs), it wires the engine into the bound services, and it opens the window once the app is ready.
+//
+// Pages: every page of the sidebar wires its engine in the block between "---- Pages ----" and "---- End of pages ----" below, under its own "// page: <route>" anchor, and nowhere else in this file. A cleaner page registers its cleanup.Scanner with services.RegisterCleaner; any other page binds its own service with mygo.Bind; work that must run while the app is up goes into onReady. The values a page may use are the locals declared before the block: home, dataDir, runner, logger, permissions, settingsStore, historyStore, monitor and cleanups.
 package main
 
 import (
@@ -18,11 +20,16 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/trash"
 	"github.com/yldm-tech/spruce/internal/services"
 )
 
-// historyFile is the name of the history file inside the app's user data directory.
-const historyFile = "history.jsonl"
+// Files inside the app's user data directory.
+const (
+	historyFile  = "history.jsonl"
+	settingsFile = "settings.json"
+)
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -69,19 +76,55 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	store, err := history.Open(filepath.Join(dataDir, historyFile))
+	historyStore, err := history.Open(filepath.Join(dataDir, historyFile))
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Neither store reads or writes before first use, so `mygo generate` (which runs main up to App.Run) never touches the user's data.
+	settingsStore, err := settings.Open(filepath.Join(dataDir, settingsFile), home, func() settings.AppSettings { return settings.Defaults(home) })
+	if err != nil {
+		log.Fatal(err)
+	}
+	// The monitor starts with the shipped defaults; FollowSettings applies the user's threshold, sustain and on/off once the app is ready, and again on every change.
 	monitor, err := health.New(health.DefaultConfig(), health.NewProcessSource())
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanups := services.NewCleanup(historyStore, home, logger)
 
-	mygo.Bind(services.NewMaintenance(svc, store, logger))
+	mygo.Bind(services.NewMaintenance(svc, historyStore, logger))
 	mygo.Bind(services.NewHealth(monitor, func(ctx context.Context) error { return health.OpenSystemMonitor(ctx, runner) }))
-	mygo.Bind(services.NewHistory(store))
+	mygo.Bind(services.NewHistory(historyStore))
 	mygo.Bind(permissions)
+	mygo.Bind(services.NewSettings(settingsStore, mygo.App, logger))
+	mygo.Bind(services.NewFiles(runner, trash.System(), logger))
+	mygo.Bind(cleanups)
+
+	// onReady holds work the pages start once the app is ready, with a context that ends when it quits.
+	var onReady []func(ctx context.Context)
+
+	// ---- Pages ----
+	// One block per page, under its anchor; each page edits only its own block (see the file comment).
+
+	// page: smart-scan
+
+	// page: system-junk
+
+	// page: dev-junk
+
+	// page: installers
+
+	// page: uninstall
+
+	// page: space
+
+	// page: health
+
+	// page: history
+
+	// page: settings
+
+	// ---- End of pages ----
 
 	var (
 		mu  sync.Mutex
@@ -130,6 +173,11 @@ func main() {
 			}
 		}()
 		go services.BroadcastAlerts(ctx, monitor)
+		go services.BroadcastSettings(ctx, settingsStore, mygo.App)
+		go services.FollowSettings(ctx, settingsStore, monitor, historyStore, logger)
+		for _, start := range onReady {
+			go start(ctx)
+		}
 		openWindow()
 	})
 	if err := mygo.App.Run(); err != nil {

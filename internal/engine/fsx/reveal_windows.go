@@ -46,7 +46,7 @@ func Reveal(ctx context.Context, _ execx.Runner, path string) error {
 	if pidl == 0 {
 		return fmt.Errorf("fsx: reveal %q: ILCreateFromPathW failed", path)
 	}
-	defer procILFree.Call(pidl)
+	defer func() { _, _, _ = procILFree.Call(pidl) }()
 	// With no child items, the folder PIDL is the item to select.
 	if hr, _, _ := procSHOpenFolderAndSelectItems.Call(pidl, 0, 0, 0); hr != 0 {
 		return fmt.Errorf("fsx: reveal %q: SHOpenFolderAndSelectItems: %w", path, syscall.Errno(hr))

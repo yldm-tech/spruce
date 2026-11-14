@@ -19,17 +19,176 @@ export interface Alert {
   threshold: number;
 }
 
+/** AppSettings is every user preference. */
+export interface AppSettings {
+  /** Version is the schema version of the file; the Store sets it. */
+  version: number;
+  health: HealthSettings;
+  cleanup: CleanupSettings;
+  history: HistorySettings;
+  general: GeneralSettings;
+}
+
+/** Category is one group of items the page lists, with one checkbox. */
+export interface Category {
+  /** ID is stable across scans and unique within a ScanResult, e.g. "user-caches". */
+  id: string;
+  title: string;
+  description: string;
+  /** Icon is a semantic icon key the page maps to a glyph (see src/components/common/CategoryIcon.tsx), e.g. "cache", "log", "xcode", "node". */
+  icon: string;
+  kind: CategoryKind;
+  deletion: DeletionMode;
+  /** Items are sorted largest first by NewResult. */
+  items: Item[];
+  /** Size is the sum of the items' sizes. */
+  size: number;
+  /** Selected is whether the category starts checked. */
+  selected: boolean;
+  /** Warning is an optional caution in Simplified Chinese shown in the warning colour, e.g. "删除后 Xcode 需要重新建立索引". */
+  warning?: string;
+}
+
+/** CategoryKind is what sort of data a Category holds; the page may group or word categories by it. */
+export type CategoryKind = "cache" | "log" | "trash" | "devCache" | "projectArtifact" | "installer" | "leftover" | "largeFile";
+
+/** CategoryOutcome is what a clean did in one category. */
+export interface CategoryOutcome {
+  categoryId: string;
+  title: string;
+  removed: number;
+  freed: number;
+  trashed: number;
+  failed: number;
+}
+
+/** CleanRequest names what to delete from the last scan. With ItemIDs empty, every item of every category in CategoryIDs goes; otherwise only the named items, each of which must belong to one of CategoryIDs. */
+export interface CleanRequest {
+  categoryIds: string[];
+  itemIds?: string[];
+}
+
+/** CleanResult is what a clean did. */
+export interface CleanResult {
+  /** Freed is the space given back by permanent deletion, in bytes. */
+  freed: number;
+  /** Trashed is the scanned size of the items moved to the Trash; it is freed once the Trash is emptied. */
+  trashed: number;
+  /** Removed counts items deleted or moved to the Trash completely. */
+  removed: number;
+  /** Skipped counts items that were already gone. */
+  skipped: number;
+  /** Failed lists the items left in place, wholly or in part. */
+  failed: Failure[];
+  /** Categories has one entry per category of the request, in scan order. */
+  categories: CategoryOutcome[];
+  /** Partial is set when anything failed or the clean was interrupted. */
+  partial: boolean;
+  /** Interrupted is set when ctx ended the clean before every item was handled. */
+  interrupted: boolean;
+  startedAt: string;
+  duration: number;
+}
+
+/** CleanerID names a cleaner that the Cleanup service runs. Each cleaner page has one; its engine registers a cleanup.Scanner under it in main.go with RegisterCleaner. */
+export type CleanerID = "smart-scan" | "system-junk" | "dev-junk" | "installers" | "uninstall" | "space";
+
+/** CleanupSettings tunes the cleaner pages. */
+export interface CleanupSettings {
+  /** Exclusions are paths and patterns no cleaner touches (fsx.Excluded). */
+  exclusions: string[];
+  /** DevProjectRoots are the folders 开发者垃圾 searches for projects. */
+  devProjectRoots: string[];
+  /** DevArtifactMinAgeDays: build output of projects untouched for fewer days is not offered. */
+  devArtifactMinAgeDays: number;
+  /** InstallerRoots are the folders 安装包 searches. */
+  installerRoots: string[];
+  /** LargeFileMinMB is the size from which 空间透视 calls a file large. */
+  largeFileMinMB: number;
+}
+
+/** DeletionMode is how a category's items are removed. */
+export type DeletionMode = "permanent" | "trash";
+
+/** Failure is one item that was not deleted. */
+export interface Failure {
+  itemId: string;
+  categoryId: string;
+  path: string;
+  /** Reason is a short sentence in Simplified Chinese for the page, e.g. "文件正在使用，已跳过". */
+  reason: string;
+  /** Detail is the technical cause, for the log. */
+  detail?: string;
+  /** InUse is set when another program held the item open. */
+  inUse?: boolean;
+}
+
+/** GeneralSettings are app-wide preferences. */
+export interface GeneralSettings {
+  /** LaunchAtLogin starts Spruce when the user logs in. */
+  launchAtLogin: boolean;
+  /** ConfirmBeforeClean asks before every clean. */
+  confirmBeforeClean: boolean;
+}
+
+/** HealthSettings tunes the CPU monitor of 健康监测 and the alert banner. */
+export interface HealthSettings {
+  /** CPUThreshold is the alert threshold in percent of one logical CPU, MinCPUThreshold to MaxCPUThreshold. */
+  cpuThreshold: number;
+  /** SustainMinutes is how long a process must stay above the threshold before it alerts, MinSustainMinutes to MaxSustainMinutes. */
+  sustainMinutes: number;
+  /** Enabled turns the monitor on. */
+  enabled: boolean;
+}
+
+/** HistorySettings tunes 操作历史. */
+export interface HistorySettings {
+  /** RetentionDays: runs older than this are pruned, MinRetentionDays to MaxRetentionDays. */
+  retentionDays: number;
+}
+
 /** Icon is a semantic icon key that the frontend maps to an SVG glyph. Adding a key is a contract change: the frontend must draw it. */
 export type Icon = "network" | "search" | "preview" | "icons" | "open-with" | "database" | "cleanup" | "repair" | "disk" | "update" | "font" | "store" | "network-fix";
 
+/** Item is one file or folder a cleaner offers. */
+export interface Item {
+  /** ID is stable for a path (ItemID) and unique within a ScanResult. */
+  id: string;
+  path: string;
+  /** Size is the space it takes, in bytes (fsx.DirSize Bytes for folders). */
+  size: number;
+  modTime: string;
+  /** Dir is set for a folder. */
+  dir?: boolean;
+  /** Note is an optional short line in Simplified Chinese, e.g. "3 个月未修改" or the project a build folder belongs to. */
+  note?: string;
+}
+
 /** Kind is what kind of operation a Run was. */
-export type Kind = "maintenance";
+export type Kind = "maintenance" | "systemJunk" | "devJunk" | "installers" | "uninstall" | "space" | "smartScan";
 
 /** Outcome is how a maintenance task ended. */
 export type Outcome = "applied" | "unchanged" | "skipped" | "unavailable" | "failed";
 
 /** PermissionState is whether the app holds a system permission. */
 export type PermissionState = "granted" | "denied" | "unknown" | "notRequired";
+
+/** Phase is the stage a Progress event belongs to. */
+export type Phase = "scanning" | "cleaning";
+
+/** Progress is streamed to the page while a scan or a clean runs. */
+export interface Progress {
+  phase: Phase;
+  /** CategoryID is the category being worked on, when there is one. */
+  categoryId?: string;
+  /** Path is the folder or item being worked on. */
+  path?: string;
+  /** Done and Total count steps (locations while scanning, items while cleaning); Total is 0 while unknown. */
+  done: number;
+  total: number;
+  /** Bytes is found so far while scanning and freed or trashed so far while cleaning. */
+  bytes: number;
+}
 
 /** ProgressEvent is streamed to the page while a run goes on. Each selected task gets one started and then one finished event. */
 export interface ProgressEvent {
@@ -72,8 +231,12 @@ export interface Run {
   kind: Kind;
   startedAt: string;
   endedAt: string;
-  /** Results has one entry per task that was selected, in catalog order. */
+  /** Results has one entry per task that was selected, in catalog order (maintenance runs; other kinds leave it empty). */
   results: Result[];
+  /** Summary totals a clean-up (every kind but maintenance). */
+  summary?: Totals;
+  /** Details are human-readable lines in Simplified Chinese, e.g. "系统缓存：已清理 34 项" or "无法删除 ~/Library/Caches/x：文件正在使用，已跳过". */
+  details?: string[];
 }
 
 /** RunSummary is the outcome of a whole run. */
@@ -93,6 +256,18 @@ export interface RunSummary {
   interrupted: boolean;
 }
 
+/** ScanResult is everything a scan found. */
+export interface ScanResult {
+  categories: Category[];
+  /** Size and Items total every category. */
+  size: number;
+  items: number;
+  /** Denied counts locations that could not be read for lack of permission (on macOS usually Full Disk Access), so the page can say the result may be incomplete. */
+  denied: number;
+  scannedAt: string;
+  duration: number;
+}
+
 /** TaskView is one card of the 维护 page. */
 export interface TaskView {
   id: string;
@@ -104,6 +279,25 @@ export interface TaskView {
   defaultOn: boolean;
   needsAdmin: boolean;
   estimatedSeconds: number;
+}
+
+/** Totals is what a clean-up achieved. */
+export interface Totals {
+  /** Freed is the space given back by permanent deletion, in bytes. */
+  freed: number;
+  /** Trashed is the size moved to the Trash, in bytes; it is freed once the Trash is emptied. */
+  trashed?: number;
+  /** Items counts items removed or moved to the Trash. */
+  items: number;
+  /** Failed counts items left in place. */
+  failed: number;
+}
+
+/** TrashUsage is how much the Trash holds. */
+export interface TrashUsage {
+  bytes: number;
+  /** Items counts the top-level items. */
+  items: number;
 }
 
 // ---- Services ----
@@ -134,6 +328,10 @@ export const Health = {
 
 /** History is the bound service of the 操作历史 page. */
 export const History = {
+  /** Clear deletes every recorded run. It cannot be undone; the page confirms first. */
+  clear(): Promise<void> {
+    return call("History.Clear");
+  },
   /** List returns up to limit recorded runs, newest first; limit must be between 1 and history.MaxRuns. */
   list(limit: number): Promise<Run[]> {
     return call("History.List", limit);
@@ -152,10 +350,60 @@ export const Permissions = {
   },
 } as const;
 
+/** Settings is the bound service of the 设置 page. */
+export const Settings = {
+  /** Get returns the current settings. General.LaunchAtLogin reports the system's state, which the user can also change in System Settings or Task Manager. */
+  get(): Promise<AppSettings> {
+    return call("Settings.Get");
+  },
+  /** Reset restores every default, including turning off 登录时启动. */
+  reset(): Promise<AppSettings> {
+    return call("Settings.Reset");
+  },
+  /** Update stores next after clamping it to the allowed ranges (see the settings package) and returns what was stored, which the page shows instead of what it sent. Every window then receives events.settingsChanged. */
+  update(next: AppSettings): Promise<AppSettings> {
+    return call("Settings.Update", next);
+  },
+} as const;
+
+/** Files is the bound service for single files and the Trash, shared by every page. */
+export const Files = {
+  /** EmptyTrash deletes everything in the Trash for good and returns what it freed. It cannot be undone; the page confirms first. */
+  emptyTrash(): Promise<TrashUsage> {
+    return call("Files.EmptyTrash");
+  },
+  /** Reveal shows path selected in Finder or Explorer. */
+  reveal(path: string): Promise<void> {
+    return call("Files.Reveal", path);
+  },
+  /** TrashSize returns how much the Trash (Recycle Bin) holds. */
+  trashSize(): Promise<TrashUsage> {
+    return call("Files.TrashSize");
+  },
+} as const;
+
+/** Cleanup is the bound service every cleaner page scans and cleans through, by CleanerID. It records each clean in the history. */
+export const Cleanup = {
+  /** Available lists the cleaners that are wired up, sorted. */
+  available(): Promise<CleanerID[]> {
+    return call("Cleanup.Available");
+  },
+  /** Clean deletes what req names from cleaner's last scan, streams progress, records the clean in the history and returns what it did. It fails without deleting anything when the request does not match the last scan (the page then scans again). Closing the channel stops the clean after the current item; the result says it was interrupted. */
+  clean(cleaner: CleanerID, req: CleanRequest, progress: Channel<Progress>): Promise<CleanResult> {
+    return call("Cleanup.Clean", cleaner, req, progress);
+  },
+  /** Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese. */
+  scan(cleaner: CleanerID, progress: Channel<Progress>): Promise<ScanResult> {
+    return call("Cleanup.Scan", cleaner, progress);
+  },
+} as const;
+
 // ---- Events ----
 
 /** Events sent by the Go side. Subscribe with `events.name.on(listener)`. */
 export const events = {
   /** HealthAlerts carries the complete current alert list to every window whenever it changes; an empty list clears the banner. */
   healthAlerts: event<Alert[]>("health:alerts"),
+  /** SettingsChanged carries the complete settings to every window whenever they change, from any window or from Go. */
+  settingsChanged: event<AppSettings>("settings:changed"),
 } as const;

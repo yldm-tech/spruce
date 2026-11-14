@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 )
 
 // Open returns a Store keeping its runs in the file at path (JSON Lines, one Run per line, appended). Open performs no I/O: the directory and the file are created on the first Append, and a missing file lists as empty.
@@ -99,7 +100,7 @@ func (s *fileStore) appendLocked(line []byte) error {
 	return f.Close()
 }
 
-// trimLocked rewrites the file with the newest MaxRuns valid runs through a temporary file in the same directory and a rename, so a crash leaves either the old or the new file.
+// trimLocked rewrites the file with the newest MaxRuns valid runs.
 func (s *fileStore) trimLocked() error {
 	runs, err := s.readLocked()
 	if err != nil {
@@ -108,7 +109,44 @@ func (s *fileStore) trimLocked() error {
 	if len(runs) > MaxRuns {
 		runs = runs[len(runs)-MaxRuns:]
 	}
+	return s.rewriteLocked(runs)
+}
 
+// Prune drops the runs that started before cutoff, rewriting the file only when there are any.
+func (s *fileStore) Prune(cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runs, err := s.readLocked()
+	if err != nil {
+		return 0, err
+	}
+	kept := slices.DeleteFunc(slices.Clone(runs), func(r Run) bool { return r.StartedAt.Before(cutoff) })
+	dropped := len(runs) - len(kept)
+	if dropped == 0 {
+		return 0, nil
+	}
+	if len(kept) > MaxRuns {
+		kept = kept[len(kept)-MaxRuns:]
+	}
+	if err := s.rewriteLocked(kept); err != nil {
+		return 0, err
+	}
+	return dropped, nil
+}
+
+// Clear removes the file; a missing file is already clear.
+func (s *fileStore) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("history: clear: %w", err)
+	}
+	s.count = 0
+	return nil
+}
+
+// rewriteLocked replaces the file with runs (oldest first) through a temporary file in the same directory and a rename, so a crash leaves either the old or the new file.
+func (s *fileStore) rewriteLocked(runs []Run) error {
 	var buf bytes.Buffer
 	for _, r := range runs {
 		line, err := json.Marshal(r)

@@ -113,35 +113,35 @@ func (b *windowsBin) MoveToTrash(ctx context.Context, paths []string) ([]Outcome
 	return moveAll(ctx, b.mover, paths)
 }
 
-func (b *windowsBin) Size(ctx context.Context) (Usage, error) {
+func (b *windowsBin) Size(ctx context.Context) (TrashUsage, error) {
 	if err := ctx.Err(); err != nil {
-		return Usage{}, err
+		return TrashUsage{}, err
 	}
 	info := shQueryRBInfo{cbSize: uint32(unsafe.Sizeof(shQueryRBInfo{}))}
 	if hr, _, _ := procSHQueryRecycleBinW.Call(0, uintptr(unsafe.Pointer(&info))); hr != 0 {
-		return Usage{}, fmt.Errorf("trash: SHQueryRecycleBinW: %w", syscall.Errno(hr))
+		return TrashUsage{}, fmt.Errorf("trash: SHQueryRecycleBinW: %w", syscall.Errno(hr))
 	}
-	return Usage{Bytes: info.i64Size, Items: info.i64NumItems}, nil
+	return TrashUsage{Bytes: info.i64Size, Items: info.i64NumItems}, nil
 }
 
-func (b *windowsBin) Empty(ctx context.Context) (Usage, error) {
+func (b *windowsBin) Empty(ctx context.Context) (TrashUsage, error) {
 	before, err := b.Size(ctx)
 	if err != nil {
-		return Usage{}, err
+		return TrashUsage{}, err
 	}
 	if before.Items == 0 {
-		return Usage{}, nil
+		return TrashUsage{}, nil
 	}
 	var hr uintptr
 	withCOM(func() {
 		hr, _, _ = procSHEmptyRecycleBinW.Call(0, 0, sherbNoConfirmation|sherbNoProgressUI|sherbNoSound)
 	})
 	if hr != 0 {
-		return Usage{}, fmt.Errorf("trash: SHEmptyRecycleBinW: %w", syscall.Errno(hr))
+		return TrashUsage{}, fmt.Errorf("trash: SHEmptyRecycleBinW: %w", syscall.Errno(hr))
 	}
 	after, err := b.Size(ctx)
 	if err != nil {
 		return before, nil
 	}
-	return Usage{Bytes: max(0, before.Bytes-after.Bytes), Items: max(0, before.Items-after.Items)}, nil
+	return TrashUsage{Bytes: max(0, before.Bytes-after.Bytes), Items: max(0, before.Items-after.Items)}, nil
 }

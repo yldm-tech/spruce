@@ -1,44 +1,5 @@
 package trash
 
-/*
-#cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Foundation
-#include <stdlib.h>
-#import <Foundation/Foundation.h>
-
-// spruce_trash moves path to the Trash. It returns 0 on success with *dest set to the item's new path, or the NSError code with *msg set to its description and *posix to the underlying POSIX errno (0 if none). The caller frees *dest and *msg.
-static long spruce_trash(const char *path, char **dest, char **msg, int *posix) {
-	@autoreleasepool {
-		NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
-		NSURL *result = nil;
-		NSError *error = nil;
-		*dest = NULL;
-		*msg = NULL;
-		*posix = 0;
-		if ([[NSFileManager defaultManager] trashItemAtURL:url resultingItemURL:&result error:&error]) {
-			if (result != nil && result.path != nil) {
-				*dest = strdup(result.path.fileSystemRepresentation);
-			}
-			return 0;
-		}
-		if (error == nil) {
-			*msg = strdup("unknown error");
-			return -1;
-		}
-		NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
-		if (underlying != nil && [underlying.domain isEqualToString:NSPOSIXErrorDomain]) {
-			*posix = (int)underlying.code;
-		} else if ([error.domain isEqualToString:NSPOSIXErrorDomain]) {
-			*posix = (int)error.code;
-		}
-		*msg = strdup(error.localizedDescription.UTF8String ?: "unknown error");
-		long code = (long)error.code;
-		return code == 0 ? -1 : code;
-	}
-}
-*/
-import "C"
-
 import (
 	"context"
 	"errors"
@@ -46,37 +7,96 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/ebitengine/purego"
+	"github.com/ebitengine/purego/objc"
 	"github.com/yldm-tech/spruce/internal/engine/fsx"
 )
 
-// Foundation error codes trashItemAtURL reports for a missing item and a permission problem (NSFileNoSuchFileError, NSFileWriteNoPermissionError, NSFileReadNoPermissionError).
+// Foundation error codes trashItemAtURL reports for a missing item and a permission problem (NSFileNoSuchFileError, NSFileReadNoPermissionError, NSFileWriteNoPermissionError).
 const (
 	nsFileNoSuchFile        = 4
 	nsFileReadNoPermission  = 257
 	nsFileWriteNoPermission = 513
 )
 
+const foundationPath = "/System/Library/Frameworks/Foundation.framework/Foundation"
+
+// loadFoundation makes Foundation's classes available to the Objective-C runtime (the app has usually loaded it already).
+var loadFoundation = sync.OnceValue(func() error {
+	if _, err := purego.Dlopen(foundationPath, purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
+		return fmt.Errorf("load Foundation: %w", err)
+	}
+	return nil
+})
+
+var (
+	selNew                  = objc.RegisterName("new")
+	selDrain                = objc.RegisterName("drain")
+	selDefaultManager       = objc.RegisterName("defaultManager")
+	selStringWithUTF8       = objc.RegisterName("stringWithUTF8String:")
+	selFileURLWithPath      = objc.RegisterName("fileURLWithPath:")
+	selTrashItem            = objc.RegisterName("trashItemAtURL:resultingItemURL:error:")
+	selPath                 = objc.RegisterName("path")
+	selUTF8String           = objc.RegisterName("UTF8String")
+	selCode                 = objc.RegisterName("code")
+	selDomain               = objc.RegisterName("domain")
+	selUserInfo             = objc.RegisterName("userInfo")
+	selObjectForKey         = objc.RegisterName("objectForKey:")
+	selLocalizedDescription = objc.RegisterName("localizedDescription")
+)
+
+// foundationMover calls NSFileManager trashItemAtURL:resultingItemURL:error: through the Objective-C runtime with purego, without cgo: the app builds with CGO_ENABLED=0, as MyGo does.
 type foundationMover struct{}
 
+func nsString(s string) objc.ID {
+	return objc.ID(objc.GetClass("NSString")).Send(selStringWithUTF8, s)
+}
+
+func goString(ns objc.ID) string {
+	if ns == 0 {
+		return ""
+	}
+	return objc.Send[string](ns, selUTF8String)
+}
+
 func (foundationMover) move(path string) (string, error) {
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-	var dest, msg *C.char
-	var posix C.int
-	code := C.spruce_trash(cpath, &dest, &msg, &posix)
-	defer C.free(unsafe.Pointer(dest))
-	defer C.free(unsafe.Pointer(msg))
-	if code == 0 {
-		if dest == nil {
+	if err := loadFoundation(); err != nil {
+		return "", err
+	}
+	// Autorelease pools belong to a thread; everything autoreleased below is drained before the thread is released.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	pool := objc.ID(objc.GetClass("NSAutoreleasePool")).Send(selNew)
+	defer pool.Send(selDrain)
+
+	url := objc.ID(objc.GetClass("NSURL")).Send(selFileURLWithPath, nsString(path))
+	fm := objc.ID(objc.GetClass("NSFileManager")).Send(selDefaultManager)
+	// Out parameters on the heap: Foundation writes an object pointer into each.
+	out := new([2]objc.ID)
+	if objc.Send[bool](fm, selTrashItem, url, unsafe.Pointer(&out[0]), unsafe.Pointer(&out[1])) {
+		if out[0] == 0 {
 			return "", nil
 		}
-		return C.GoString(dest), nil
+		return goString(out[0].Send(selPath)), nil
 	}
-	text := C.GoString(msg)
+	nserr := out[1]
+	if nserr == 0 {
+		return "", errors.New("trashItemAtURL failed without an error")
+	}
+	code := objc.Send[int](nserr, selCode)
+	text := goString(nserr.Send(selLocalizedDescription))
+	posix := 0
+	if goString(nserr.Send(selDomain)) == "NSPOSIXErrorDomain" {
+		posix = code
+	} else if u := nserr.Send(selUserInfo).Send(selObjectForKey, nsString("NSUnderlyingError")); u != 0 && goString(u.Send(selDomain)) == "NSPOSIXErrorDomain" {
+		posix = objc.Send[int](u, selCode)
+	}
 	switch {
 	case posix != 0:
 		return "", fmt.Errorf("%s: %w", text, syscall.Errno(posix))
@@ -85,7 +105,7 @@ func (foundationMover) move(path string) (string, error) {
 	case code == nsFileReadNoPermission || code == nsFileWriteNoPermission:
 		return "", fmt.Errorf("%s: %w", text, fs.ErrPermission)
 	}
-	return "", errors.New(text + " (NSError " + strconv.Itoa(int(code)) + ")")
+	return "", errors.New(text + " (NSError " + strconv.Itoa(code) + ")")
 }
 
 // darwinBin is the user's Trash: trashing goes through Foundation, measuring and emptying through the Trash folders.
@@ -123,8 +143,8 @@ func (b *darwinBin) MoveToTrash(ctx context.Context, paths []string) ([]Outcome,
 	return moveAll(ctx, b.mover, paths)
 }
 
-func (b *darwinBin) Size(ctx context.Context) (Usage, error) {
-	var u Usage
+func (b *darwinBin) Size(ctx context.Context) (TrashUsage, error) {
+	var u TrashUsage
 	for i, dir := range b.dirs() {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -132,7 +152,7 @@ func (b *darwinBin) Size(ctx context.Context) (Usage, error) {
 				continue
 			}
 			if i == 0 && errors.Is(err, fs.ErrPermission) {
-				return Usage{}, ErrNoAccess
+				return TrashUsage{}, ErrNoAccess
 			}
 			return u, fmt.Errorf("trash: read %q: %w", dir, err)
 		}
@@ -151,13 +171,13 @@ func (b *darwinBin) Size(ctx context.Context) (Usage, error) {
 	return u, nil
 }
 
-func (b *darwinBin) Empty(ctx context.Context) (Usage, error) {
+func (b *darwinBin) Empty(ctx context.Context) (TrashUsage, error) {
 	return emptyDirs(ctx, b.dirs())
 }
 
 // emptyDirs deletes the contents of each Trash folder for good, keeping the folders, and returns what it freed. Items that could not be deleted are reported in the error.
-func emptyDirs(ctx context.Context, dirs []string) (Usage, error) {
-	var freed Usage
+func emptyDirs(ctx context.Context, dirs []string) (TrashUsage, error) {
+	var freed TrashUsage
 	var errs []error
 	for i, dir := range dirs {
 		entries, err := os.ReadDir(dir)

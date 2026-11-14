@@ -5,6 +5,9 @@ import (
 	"syscall"
 )
 
+// fileID identifies a file across hard links (device and inode).
+type fileID struct{ dev, ino uint64 }
+
 // usage returns the space a file takes on disk (its allocated 512-byte blocks), its identity and whether it has other hard links, which DirSize must count once and SafeRemove frees only with the last link.
 func usage(info fs.FileInfo) (alloc int64, id fileID, linked bool) {
 	st, ok := info.Sys().(*syscall.Stat_t)

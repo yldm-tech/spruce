@@ -65,12 +65,20 @@ func TestUnreadableTrash(t *testing.T) {
 	if err := os.Chmod(home, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(home, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
 	b := &darwinBin{mover: &fakeMover{}, dirs: func() []string { return []string{home} }}
 	if _, err := b.Size(t.Context()); !errors.Is(err, ErrNoAccess) || !errors.Is(err, fs.ErrPermission) {
 		t.Errorf("Size err %v", err)
 	}
 	if _, err := b.Empty(t.Context()); !errors.Is(err, ErrNoAccess) {
 		t.Errorf("Empty err %v", err)
+	}
+}
+
+// TestFoundationMoverMissingPath runs the real NSFileManager call on a path that does not exist, which exercises the Objective-C bridge without moving anything to the Trash.
+func TestFoundationMoverMissingPath(t *testing.T) {
+	_, err := foundationMover{}.move(filepath.Join(t.TempDir(), "does-not-exist"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err %v, want fs.ErrNotExist", err)
 	}
 }

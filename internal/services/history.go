@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/yldm-tech/spruce/internal/engine/history"
@@ -22,4 +23,12 @@ func (h *History) List(limit int) ([]history.Run, error) {
 		return nil, fmt.Errorf("limit must be between 1 and %d, got %d", history.MaxRuns, limit)
 	}
 	return h.store.List(limit)
+}
+
+// Clear deletes every recorded run. It cannot be undone; the page confirms first.
+func (h *History) Clear() error {
+	if err := h.store.Clear(); err != nil {
+		return errors.New("无法清空操作历史")
+	}
+	return nil
 }
