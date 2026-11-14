@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 )
 
 // LoginItem starts the app at login; internal/host/loginitem implements it.
@@ -116,8 +118,8 @@ func (s *Settings) Reset() (settings.AppSettings, error) {
 // pruneEvery is how often FollowSettings prunes the history while the app runs.
 const pruneEvery = 24 * time.Hour
 
-// FollowSettings applies the settings that other parts of the engine read, now and on every change, until ctx is done: the health monitor's threshold, sustain and on/off (health.Monitor.Tune, effective from its next sample) and the history retention (history.Store.Prune, also once a day). The app starts it as it opens.
-func FollowSettings(ctx context.Context, store *settings.Store, mon health.Monitor, hist history.Store, log *slog.Logger) {
+// FollowSettings applies the settings that other parts of the engine read, now and on every change, until ctx is done: the health monitor's threshold, sustain and on/off (health.Monitor.Tune, effective from its next sample) and the history retention (history.Store.Prune, also once a day). Each prune of the history also prunes the undo ledger (nil for none), keeping the entries of runs the history still holds. The app starts it as it opens.
+func FollowSettings(ctx context.Context, store *settings.Store, mon health.Monitor, hist history.Store, ledger *undo.Ledger, log *slog.Logger) {
 	ch, unsubscribe := store.Subscribe()
 	defer unsubscribe()
 	ticker := time.NewTicker(pruneEvery)
@@ -129,6 +131,7 @@ func FollowSettings(ctx context.Context, store *settings.Store, mon health.Monit
 		} else if n > 0 {
 			log.Info("pruned history", "runs", n, "retentionDays", retention)
 		}
+		pruneLedger(ledger, hist, time.Now(), log)
 	}
 	for {
 		select {
@@ -150,4 +153,40 @@ func FollowSettings(ctx context.Context, store *settings.Store, mon health.Monit
 			}
 		}
 	}
+}
+
+// ledgerGrace is how long the ledger keeps an entry whose run is not in the history: a clean records the ledger just before it appends its run.
+const ledgerGrace = time.Hour
+
+// pruneLedger prunes l (nil for none) as of now, keeping the entries of the runs h holds and of runs that began within ledgerGrace.
+func pruneLedger(l *undo.Ledger, h history.Store, now time.Time, log *slog.Logger) {
+	if l == nil {
+		return
+	}
+	runs, err := h.List(0)
+	if err != nil {
+		// Without the runs every entry would look orphaned.
+		log.Warn("prune undo ledger: list history", "err", err)
+		return
+	}
+	held := make(map[string]bool, len(runs))
+	for _, r := range runs {
+		held[r.ID] = true
+	}
+	n, err := l.Prune(now, func(runID string) bool { return held[runID] || recentRunID(runID, now) })
+	if err != nil {
+		log.Warn("prune undo ledger", "err", err)
+	} else if n > 0 {
+		log.Info("pruned undo ledger", "entries", n)
+	}
+}
+
+// recentRunID reports whether runID (newRunID's form, "20261114T010412Z-3f9a") began within ledgerGrace of now; an ID of another form is not recent.
+func recentRunID(runID string, now time.Time) bool {
+	stamp, _, ok := strings.Cut(runID, "-")
+	if !ok {
+		return false
+	}
+	t, err := time.Parse("20060102T150405Z", stamp)
+	return err == nil && now.Sub(t) < ledgerGrace && t.Sub(now) < ledgerGrace
 }

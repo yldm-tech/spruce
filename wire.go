@@ -23,6 +23,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 	"github.com/yldm-tech/spruce/internal/engine/systemjunk"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 	"github.com/yldm-tech/spruce/internal/host/instance"
 	"github.com/yldm-tech/spruce/internal/host/loginitem"
@@ -52,6 +53,8 @@ const (
 	iconCache    = "app-icons"
 	// cleanLock is the lock every clean and the background work hold, shared with the command line.
 	cleanLock = "clean.lock"
+	// undoDir is the undo ledger: what each clean moved to the Trash, for 撤销 and 放回原处.
+	undoDir = "undo"
 )
 
 // appID is nsgo.yaml's id: the login item's name.
@@ -102,7 +105,12 @@ func wire(e env) (shell.Deps, error) {
 		return installers.New(installers.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log})
 	}
 	activity := schedule.NewActivity(cleanLockFunc(filepath.Join(e.dataDir, cleanLock), e.log))
+	ledger, err := undo.Open(filepath.Join(e.dataDir, undoDir))
+	if err != nil {
+		return shell.Deps{}, err
+	}
 	cleanups := app.NewCleanup(historyStore, e.home, e.log, activity)
+	app.SetLedger(cleanups, ledger)
 	app.RegisterCleaner(cleanups, app.CleanerSmartScan, smartscan.New([]smartscan.Source{
 		{ID: string(app.CleanerSystemJunk), New: newSystemJunk},
 		{ID: string(app.CleanerDevJunk), New: newDevJunk},
@@ -122,7 +130,9 @@ func wire(e env) (shell.Deps, error) {
 		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
 		Self:       e.exe,
 	}), historyStore, e.home, e.log, activity)
+	app.SetUninstallLedger(uninstaller, ledger)
 	spaceSvc := app.NewSpace(e.home, settingsStore.Get, trash.System(), historyStore, e.log, activity)
+	app.SetSpaceLedger(spaceSvc, ledger)
 	version := ""
 	if info := core.App(); !info.Development {
 		version = info.Version
@@ -130,7 +140,7 @@ func wire(e env) (shell.Deps, error) {
 	settingsSvc := app.NewSettings(settingsStore, loginitem.New(appID), e.log, version, e.dataDir)
 
 	return shell.Deps{
-		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: app.NewHistory(historyStore), Alerts: healthSvc,
+		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: app.NewHistory(historyStore, ledger, e.log), Alerts: healthSvc,
 			Permissions: permissions, Locations: spaceSvc},
 		SmartScan:   uismartscan.Deps{Cleanup: cleanups, Files: files},
 		SystemJunk:  uisystemjunk.Deps{Cleanup: cleanups, Files: files},
@@ -143,12 +153,13 @@ func wire(e env) (shell.Deps, error) {
 		History:     uihistory.Deps{Catalog: maint},
 		Settings:    uisettings.Deps{Files: files, Icon: appIcon},
 		Background: []func(ctx context.Context){
+			func(ctx context.Context) { app.RecoverInterrupted(ctx, ledger, historyStore, activity, e.log) },
 			func(ctx context.Context) {
 				if err := monitor.Run(ctx); err != nil && ctx.Err() == nil {
 					e.log.Error("health monitor stopped", "err", err)
 				}
 			},
-			func(ctx context.Context) { app.FollowSettings(ctx, settingsStore, monitor, historyStore, e.log) },
+			func(ctx context.Context) { app.FollowSettings(ctx, settingsStore, monitor, historyStore, ledger, e.log) },
 		},
 		DataDir:  e.dataDir,
 		Log:      e.log,

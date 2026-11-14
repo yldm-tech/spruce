@@ -1,6 +1,7 @@
 package app
 
 import (
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -48,7 +49,7 @@ func (f *fakeStore) List(limit int) ([]history.Run, error) {
 
 func TestHistoryListLimit(t *testing.T) {
 	store := &fakeStore{runs: []history.Run{{ID: "a"}}}
-	h := NewHistory(store)
+	h := NewHistory(store, nil, slog.New(slog.DiscardHandler))
 	for _, bad := range []int{-1, 0, history.MaxRuns + 1} {
 		if _, err := h.List(bad); err == nil {
 			t.Errorf("List(%d) accepted", bad)
@@ -69,14 +70,14 @@ func TestHistoryListLimit(t *testing.T) {
 }
 
 func TestHistorySubscribe(t *testing.T) {
-	if _, _, ok := NewHistory(&fakeStore{}).Subscribe(); ok {
+	if _, _, ok := NewHistory(&fakeStore{}, nil, slog.New(slog.DiscardHandler)).Subscribe(); ok {
 		t.Error("a store that announces nothing offered a subscription")
 	}
 	store, err := history.Open(filepath.Join(t.TempDir(), "history.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, unsubscribe, ok := NewHistory(store).Subscribe()
+	runs, unsubscribe, ok := NewHistory(store, nil, slog.New(slog.DiscardHandler)).Subscribe()
 	if !ok {
 		t.Fatal("the store history.Open returns offered no subscription")
 	}

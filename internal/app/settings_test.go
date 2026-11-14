@@ -108,7 +108,7 @@ func TestFollowSettings(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
-		FollowSettings(ctx, st, mon, hist, slog.New(slog.DiscardHandler))
+		FollowSettings(ctx, st, mon, hist, nil, slog.New(slog.DiscardHandler))
 		close(done)
 	}()
 	wait := func() tuneCall {
