@@ -162,8 +162,10 @@ func section(f *cleanflow.Flow, title, key string, group []cleanup.Category, rev
 			Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontWeight: kit.FaceWeight(kit.Semibold), FontSize: kit.FontSection,
 				LetterSpacingEm: kit.LetterSpacingSection, Color: kit.ColorTextSection}},
 		cleanflow.CategoryList{Categories: func() []cleanup.Category { return group }, Selection: f.Selection.Get,
-			OnChange: func(next cleanflow.Selection) { f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next)) },
-			Label:    title, Reveal: rev, Disabled: disabled, TestID: "list-" + key},
+			OnChange: func(next cleanflow.Selection) {
+				f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next))
+			},
+			Label: title, Reveal: rev, Disabled: disabled, TestID: "list-" + key},
 	}}
 }
 
