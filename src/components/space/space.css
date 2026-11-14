@@ -111,9 +111,9 @@
 
 /* ---- Results ---- */
 
+/* The results never shrink below their content, so in a short window the page scrolls instead of letting the map slide under the action bar. */
 .space-results {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -171,8 +171,7 @@
 }
 
 .space-panel {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
