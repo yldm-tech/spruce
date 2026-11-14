@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo"
+	"github.com/yldm-tech/spruce/internal/engine/devjunk"
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
 	"github.com/yldm-tech/spruce/internal/engine/health"
@@ -115,6 +116,14 @@ func main() {
 	services.RegisterCleaner(cleanups, services.CleanerSystemJunk, systemjunk.New(systemjunk.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
 
 	// page: dev-junk
+	devJunk := devjunk.New(devjunk.Options{
+		Home:     home,
+		Runner:   runner,
+		Settings: func() settings.CleanupSettings { return settingsStore.Get().Cleanup },
+		Log:      logger,
+	})
+	services.RegisterCleaner(cleanups, services.CleanerDevJunk, devJunk)
+	mygo.Bind(services.NewDevJunk(devJunk))
 
 	// page: installers
 	services.RegisterCleaner(cleanups, services.CleanerInstallers, installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))

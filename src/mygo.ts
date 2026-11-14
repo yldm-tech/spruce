@@ -118,6 +118,21 @@ export interface CleanupSettings {
 /** DeletionMode is how a category's items are removed. */
 export type DeletionMode = "permanent" | "trash";
 
+/** DevJunkCommand is a category of the 开发者垃圾 scan that is cleaned by running its tool's own command rather than by deleting files. */
+export interface DevJunkCommand {
+  categoryId: string;
+  /** Command is what runs, as typed in a terminal, e.g. "brew cleanup -s --prune=all". */
+  command: string;
+}
+
+/** DevJunkDetails is what the 开发者垃圾 page needs about its last scan beyond the cleanup model: which items start checked (a category may start checked in part, such as every Xcode device support version but the newest) and which categories run a command, which its confirmation counts apart. */
+export interface DevJunkDetails {
+  /** DefaultItems are the IDs of the items that start checked. */
+  defaultItems: string[];
+  /** Commands are the command categories, in scan order. */
+  commands: DevJunkCommand[];
+}
+
 /** Failure is one item that was not deleted. */
 export interface Failure {
   itemId: string;
@@ -432,6 +447,14 @@ export const Cleanup = {
   /** Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese. */
   scan(cleaner: CleanerID, progress: Channel<Progress>): Promise<ScanResult> {
     return call("Cleanup.Scan", cleaner, progress);
+  },
+} as const;
+
+/** DevJunk is the bound service of the 开发者垃圾 page. The page scans and cleans through Cleanup with CleanerDevJunk; this service only describes the last scan. */
+export const DevJunk = {
+  /** Details describes the last scan of Cleanup.scan("dev-junk"); empty before any scan. */
+  details(): Promise<DevJunkDetails> {
+    return call("DevJunk.Details");
   },
 } as const;
 
