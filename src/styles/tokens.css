@@ -128,3 +128,17 @@
   --sidebar-width: 228px;
   --main-min-width: 560px;
 }
+
+/* ---- uninstall ---- */
+:root {
+  --uninstall-row-selected: rgba(255, 255, 255, 0.16);
+  --uninstall-row-selected-border: rgba(255, 210, 120, 0.55);
+  --uninstall-input-background: rgba(0, 0, 0, 0.2);
+  --uninstall-input-border: rgba(255, 255, 255, 0.16);
+  --uninstall-input-placeholder: rgba(255, 255, 255, 0.5);
+  --uninstall-badge-background: rgba(255, 255, 255, 0.14);
+  --uninstall-badge-running-background: rgba(255, 210, 120, 0.2);
+  --uninstall-badge-running-text: var(--color-warning);
+  --uninstall-kind-text: var(--color-accent-bright);
+  --uninstall-icon-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+}

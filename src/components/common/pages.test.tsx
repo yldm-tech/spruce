@@ -10,7 +10,6 @@ import { SettingsPage } from "../settings/SettingsPage";
 import { SmartScanPage } from "../smart-scan/SmartScanPage";
 import { SpacePage } from "../space/SpacePage";
 import { SystemJunkPage } from "../system-junk/SystemJunkPage";
-import { UninstallPage } from "../uninstall/UninstallPage";
 import { PAGES, type PageId } from "./pages";
 
 const SHELLS: [PageId, ComponentType][] = [
@@ -18,7 +17,6 @@ const SHELLS: [PageId, ComponentType][] = [
   ["system-junk", SystemJunkPage],
   ["dev-junk", DevJunkPage],
   ["installers", InstallersPage],
-  ["uninstall", UninstallPage],
   ["space", SpacePage],
   ["health", HealthPage],
   ["history", HistoryPage],
