@@ -41,7 +41,7 @@ func (h *desktopHost) Main() mainWindow {
 		return w
 	}
 	if h.inPlace {
-		return inPlace{}
+		return surfaceWindow{}
 	}
 	return nil
 }
@@ -64,11 +64,11 @@ func (h *desktopHost) OnClosing(fn func(cancel func())) {
 	}
 }
 
-// inPlace is the view in the app's one surface, which cannot hide or come to the front.
-type inPlace struct{}
+// surfaceWindow is the view in the app's one surface, which cannot hide or come to the front.
+type surfaceWindow struct{}
 
-func (inPlace) Hide()  {}
-func (inPlace) Focus() {}
+func (surfaceWindow) Hide()  {}
+func (surfaceWindow) Focus() {}
 
 // windows opens, hides and routes the main window for the tray menu, the Dock's reopen, a notification's press and a second copy of the app.
 type windows struct {

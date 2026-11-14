@@ -44,7 +44,7 @@ func Page(cx *core.Scope) core.Node {
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)
-	notify := newNotifyPermission(cx)
+	notify := newNotifyPermission(cx, deps.NotificationPermission)
 	windows := deps.windows()
 
 	// 恢复默认设置 counts a generation, which draws the tab again so every control drops its draft and its notes.
@@ -200,18 +200,29 @@ func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []cor
 
 // notifyPermission is whether Spruce may send notifications, as the page last heard: read without asking as the page opens, and asked for only as the user turns on something that notifies.
 type notifyPermission struct {
-	cx    *core.Scope
-	state *core.Signal[core.NotificationPermission]
+	cx     *core.Scope
+	answer func(cx *core.Scope, ask bool, done func(core.NotificationPermission))
+	state  *core.Signal[core.NotificationPermission]
 }
 
-func newNotifyPermission(cx *core.Scope) *notifyPermission {
-	n := &notifyPermission{cx: cx, state: core.NewSignal(cx, core.NotificationsNotAsked)}
-	cx.NotificationPermission(n.state.Set)
+// newNotifyPermission reads the permission through answer (the scope's own when nil) without asking.
+func newNotifyPermission(cx *core.Scope, answer func(cx *core.Scope, ask bool, done func(core.NotificationPermission))) *notifyPermission {
+	if answer == nil {
+		answer = func(cx *core.Scope, ask bool, done func(core.NotificationPermission)) {
+			if ask {
+				cx.RequestNotificationPermission(done)
+			} else {
+				cx.NotificationPermission(done)
+			}
+		}
+	}
+	n := &notifyPermission{cx: cx, answer: answer, state: core.NewSignal(cx, core.NotificationsNotAsked)}
+	answer(cx, false, n.state.Set)
 	return n
 }
 
 // ask asks the user to let Spruce send notifications; the system prompts only the first time.
-func (n *notifyPermission) ask() { n.cx.RequestNotificationPermission(n.state.Set) }
+func (n *notifyPermission) ask() { n.answer(n.cx, true, n.state.Set) }
 
 // askOnce asks only when the user was never asked: turning on a rule wants the weekly summary to be able to show, but does not need it.
 func (n *notifyPermission) askOnce() {

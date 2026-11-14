@@ -29,7 +29,15 @@ func TestScreensSettings(t *testing.T) {
 			{ID: "incomplete-downloads"},
 		}})
 	svc := settingsfake.New("/Users/me/Library/Application Support/Spruce")
-	d := shell.Deps{Settings: settings.Deps{Files: &settingsfake.Files{}, GOOS: "darwin"}, Stores: svc.Use(fakes.Deps())}
+	// The page asks a fake for the notification permission: on the target the system's own prompt would show for the test's bundle. Asked, the user refuses.
+	permission := core.NotificationsNotAsked
+	notify := func(_ *core.Scope, ask bool, done func(core.NotificationPermission)) {
+		if ask {
+			permission = core.NotificationsDenied
+		}
+		done(permission)
+	}
+	d := shell.Deps{Settings: settings.Deps{Files: &settingsfake.Files{}, GOOS: "darwin", NotificationPermission: notify}, Stores: svc.Use(fakes.Deps())}
 	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
 	a.WaitFor("id:sidebar", wait)
 	a.Press("id:nav-settings")
@@ -37,7 +45,6 @@ func TestScreensSettings(t *testing.T) {
 	a.Screenshot("settings-general")
 
 	// 空间不足时提醒我 asks for notifications as it is turned on; refused, the switch stays on and says how to allow them.
-	a.NotificationAnswer = core.NotificationsDenied
 	a.Press("role:switch 空间不足时提醒我")
 	a.WaitFor("id:notify-denied", wait)
 	a.Screenshot("settings-notify-denied")
