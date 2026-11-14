@@ -31,7 +31,7 @@ func Page(cx *core.Scope) core.Node {
 	}
 	toSettings := func() {
 		if n := nav.Use(cx); n != nil {
-			n.Go(nav.Settings)
+			n.GoSettings(nav.SettingsCleanup)
 		}
 	}
 	plan := func() Plan { return CleanPlan(f.Categories(), f.Selection.Get()) }

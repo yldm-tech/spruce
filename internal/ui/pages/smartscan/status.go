@@ -25,7 +25,7 @@ type statusCards struct{}
 // Render implements core.Node.
 func (statusCards) Render(cx *core.Scope) core.Node {
 	st := store.Use(cx)
-	cards := []core.Node{diskCard(cx, st), cpuCard(st)}
+	cards := []core.Node{diskCard(cx, st), cpuCard(cx, st)}
 	if runtime.GOOS != "windows" {
 		cards = append(cards, fullDiskAccessCard(cx, st))
 	}
@@ -136,7 +136,7 @@ func diskCard(cx *core.Scope, st *store.Stores) core.Node {
 		}}
 }
 
-func cpuCard(st *store.Stores) core.Node {
+func cpuCard(cx *core.Scope, st *store.Stores) core.Node {
 	enabled := func() bool { return !st.Settings.Loaded() || st.Settings.Value().Health.Enabled }
 	meta := nav.Health.Meta()
 	return statusCard{Title: "CPU 占用", Tone: meta.Tone, Glyph: meta.Glyph, TestID: "status-cpu",
@@ -170,11 +170,12 @@ func cpuCard(st *store.Stores) core.Node {
 				}
 				return "去设置"
 			},
-			To: func() nav.Route {
+			OnPress: func() {
 				if enabled() {
-					return nav.Health
+					nav.Use(cx).Go(nav.Health)
+					return
 				}
-				return nav.Settings
+				nav.Use(cx).GoSettings(nav.SettingsHealth)
 			}}},
 	}
 }

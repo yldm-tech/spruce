@@ -61,9 +61,22 @@ func (r Route) Meta() Meta {
 	return m
 }
 
-// Navigator holds the current page.
+// SettingsTab is a tab of the 设置 page.
+type SettingsTab string
+
+// The 设置 page's tabs, in their order.
+const (
+	SettingsGeneral SettingsTab = "general"
+	SettingsCleanup SettingsTab = "cleanup"
+	SettingsHealth  SettingsTab = "health"
+	SettingsHistory SettingsTab = "history"
+	SettingsAbout   SettingsTab = "about"
+)
+
+// Navigator holds the current page, and the tab a link asked 设置 to open on.
 type Navigator struct {
-	current *core.Signal[Route]
+	current     *core.Signal[Route]
+	settingsTab SettingsTab
 }
 
 // NewNavigator returns a navigator on start.
@@ -76,6 +89,19 @@ func (n *Navigator) Current() Route { return n.current.Get() }
 
 // Go shows page r.
 func (n *Navigator) Go(r Route) { n.current.Set(r) }
+
+// GoSettings shows 设置 on tab, as a link that names the setting it is about does (开发者垃圾's 更改文件夹 opens 清理).
+func (n *Navigator) GoSettings(tab SettingsTab) {
+	n.settingsTab = tab
+	n.current.Set(Settings)
+}
+
+// TakeSettingsTab returns the tab GoSettings asked for, or "" when 设置 was opened without one, and forgets it, so the next visit opens on the first tab.
+func (n *Navigator) TakeSettingsTab() SettingsTab {
+	t := n.settingsTab
+	n.settingsTab = ""
+	return t
+}
 
 // Key provides the shell's Navigator to the pages.
 var Key = core.NewKey[*Navigator]("spruce.nav", nil)

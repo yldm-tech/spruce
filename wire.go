@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"log/slog"
 	"path/filepath"
 
@@ -38,6 +39,11 @@ import (
 )
 
 // Files inside the app's data folder.
+// appIcon is the app's icon, which 设置's 关于 shows.
+//
+//go:embed assets/Icon.png
+var appIcon []byte
+
 const (
 	historyFile  = "history.jsonl"
 	settingsFile = "settings.json"
@@ -130,7 +136,7 @@ func wire(e env) (shell.Deps, error) {
 		Maintenance: uimaintenance.Deps{Maintenance: maint},
 		Health:      uihealth.Deps{Sysinfo: app.NewSysinfo(vitals)},
 		History:     uihistory.Deps{Catalog: maint},
-		Settings:    uisettings.Deps{Files: files},
+		Settings:    uisettings.Deps{Files: files, Icon: appIcon},
 		Background: []func(ctx context.Context){
 			func(ctx context.Context) {
 				if err := monitor.Run(ctx); err != nil && ctx.Err() == nil {
