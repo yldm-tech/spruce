@@ -239,6 +239,11 @@ func TestResultsOpenFoldersFromTheListTheMapAndThePath(t *testing.T) {
 		t.Errorf("cells %v", got)
 	}
 
+	// The labelled cells draw their name over a soft shadow.
+	if sh := p.Find(`id:treemap >> text:"Projects"`).TextShadow; sh.Color == 0 || sh.Offset.Y != 1 || sh.Radius != 2 {
+		t.Errorf("cell text shadow %+v", sh)
+	}
+
 	p.Press(homeList + ` >> role:button "Projects"`)
 	p.WaitFor(`role:group "Projects 的内容"`, wait)
 	if got := svc.ChildrenCalls(); got[len(got)-1] != 1 {
