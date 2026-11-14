@@ -1,0 +1,102 @@
+/* Design tokens of the approved 维护 design (1280x820, dark). Every colour, gradient, radius and font used by the design lives here; components reference these variables instead of literals. */
+:root {
+  color-scheme: dark;
+
+  /* ---- Typography ---- */
+  /* Inter (bundled, Latin only) first; CJK text falls through to the system's Chinese UI font: PingFang SC on macOS, Microsoft YaHei UI on Windows. */
+  --font-sans:
+    "Inter Variable", Inter, "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", system-ui, sans-serif;
+  --font-size-section: 11px;
+  --font-size-nav-footer: 13px;
+  --font-size-body: 13px;
+  --font-size-nav: 14px;
+  --font-size-card-title: 15px;
+  --font-size-run-button: 17px;
+  --font-size-title: 22px;
+  --font-size-stat: 26px;
+  --font-size-done: 46px;
+  --letter-spacing-section: 0.08em;
+  --letter-spacing-stat: -0.02em;
+
+  /* ---- Page background ---- */
+  --color-bg-deep: #1c0f26;
+  --page-background:
+    radial-gradient(900px 600px at 80% 0%, rgba(255, 200, 60, 0.42), transparent 60%),
+    radial-gradient(700px 600px at 10% 100%, rgba(214, 70, 120, 0.4), transparent 60%),
+    linear-gradient(160deg, #8a4a12 0%, #4a2238 45%, #1c0f26 100%);
+
+  /* ---- Text ---- */
+  --color-text: #ffffff;
+  --color-text-link-hover: #fff0c2;
+  --color-text-nav: rgba(255, 255, 255, 0.88);
+  --color-text-nav-footer: rgba(255, 255, 255, 0.8);
+  --color-text-overlay-sub: rgba(255, 255, 255, 0.78);
+  --color-text-secondary: rgba(255, 255, 255, 0.75);
+  --color-text-muted: rgba(255, 255, 255, 0.72);
+  --color-text-section: rgba(255, 255, 255, 0.55);
+
+  /* ---- Accent (维护 amber) ---- */
+  --color-accent: #f5a623;
+  --color-accent-bright: #ffd23f;
+  --color-warning: #ffd27a;
+  --gradient-accent: linear-gradient(135deg, #ffe066, #f5a623);
+  --shadow-accent: rgba(245, 166, 35, 0.55);
+  --shadow-accent-soft: rgba(245, 166, 35, 0.45);
+
+  /* ---- Surfaces and borders ---- */
+  --surface-sidebar: rgba(255, 255, 255, 0.05);
+  --surface-nav-active: rgba(255, 255, 255, 0.14);
+  --surface-card: rgba(255, 255, 255, 0.09);
+  --surface-card-muted: rgba(255, 255, 255, 0.05);
+  --surface-banner: rgba(0, 0, 0, 0.22);
+  --surface-banner-icon: rgba(255, 210, 120, 0.18);
+  --surface-button-ghost: rgba(255, 255, 255, 0.14);
+  --surface-dialog: rgba(255, 255, 255, 0.1);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-card: rgba(255, 255, 255, 0.14);
+  --border-dialog: rgba(255, 255, 255, 0.18);
+  --border-banner: rgba(255, 210, 120, 0.35);
+  --border-card-hint: rgba(255, 210, 120, 0.5);
+
+  /* ---- Switch ---- */
+  --switch-on: var(--color-accent);
+  --switch-off: rgba(255, 255, 255, 0.22);
+  --switch-thumb: #ffffff;
+
+  /* ---- Run button and overlays ---- */
+  --run-button-background: radial-gradient(circle at 35% 30%, #fff6c2 0%, #ffd23f 45%, #e59a0b 100%);
+  --run-button-text: #3a2600;
+  --run-button-shadow:
+    0 0 0 8px rgba(255, 255, 255, 0.07), 0 0 0 18px rgba(255, 255, 255, 0.035),
+    0 16px 40px var(--shadow-accent);
+  --overlay-scrim: rgba(10, 6, 20, 0.45);
+  --overlay-blur: 16px;
+  --overlay-spinner-track: rgba(255, 255, 255, 0.15);
+  --overlay-spinner: var(--color-accent-bright);
+  --shadow-dialog: 0 30px 80px rgba(0, 0, 0, 0.35);
+  --button-light-background: #ffffff;
+  --button-light-text: #1a1030;
+
+  /* ---- Icon tile gradients (sidebar and cards) ---- */
+  --gradient-violet: linear-gradient(135deg, #c08bff, #7a3cff);
+  --gradient-green: linear-gradient(135deg, #4be3a0, #13a86b);
+  --gradient-orange: linear-gradient(135deg, #ffb25c, #ff6b2c);
+  --gradient-pink: linear-gradient(135deg, #ff8fc8, #e63e8c);
+  --gradient-blue: linear-gradient(135deg, #6cc4ff, #2f6bff);
+  --gradient-cyan: linear-gradient(135deg, #5cf0e6, #10a3c4);
+  --gradient-amber: var(--gradient-accent);
+  --gradient-red: linear-gradient(135deg, #ff8a80, #f0435a);
+
+  /* ---- Radii ---- */
+  --radius-nav-icon: 8px;
+  --radius-nav-item: 10px;
+  --radius-card-icon: 12px;
+  --radius-header-icon: 14px;
+  --radius-card: 20px;
+  --radius-dialog: 28px;
+  --radius-pill: 999px;
+
+  /* ---- Layout ---- */
+  --sidebar-width: 228px;
+  --main-min-width: 560px;
+}

@@ -1,0 +1,12 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # Closing a handle that was only read or queried has no error the caller could act on; the same rule as the std-error-handling preset below, for the Windows handle APIs it does not name.
+      exclude-functions:
+        - golang.org/x/sys/windows.CloseHandle
+        - golang.org/x/sys/windows.CloseServiceHandle
+  exclusions:
+    presets:
+      - std-error-handling
