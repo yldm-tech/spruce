@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/yldm-tech/spruce/internal/engine/execx"
@@ -46,16 +45,24 @@ func mustWrite(t *testing.T, path string) {
 	}
 }
 
-func onKickstart(f *execxtest.Fake, label string) *execxtest.Expectation {
-	return f.On(pathLaunchctl, "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+label)
+func onKillall(f *execxtest.Fake, name string) *execxtest.Expectation {
+	return f.On(pathKillall, killallArgs(name)...)
+}
+
+// killallArgs is how runIcons ends each process: iconservicesagent ignores SIGTERM, so it gets SIGKILL.
+func killallArgs(name string) []string {
+	if name == iconServicesAgentProcess {
+		return []string{"-KILL", name}
+	}
+	return []string{name}
 }
 
 func TestIconsClearsUserCachesAndRestartsAgents(t *testing.T) {
 	cacheDir, outside := iconCacheFixture(t)
 	f := execxtest.New()
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
-	onKickstart(f, iconServicesAgentLabel)
-	onKickstart(f, dockAgentLabel)
+	onKillall(f, iconServicesAgentProcess)
+	onKillall(f, dockProcess)
 
 	res := runIcons(t.Context(), macEnv(f))
 	assertOutcome(t, res, taskresult.Applied, "图标缓存")
@@ -75,9 +82,9 @@ func TestIconsClearsUserCachesAndRestartsAgents(t *testing.T) {
 			t.Errorf("%s was removed: %v", keep, err)
 		}
 	}
-	f.AssertCalled(t, pathLaunchctl, "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+iconServicesAgentLabel)
-	f.AssertCalled(t, pathLaunchctl, "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+dockAgentLabel)
-	f.AssertNotCalled(t, pathKillall)
+	f.AssertCalled(t, pathKillall, killallArgs(iconServicesAgentProcess)...)
+	f.AssertCalled(t, pathKillall, killallArgs(dockProcess)...)
+	f.AssertNotCalled(t, pathLaunchctl)
 }
 
 func TestIconsIsIdempotentWithoutCaches(t *testing.T) {
@@ -85,8 +92,8 @@ func TestIconsIsIdempotentWithoutCaches(t *testing.T) {
 	mustMkdir(t, cacheDir)
 	f := execxtest.New()
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
-	onKickstart(f, iconServicesAgentLabel)
-	onKickstart(f, dockAgentLabel)
+	onKillall(f, iconServicesAgentProcess)
+	onKillall(f, dockProcess)
 	assertOutcome(t, runIcons(t.Context(), macEnv(f)), taskresult.Applied)
 }
 
@@ -94,12 +101,26 @@ func TestIconsRestartFailureAsksForLogout(t *testing.T) {
 	cacheDir, _ := iconCacheFixture(t)
 	f := execxtest.New()
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
-	onKickstart(f, iconServicesAgentLabel).Return("", 1)
-	onKickstart(f, dockAgentLabel)
+	onKillall(f, iconServicesAgentProcess)
+	onKillall(f, dockProcess).Return("", 2)
 	res := runIcons(t.Context(), macEnv(f))
 	assertOutcome(t, res, taskresult.Applied, "注销并重新登录后生效")
 	if !res.Partial {
 		t.Errorf("result %+v, want partial so the done card shows the logout step", res)
+	}
+}
+
+// An agent that is not running makes killall exit 1; that is not a failure, the agent starts from the cleared cache when it is next needed.
+func TestIconsAgentNotRunningIsFine(t *testing.T) {
+	cacheDir, _ := iconCacheFixture(t)
+	f := execxtest.New()
+	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
+	onKillall(f, iconServicesAgentProcess).Return("", 1)
+	onKillall(f, dockProcess)
+	res := runIcons(t.Context(), macEnv(f))
+	assertOutcome(t, res, taskresult.Applied, "已重建图标缓存")
+	if res.Partial {
+		t.Errorf("result %+v, want a full success", res)
 	}
 }
 
@@ -108,7 +129,7 @@ func TestIconsCancelledAfterClearingReportsTheChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	f := execxtest.New()
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
-	onKickstart(f, iconServicesAgentLabel).Do(func(context.Context, execx.Command) (execx.Output, error) {
+	onKillall(f, iconServicesAgentProcess).Do(func(context.Context, execx.Command) (execx.Output, error) {
 		cancel()
 		return execx.Output{ExitCode: -1}, context.Canceled
 	})
@@ -120,7 +141,7 @@ func TestIconsCancelledAfterClearingReportsTheChange(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(cacheDir, iconServicesCacheName)); len(entries) != 0 {
 		t.Errorf("cache entries left: %v", entries)
 	}
-	if f.Called(pathLaunchctl, "kickstart", "-k", "gui/"+strconv.Itoa(os.Getuid())+"/"+dockAgentLabel) {
+	if f.Called(pathKillall, killallArgs(dockProcess)...) {
 		t.Error("restarted the Dock after the cancel")
 	}
 }
@@ -131,7 +152,7 @@ func TestIconsCancelledWithNothingRemovedIsInterrupted(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	f := execxtest.New()
 	f.On(pathGetconf, "DARWIN_USER_CACHE_DIR").Return(cacheDir+"/\n", 0)
-	onKickstart(f, iconServicesAgentLabel).Do(func(context.Context, execx.Command) (execx.Output, error) {
+	onKillall(f, iconServicesAgentProcess).Do(func(context.Context, execx.Command) (execx.Output, error) {
 		cancel()
 		return execx.Output{ExitCode: -1}, context.Canceled
 	})

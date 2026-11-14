@@ -1,0 +1,9 @@
+# Spruce's build configuration for the nsgo tool (go tool nsgo dev / build / test).
+name: Spruce
+id: ai.yldm.spruce
+version: 0.1.0
+appearance: dark
+build:
+  output: build
+  targets: [macos_arm64, macos_x64, windows_x64, windows_arm64]
+# Release signing is not set up yet: without sign.identity nsgo build signs the macOS app ad hoc, and Windows executables and installers are not signed (nsgo has no Authenticode step). For a release, set sign.identity to the Developer ID Application identity and sign.notarize to a notarytool keychain profile (or pass -sign and -notarize to nsgo build), and sign the Windows exe, Uninstall.exe (through !uninstfinalize in the .nsi) and the setup.exe with signtool in the release job.

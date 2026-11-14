@@ -1,0 +1,16 @@
+// Package devjunk is the engine of the 开发者垃圾 page: the caches of developer tools (Xcode, Homebrew, npm, Go, Cargo, Gradle, JetBrains …) and the build output inside the user's projects (node_modules, target, build …). Cleaner implements cleanup.Scanner; main.go registers it with services.RegisterCleaner under services.CleanerDevJunk.
+//
+// # Tool caches
+//
+// catalog lists, per platform, the cache folders of every tool this page knows (tools.go). Paths come from the environment (LOCALAPPDATA, APPDATA, CARGO_HOME, GRADLE_USER_HOME …) and, where the tool can say where its cache is (go env, pnpm store path, brew --cache), from the tool itself; locate runs those queries and finds the tools' binaries on PATH or in their usual install folders (a GUI app on macOS starts with a bare PATH). Both take the platform and the environment as values, so the Windows catalog is tested on macOS. On macOS the folders it reads under ~/Library/Caches are exactly those internal/engine/devcaches names, which 系统垃圾 leaves out of its 应用缓存 (a test checks both directions).
+//
+// A tool is offered only when its folder exists and holds something. When the tool has its own clean command and its binary is found (brew cleanup, npm cache clean, go clean, pip cache purge, pnpm store prune, xcrun simctl delete unavailable), the tool is one item cleaned by running that command; otherwise the items are the entries of its cache folders, deleted with fsx.SafeRemove with the cache folder as the allowed root. A command is not used when one of the user's exclusions lies inside its folder, since the command would delete it too; the tool then falls back to deleting entries one by one, or is not offered when it has no such fallback.
+//
+// # Project build artifacts
+//
+// projects.go walks settings Cleanup.DevProjectRoots to depth 6 with a bounded pool of goroutines, never following symlinks, never descending into hidden folders, node_modules, virtualenvs or a build folder once found, and skipping the user's exclusions. A folder is build output only next to its project's marker (node_modules next to package.json, target next to Cargo.toml or pom.xml …; Python caches anywhere inside a Python project). Each item's time is the project's last activity (its top-level files and .git/HEAD and .git/index); items of projects active within Cleanup.DevArtifactMinAgeDays are listed but not checked. Build output is deleted for good with the project folder as the only allowed root; where fsx refuses permanent deletion (a project under Documents or Desktop) it goes to the Trash instead, in a category of its own so the page can say so before cleaning.
+//
+// # Cleaning
+//
+// File categories go through a cleanup.Executor (which deletes only what the last scan returned and re-checks each item); command categories are run by the Cleaner itself, one after the other, each with a timeout and never cut off half way when the user stops the clean: stopping takes effect before the next command. Items that start checked carry cleanup.Item.Selected (a category may start checked in part, such as every Xcode device support version but the newest), and a category cleaned by a command names it in cleanup.Category.Command for the page's confirmation.
+package devjunk

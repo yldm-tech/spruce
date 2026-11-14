@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 )
 
 // Open returns a Store keeping its runs in the file at path (JSON Lines, one Run per line, appended). Open performs no I/O: the directory and the file are created on the first Append, and a missing file lists as empty.
@@ -31,36 +32,47 @@ const (
 type fileStore struct {
 	path string
 	log  *slog.Logger
+	watchers
 
 	mu sync.Mutex
 	// count is the number of valid runs in the file, or -1 until the first Append reads it.
 	count int
 }
 
-// Append writes run as one line with a single write, fsyncs it, and trims the file to the newest MaxRuns runs once it holds more.
+var _ Watcher = (*fileStore)(nil)
+
+// Append writes run as one line with a single write, fsyncs it, and trims the file to the newest MaxRuns runs once it holds more. Subscribers hear of run once its line is written, even when trimming then fails.
 func (s *fileStore) Append(run Run) error {
 	line, err := json.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("history: encode run %q: %w", run.ID, err)
 	}
+	written, err := s.appendRun(line)
+	if written {
+		s.notify(run)
+	}
+	return err
+}
 
+// appendRun writes line and trims the file; written reports whether the line reached the file.
+func (s *fileStore) appendRun(line []byte) (written bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.count < 0 {
 		runs, err := s.readLocked()
 		if err != nil {
-			return err
+			return false, err
 		}
 		s.count = len(runs)
 	}
 	if err := s.appendLocked(line); err != nil {
-		return err
+		return false, err
 	}
 	s.count++
 	if s.count > MaxRuns {
-		return s.trimLocked()
+		return true, s.trimLocked()
 	}
-	return nil
+	return true, nil
 }
 
 func (s *fileStore) appendLocked(line []byte) error {
@@ -99,7 +111,7 @@ func (s *fileStore) appendLocked(line []byte) error {
 	return f.Close()
 }
 
-// trimLocked rewrites the file with the newest MaxRuns valid runs through a temporary file in the same directory and a rename, so a crash leaves either the old or the new file.
+// trimLocked rewrites the file with the newest MaxRuns valid runs.
 func (s *fileStore) trimLocked() error {
 	runs, err := s.readLocked()
 	if err != nil {
@@ -108,7 +120,44 @@ func (s *fileStore) trimLocked() error {
 	if len(runs) > MaxRuns {
 		runs = runs[len(runs)-MaxRuns:]
 	}
+	return s.rewriteLocked(runs)
+}
 
+// Prune drops the runs that started before cutoff, rewriting the file only when there are any.
+func (s *fileStore) Prune(cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runs, err := s.readLocked()
+	if err != nil {
+		return 0, err
+	}
+	kept := slices.DeleteFunc(slices.Clone(runs), func(r Run) bool { return r.StartedAt.Before(cutoff) })
+	dropped := len(runs) - len(kept)
+	if dropped == 0 {
+		return 0, nil
+	}
+	if len(kept) > MaxRuns {
+		kept = kept[len(kept)-MaxRuns:]
+	}
+	if err := s.rewriteLocked(kept); err != nil {
+		return 0, err
+	}
+	return dropped, nil
+}
+
+// Clear removes the file; a missing file is already clear.
+func (s *fileStore) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("history: clear: %w", err)
+	}
+	s.count = 0
+	return nil
+}
+
+// rewriteLocked replaces the file with runs (oldest first) through a temporary file in the same directory and a rename, so a crash leaves either the old or the new file.
+func (s *fileStore) rewriteLocked(runs []Run) error {
 	var buf bytes.Buffer
 	for _, r := range runs {
 		line, err := json.Marshal(r)

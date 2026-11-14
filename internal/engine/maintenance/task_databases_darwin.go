@@ -24,7 +24,7 @@ import (
 
 // The "databases" task runs PRAGMA integrity_check and then VACUUM on the SQLite databases of Safari, Mail and Messages, through Apple's /usr/bin/sqlite3.
 //
-// Why /usr/bin/sqlite3 and not a Go driver: these files are written by the SQLite library that ships with macOS, an Apple build with Apple's compile options and file-format handling (WAL, the -shm index, locking with the apps' background agents). The command-line shell of the same OS build links that same library, so integrity_check and VACUUM see the files exactly as Safari, Mail and Messages do. A pure-Go driver (modernc.org/sqlite) is a separate translation of upstream SQLite with its own version and options, and would add a large dependency for three statements; mygo's sqlite plugin lives under mygo, which the engine must not import. Every invocation passes -init /dev/null so a ~/.sqliterc cannot inject commands, and -bail so the first error stops it.
+// Why /usr/bin/sqlite3 and not a Go driver: these files are written by the SQLite library that ships with macOS, an Apple build with Apple's compile options and file-format handling (WAL, the -shm index, locking with the apps' background agents). The command-line shell of the same OS build links that same library, so integrity_check and VACUUM see the files exactly as Safari, Mail and Messages do. A pure-Go driver (modernc.org/sqlite) is a separate translation of upstream SQLite with its own version and options, and would add a large dependency for three statements. Every invocation passes -init /dev/null so a ~/.sqliterc cannot inject commands, and -bail so the first error stops it.
 
 // sqliteHeader is the first 16 bytes of every SQLite 3 database file.
 var sqliteHeader = []byte("SQLite format 3\x00")

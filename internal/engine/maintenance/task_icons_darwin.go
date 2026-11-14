@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,8 +21,9 @@ const (
 	// dockIconCacheName is the Dock's own icon cache file in the same directory.
 	dockIconCacheName = "com.apple.dock.iconcache"
 
-	iconServicesAgentLabel = "com.apple.iconservices.iconservicesagent"
-	dockAgentLabel         = "com.apple.Dock.agent"
+	// The processes restarted after the caches are cleared. Both are per-user launchd agents that launchd starts again; `launchctl kickstart -k` on their labels is refused with "Operation not permitted while System Integrity Protection is engaged" (exit 150), so they are ended with killall, which only signals the current user's own processes. iconservicesagent ignores SIGTERM (checked on macOS 27: the process survives it), so it gets SIGKILL and launchd starts it again on the next icon request; the Dock quits cleanly on the default SIGTERM and launchd relaunches it at once.
+	iconServicesAgentProcess = "iconservicesagent"
+	dockProcess              = "Dock"
 
 	iconsCommandTimeout = 15 * time.Second
 )
@@ -31,7 +31,7 @@ const (
 // iconsTask rebuilds the current user's icon caches, which is the least disruptive refresh that fixes wrong or blank icons in the Dock and Finder:
 //
 //  1. Remove the contents of the per-user iconservices cache and the Dock's icon cache file, both in the user's own cache directory (no administrator rights needed).
-//  2. Restart the user's iconservicesagent and the Dock through launchd (launchctl kickstart -k gui/<uid>/<label>), so they rebuild from scratch. Restarting the Dock only redraws it; open windows and Spaces stay as they are.
+//  2. End the user's iconservicesagent and Dock with killall; launchd starts them again and they rebuild from scratch. Restarting the Dock only redraws it; open windows and Spaces stay as they are.
 //
 // Deliberately not done:
 //
@@ -69,12 +69,17 @@ func runIcons(ctx context.Context, env Env) taskresult.Result {
 	}
 	env.Log.Debug("icon caches cleared", "dir", dir, "removed", removed)
 
-	uid := strconv.Itoa(os.Getuid())
 	detail := fmt.Sprintf("removed %d cache entries in %s", removed, dir)
 	var restartErrs []string
-	for _, label := range []string{iconServicesAgentLabel, dockAgentLabel} {
-		cmd := execx.Command{Name: pathLaunchctl, Args: []string{"kickstart", "-k", "gui/" + uid + "/" + label}, Timeout: iconsCommandTimeout}
+	for _, args := range [][]string{{"-KILL", iconServicesAgentProcess}, {dockProcess}} {
+		name := args[len(args)-1]
+		cmd := execx.Command{Name: pathKillall, Args: args, Timeout: iconsCommandTimeout}
 		if _, err := env.Runner.Run(ctx, cmd); err != nil {
+			// killall exits 1 when the user has no such process: an agent that is not running has nothing in memory to refresh and starts from the cleared cache on demand.
+			var exitErr *execx.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode == 1 && ctx.Err() == nil {
+				continue
+			}
 			if ctx.Err() != nil {
 				if removed == 0 {
 					return interrupted()
@@ -84,7 +89,7 @@ func runIcons(ctx context.Context, env Env) taskresult.Result {
 					Outcome: taskresult.Applied,
 					Partial: true,
 					Message: "已清除图标缓存，维护中断，未能刷新程序坞；注销并重新登录后生效",
-					Detail:  joinDetail(detail, "interrupted before restarting "+label+": "+err.Error()),
+					Detail:  joinDetail(detail, "interrupted before restarting "+name+": "+err.Error()),
 				}
 			}
 			restartErrs = append(restartErrs, err.Error())

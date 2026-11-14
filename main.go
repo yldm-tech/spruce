@@ -1,6 +1,6 @@
 // Command spruce is the Spruce desktop app: a disk cleaner and system maintenance tool for macOS and Windows.
 //
-// main does three things, in this order: it serves the elevated child when started with elevate.Flag (before any mygo code runs), it wires the engine into the bound services, and it opens the window once the app is ready.
+// main does three things, in this order: it serves the elevated child when started with elevate.Flag (before any NSGo code runs), it takes the single-instance lock in the data folder, and it wires the engine into the UI (wire) and runs it with nsgo.Run.
 package main
 
 import (
@@ -11,18 +11,21 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"time"
 
-	"github.com/egoist/mygo"
+	"github.com/nsgo-dev/nsgo"
+	"github.com/nsgo-dev/nsgo/core"
+
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
-	"github.com/yldm-tech/spruce/internal/engine/health"
-	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
-	"github.com/yldm-tech/spruce/internal/services"
+	"github.com/yldm-tech/spruce/internal/host/datadir"
+	"github.com/yldm-tech/spruce/internal/host/instance"
+	"github.com/yldm-tech/spruce/internal/ui/shell"
 )
 
-// historyFile is the name of the history file inside the app's user data directory.
-const historyFile = "history.jsonl"
+// backgroundGrace is how long main waits for the background work to stop after the app quits.
+const backgroundGrace = 2 * time.Second
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -43,10 +46,6 @@ func main() {
 		os.Exit(code)
 	}
 
-	if !mygo.App.RequestSingleInstanceLock() {
-		return // the running instance comes to the front
-	}
-
 	exe, err := os.Executable()
 	if err != nil {
 		log.Fatal(err)
@@ -58,81 +57,65 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	dataDir, err := mygo.App.Path(mygo.PathUserData)
+	dataDir, err := datadir.Dir()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	permissions := services.Permissions{}
-	env := maintenance.Env{Runner: runner, Permissions: permissions, HomeDir: home, Log: logger}
-	svc, err := maintenance.NewService(tasks, env, elevate.New(exe, elevate.NewLauncher(runner)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	store, err := history.Open(filepath.Join(dataDir, historyFile))
-	if err != nil {
-		log.Fatal(err)
-	}
-	monitor, err := health.New(health.DefaultConfig(), health.NewProcessSource())
-	if err != nil {
-		log.Fatal(err)
+	inst, first, err := instance.Acquire(dataDir)
+	switch {
+	case err != nil:
+		logger.Warn("single instance: running without the lock", "err", err)
+	case !first:
+		return // the running copy was told to come to the front
 	}
 
-	mygo.Bind(services.NewMaintenance(svc, store, logger))
-	mygo.Bind(services.NewHealth(monitor, func(ctx context.Context) error { return health.OpenSystemMonitor(ctx, runner) }))
-	mygo.Bind(services.NewHistory(store))
-	mygo.Bind(permissions)
+	deps, err := wire(env{home: home, dataDir: dataDir, exe: exe, runner: runner, tasks: tasks, log: logger})
+	if err != nil {
+		log.Fatal(err)
+	}
+	deps.Instance = inst
+	deps.SetMainView = nsgo.SetMainView
+	var background sync.WaitGroup
+	deps.Background = tracked(&background, deps.Background)
 
-	var (
-		mu  sync.Mutex
-		win *mygo.Window
-	)
-	openWindow := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if win != nil {
-			win.Restore()
-			win.Focus()
-			return
+	opts := []nsgo.Option{
+		nsgo.WindowSize(1280, 820),
+		nsgo.WindowConstraints(core.WindowConstraints{MinWidth: 960, MinHeight: 680}),
+		nsgo.Fonts("fonts/Inter-Regular.ttf", "fonts/Inter-Medium.ttf", "fonts/Inter-SemiBold.ttf", "fonts/Inter-Bold.ttf"),
+	}
+	if frame, ok := shell.LoadFrame(dataDir); ok {
+		opts = append(opts, nsgo.WindowFrame(frame))
+	}
+	nsgo.Run(shell.App(deps), opts...)
+
+	// The app's OnQuit cancelled the background work; give it a moment to stop before the lock goes.
+	done := make(chan struct{})
+	go func() {
+		background.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(backgroundGrace):
+		logger.Warn("background work did not stop in time")
+	}
+	if inst != nil {
+		if err := inst.Close(); err != nil {
+			logger.Warn("release the single-instance lock", "err", err)
 		}
-		win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Spruce",
-			Width:     1280,
-			Height:    820,
-			MinWidth:  960,
-			MinHeight: 680,
-			// The page's darkest background (--color-bg-deep in src/styles/tokens.css), so the window never flashes white while the page loads.
-			BackgroundColor: "#1C0F26",
-			// The sidebar runs to the top of the window under the traffic lights (macOS) and the caption buttons sit over the page (Windows).
-			TitleBarStyle: mygo.TitleBarHidden,
-			StateKey:      "main",
-			URL:           "/",
-		})
-		win.OnClosed(func() {
-			mu.Lock()
-			win = nil
-			mu.Unlock()
-		})
 	}
-	mygo.App.OnSecondInstance(func([]string, string) { openWindow() })
-	mygo.App.OnActivate(func(hasVisibleWindows bool) {
-		if !hasVisibleWindows {
-			openWindow()
-		}
-	})
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	mygo.App.OnQuit(cancel)
-	mygo.App.WhenReady(func() {
-		go func() {
-			if err := monitor.Run(ctx); err != nil && ctx.Err() == nil {
-				logger.Error("health monitor stopped", "err", err)
-			}
-		}()
-		go services.BroadcastAlerts(ctx, monitor)
-		openWindow()
-	})
-	if err := mygo.App.Run(); err != nil {
-		log.Fatal(err)
+// tracked wraps each of work so wg counts it while it runs.
+func tracked(wg *sync.WaitGroup, work []func(ctx context.Context)) []func(ctx context.Context) {
+	out := make([]func(ctx context.Context), len(work))
+	for i, w := range work {
+		wg.Add(1)
+		out[i] = func(ctx context.Context) {
+			defer wg.Done()
+			w(ctx)
+		}
 	}
+	return out
 }
