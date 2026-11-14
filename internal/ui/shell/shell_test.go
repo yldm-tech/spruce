@@ -22,14 +22,14 @@ import (
 
 const wait = 5 * time.Second
 
-func startShell(t *testing.T, fakes *storefake.Services, start nav.Route) (*nsgotest.App, *store.Stores) {
+func startShell(t *testing.T, fakes *storefake.Services, start nav.Route) (*nsgotest.App, *showing) {
 	t.Helper()
 	d := shell.Deps{Stores: fakes.Deps(), Start: start, SystemJunk: systemjunk.Deps{Cleanup: &cleanflowfake.Cleaner{}, Files: &cleanflowfake.Files{}},
 		History: history.Deps{Catalog: historyfake.Catalog(maintenancefake.MacCatalog())}}
-	var stores *store.Stores
+	stores := &showing{}
 	a := nsgotest.Start(t, core.AppRoot(func(cx *core.Scope) {
 		shell.App(d)(cx)
-		stores = store.Use(cx)
+		stores.Stores, stores.app = store.Use(cx), cx
 	}), nsgotest.Size(1280, 820))
 	a.WaitFor("id:sidebar", wait)
 	return a, stores
@@ -87,9 +87,7 @@ func TestToastUndoAndView(t *testing.T) {
 	}
 	fakes.Overview = ov
 	a, stores := startShell(t, fakes, "")
-	a.Post(func() {
-		stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
-	})
+	stores.show(store.Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
 	a.WaitFor("id:toast", wait)
 	if got := a.Find("id:toast-text").Text; got != "已移到废纸篓 3.1 GB" {
 		t.Errorf("toast %q", got)
@@ -113,9 +111,7 @@ func TestToastUndoAndView(t *testing.T) {
 
 func TestToastWithoutAController(t *testing.T) {
 	a, stores := startShell(t, storefake.New(t.TempDir()), "")
-	a.Post(func() {
-		stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
-	})
+	stores.show(store.Toast{Text: "已移到废纸篓 1 GB", UndoRun: "run-1", Duration: 10 * time.Second})
 	a.WaitFor("id:toast-undo", wait)
 	a.Press("id:toast-undo")
 	a.WaitFor("id:toast >> text:概览还没有接入", wait)
@@ -123,3 +119,12 @@ func TestToastWithoutAController(t *testing.T) {
 		t.Error("the error toast offers 撤销")
 	}
 }
+
+// showing is the stores with the app's scope, to change them on the engine goroutine as a page would.
+type showing struct {
+	*store.Stores
+	app *core.Scope
+}
+
+// show shows x as the toast.
+func (s *showing) show(x store.Toast) { s.app.Post(func() { s.Toasts.Show(x) }) }

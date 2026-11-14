@@ -27,7 +27,7 @@ func (h PageHeader) Render(cx *core.Scope) core.Node {
 		return core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, JustifyContent: core.JustifySpaceBetween,
 			Gap: 12, Padding: core.Edges{Right: desktop.TitleBar(cx).Right}}
 	}
-	return core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, Style: core.Style{Gap: 6, Padding: core.Edges{Top: 12}},
+	return core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, Style: core.Style{Padding: core.Edges{Top: 4}},
 		Children: []core.Node{back, row}}
 }
 

@@ -23,6 +23,14 @@ type Toast struct {
 	Duration time.Duration
 }
 
+// toastBase is the toast's opaque ground: unlike a dialog it has no scrim behind it, so the dialogs' translucent surface alone would let the page show through its text.
+var toastBase = core.RGBA(0x2a1f33, 0.97)
+
+// toastSheen is SurfaceDialog over the ground, the dialogs' tint.
+func toastSheen() core.Gradient {
+	return core.LinearGradient(180, SurfaceDialog, SurfaceDialog)
+}
+
 // Render implements core.Node.
 func (t Toast) Render(cx *core.Scope) core.Node {
 	hovered := false
@@ -73,8 +81,7 @@ func (t Toast) Render(cx *core.Scope) core.Node {
 		OnFocusIn:    func() { focused.Set(true); sync() },
 		OnFocusOut:   func() { focused.Set(false); sync() },
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, MinHeight: core.Pt(44), MaxWidth: core.Pt(520),
-			Padding: core.Edges{Left: 18, Right: 8}, CornerRadius: RadiusPill, Background: SurfaceDialog,
-			Borders: core.Edges{Top: 1, Right: 1, Bottom: 1, Left: 1}, BorderColor: BorderDialog,
-			Shadows: []core.BoxShadow{shadow(12, 32, ShadowDialog)}, BackdropFilters: []core.Filter{core.Blur(BlurOverlay)}},
+			Padding: core.Edges{Left: 18, Right: 8}, CornerRadius: RadiusPill, Background: toastBase, Gradients: []core.Gradient{toastSheen()},
+			BorderWidth: 1, BorderColor: BorderDialog, Shadows: []core.BoxShadow{shadow(12, 32, ShadowDialog)}},
 		Children: children}
 }
