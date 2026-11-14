@@ -2,7 +2,6 @@ import { render, screen } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DevJunkPage } from "../dev-junk/DevJunkPage";
 import { HealthPage } from "../health/HealthPage";
 import { HistoryPage } from "../history/HistoryPage";
 import { InstallersPage } from "../installers/InstallersPage";
@@ -16,7 +15,6 @@ import { PAGES, type PageId } from "./pages";
 const SHELLS: [PageId, ComponentType][] = [
   ["smart-scan", SmartScanPage],
   ["system-junk", SystemJunkPage],
-  ["dev-junk", DevJunkPage],
   ["installers", InstallersPage],
   ["uninstall", UninstallPage],
   ["space", SpacePage],
