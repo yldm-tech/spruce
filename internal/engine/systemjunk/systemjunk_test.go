@@ -156,6 +156,8 @@ func darwinHome(t *testing.T, home string) {
 		"Library/Caches/CloudKit/z",
 		"Library/Caches/Homebrew/z",
 		"Library/Caches/go-build/z",
+		"Library/Caches/gopls/z",
+		"Library/Caches/Mozilla.sccache/z",
 		"Library/Caches/ai.yldm.spruce/z",
 		"Library/Caches/.hidden",
 		"Library/Caches/Google/Chrome/Default/Cache/f",

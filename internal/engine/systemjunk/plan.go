@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
+	"github.com/yldm-tech/spruce/internal/engine/devcaches"
 )
 
 // appBundleID is Spruce's own bundle identifier (mygo.config.ts); its caches are in use while the scan runs.
@@ -23,12 +24,6 @@ const (
 
 // incompleteExts are the extensions browsers give a download in progress: Chrome and Edge .crdownload, Firefox .part, Safari .download (a folder), and .partial of Edge Legacy and some download managers.
 var incompleteExts = []string{".crdownload", ".part", ".download", ".partial"}
-
-// devCaches are the children of ~/Library/Caches that the 开发者垃圾 page offers, so this page leaves them out (lower case).
-var devCaches = []string{
-	"homebrew", "pip", "go-build", "yarn", "pnpm", "ms-playwright", "node-gyp", "com.apple.dt.xcode", "jetbrains",
-	"cocoapods", "typescript", "electron", "electron-builder", "deno", "bazel", "cypress", "org.swift.swiftpm", "com.github.xcodes",
-}
 
 // appleDenylist are children of ~/Library/Caches that are not offered although they are caches, because deleting them breaks something, costs the user work, or is undone at once (lower case):
 //
@@ -243,7 +238,7 @@ func darwinSpecs(env Env) []spec {
 			var out []candidate
 			for _, e := range sc.entries(caches, false) {
 				lower := strings.ToLower(e.name)
-				if strings.HasPrefix(e.name, ".") || browserOwned[lower] || slices.Contains(devCaches, lower) || appleDenied(lower) || ownCache(lower) {
+				if strings.HasPrefix(e.name, ".") || browserOwned[lower] || devcaches.Owned(e.name) || appleDenied(lower) || ownCache(lower) {
 					continue
 				}
 				c := candidate{path: e.path, info: e.info}

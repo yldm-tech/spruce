@@ -244,8 +244,8 @@ func catalog(e env, l located) []*tool {
 		})
 		add(&tool{
 			id: "xcode-cache", title: "Xcode 缓存", icon: "xcode", selected: true,
-			description: "Xcode 自己的缓存，会自动重新生成",
-			dirs:        dirs(filepath.Join(e.caches(), "com.apple.dt.Xcode")),
+			description: "Xcode 和 xcodebuild 自己的缓存，会自动重新生成",
+			dirs:        dirs(filepath.Join(e.caches(), "com.apple.dt.Xcode"), filepath.Join(e.caches(), "com.apple.dt.xcodebuild")),
 		})
 		add(&tool{
 			id: "homebrew", title: "Homebrew 缓存", icon: "package", selected: true,
@@ -279,6 +279,11 @@ func catalog(e env, l located) []*tool {
 		command:            e.commandFor(l, "pnpm", "store", "prune"),
 	})
 	add(&tool{
+		id: "pnpm-cache", title: "pnpm 元数据缓存", icon: "node", selected: true,
+		description: "pnpm 下载的包信息，安装依赖时会重新获取",
+		dirs:        dirs(e.pick(filepath.Join(e.caches(), "pnpm"), filepath.Join(e.localAppData(), "pnpm-cache"))),
+	})
+	add(&tool{
 		id: "bun", title: "Bun 缓存", icon: "package", selected: true,
 		description: "Bun 下载的包，安装依赖时会重新下载",
 		dirs:        dirs(filepath.Join(e.profile(), ".bun", "install", "cache")),
@@ -290,9 +295,9 @@ func catalog(e env, l located) []*tool {
 	})
 	add(&tool{
 		id: "playwright", title: "Playwright 浏览器", icon: "browser",
-		description: "Playwright 下载的测试用浏览器",
+		description: "Playwright 和 playwright-go 下载的测试用浏览器",
 		warning:     "删除后要重新下载浏览器（npx playwright install）才能运行测试",
-		dirs:        dirs(e.pick(filepath.Join(e.caches(), "ms-playwright"), filepath.Join(e.localAppData(), "ms-playwright"))),
+		dirs:        dirs(e.userCache("ms-playwright"), e.userCache("ms-playwright-go")),
 	})
 	add(&tool{
 		id: "cypress", title: "Cypress 缓存", icon: "browser",
@@ -337,6 +342,12 @@ func catalog(e env, l located) []*tool {
 		command:            e.commandFor(l, "go", "clean", "-modcache"),
 	})
 
+	add(&tool{
+		id: "go-tools", title: "Go 工具缓存", icon: "build", selected: true,
+		description: "gopls、goimports、golangci-lint 和 staticcheck 的分析缓存，用到时会重新生成",
+		dirs:        dirs(e.userCache("gopls"), e.userCache("go"), e.userCache("goimports"), e.userCache("golangci-lint"), e.userCache("staticcheck")),
+	})
+
 	cargo := e.cargoHome()
 	add(&tool{
 		id: "cargo", title: "Cargo 缓存", icon: "package", selected: true,
@@ -346,6 +357,12 @@ func catalog(e env, l located) []*tool {
 			{path: filepath.Join(cargo, "registry", "src")},
 			{path: filepath.Join(cargo, "git", "checkouts"), off: true},
 		},
+	})
+
+	add(&tool{
+		id: "rust-tools", title: "Rust 工具缓存", icon: "build", selected: true,
+		description: "sccache 的编译缓存和 rust-analyzer 的缓存，用到时会重新生成",
+		dirs:        dirs(e.pick(filepath.Join(e.caches(), "Mozilla.sccache"), filepath.Join(e.localAppData(), "Mozilla", "sccache")), e.userCache("rust-analyzer")),
 	})
 
 	pipName := "pip3"
@@ -359,10 +376,21 @@ func catalog(e env, l located) []*tool {
 		dirs:               dirs(e.pick(filepath.Join(e.caches(), "pip"), filepath.Join(e.localAppData(), "pip", "Cache"))),
 		command:            e.commandFor(l, pipName, "cache", "purge"),
 	})
+	// uv keeps its cache in ~/.cache/uv on macOS; versions before 0.2 used ~/Library/Caches/uv.
 	add(&tool{
 		id: "uv", title: "uv 缓存", icon: "package", selected: true,
 		description: "uv 下载的 Python 包，安装时会重新下载",
-		dirs:        dirs(e.pick(filepath.Join(home, ".cache", "uv"), filepath.Join(e.localAppData(), "uv", "cache"))),
+		dirs:        dirs(e.pick(filepath.Join(home, ".cache", "uv"), filepath.Join(e.localAppData(), "uv", "cache")), e.pick(filepath.Join(e.caches(), "uv"), "")),
+	})
+	poetry := e.pick(filepath.Join(e.caches(), "pypoetry"), filepath.Join(e.localAppData(), "pypoetry", "Cache"))
+	add(&tool{
+		id: "poetry", title: "Poetry 缓存", icon: "package", selected: true,
+		description: "Poetry 下载的包和构建的 wheel，安装时会重新下载；项目的虚拟环境默认不选",
+		dirs: []cacheDir{
+			{path: filepath.Join(poetry, "cache")},
+			{path: filepath.Join(poetry, "artifacts")},
+			{path: filepath.Join(poetry, "virtualenvs"), off: true},
+		},
 	})
 
 	gradle := e.gradleHome()
@@ -427,6 +455,11 @@ func catalog(e env, l located) []*tool {
 			description: "Xcodes 应用的缓存，会自动重新生成",
 			dirs:        dirs(filepath.Join(e.caches(), "com.github.xcodes")),
 		})
+		add(&tool{
+			id: "mise", title: "mise 缓存", icon: "package", selected: true,
+			description: "mise 下载的工具安装包和插件缓存，需要时会重新下载",
+			dirs:        dirs(filepath.Join(e.caches(), "mise")),
+		})
 	}
 
 	if e.windows() {
@@ -444,6 +477,11 @@ func catalog(e env, l located) []*tool {
 		})
 	}
 	return ts
+}
+
+// userCache is a tool's folder in the user cache folder (Go's os.UserCacheDir): ~/Library/Caches on macOS, %LOCALAPPDATA% on Windows.
+func (e env) userCache(name string) string {
+	return filepath.Join(e.pick(e.caches(), e.localAppData()), name)
 }
 
 // pick returns mac on macOS and win on Windows.

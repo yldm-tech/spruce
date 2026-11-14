@@ -6,8 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/yldm-tech/spruce/internal/engine/devcaches"
 	"github.com/yldm-tech/spruce/internal/engine/execx/execxtest"
 )
 
@@ -88,6 +90,11 @@ func TestCatalogDarwin(t *testing.T) {
 		"swiftpm":            "/Users/u/Library/Caches/org.swift.swiftpm",
 		"vscode":             "/Users/u/Library/Application Support/Code/Cache",
 		"bazel":              "/Users/u/Library/Caches/bazel",
+		"pnpm-cache":         "/Users/u/Library/Caches/pnpm",
+		"go-tools":           "/Users/u/Library/Caches/gopls",
+		"rust-tools":         "/Users/u/Library/Caches/Mozilla.sccache",
+		"poetry":             "/Users/u/Library/Caches/pypoetry/cache",
+		"mise":               "/Users/u/Library/Caches/mise",
 	} {
 		if got := toolByID(t, ts, id).dirs[0].path; got != want {
 			t.Errorf("%s: dir %q, want %q", id, got, want)
@@ -136,6 +143,12 @@ func TestCatalogDarwin(t *testing.T) {
 	if len(cargo.dirs) != 3 || cargo.dirs[0].off || cargo.dirs[1].off || !cargo.dirs[2].off {
 		t.Errorf("cargo dirs = %+v, want git checkouts off", cargo.dirs)
 	}
+	if poetry := toolByID(t, ts, "poetry"); len(poetry.dirs) != 3 || poetry.dirs[0].off || poetry.dirs[1].off || !poetry.dirs[2].off || filepath.Base(poetry.dirs[2].path) != "virtualenvs" {
+		t.Errorf("poetry dirs = %+v, want the virtualenvs off", poetry.dirs)
+	}
+	if uv := toolByID(t, ts, "uv"); len(uv.dirs) != 2 || uv.dirs[1].path != "/Users/u/Library/Caches/uv" {
+		t.Errorf("uv dirs = %+v, want the old Library/Caches folder too", uv.dirs)
+	}
 
 	running := catalog(e, located{bins: map[string]string{}, vscodeRunning: true})
 	if v := toolByID(t, running, "vscode"); v.selected || v.warning == "" {
@@ -171,12 +184,16 @@ func TestCatalogWindows(t *testing.T) {
 		"vscode":         filepath.Join(roaming, "Code", "Cache"),
 		"nuget-cache":    filepath.Join(local, "NuGet", "v3-cache"),
 		"nuget-packages": filepath.Join(home, ".nuget", "packages"),
+		"pnpm-cache":     filepath.Join(local, "pnpm-cache"),
+		"go-tools":       filepath.Join(local, "gopls"),
+		"rust-tools":     filepath.Join(local, "Mozilla", "sccache"),
+		"poetry":         filepath.Join(local, "pypoetry", "Cache", "cache"),
 	} {
 		if got := toolByID(t, ts, id).dirs[0].path; got != want {
 			t.Errorf("%s: dir %q, want %q", id, got, want)
 		}
 	}
-	for _, id := range []string{"xcode-derived-data", "xcode-simulators", "homebrew", "cocoapods", "swiftpm", "bazel"} {
+	for _, id := range []string{"xcode-derived-data", "xcode-simulators", "homebrew", "cocoapods", "swiftpm", "bazel", "mise"} {
 		if hasTool(ts, id) {
 			t.Errorf("windows catalog has the macOS-only %s", id)
 		}
@@ -291,5 +308,35 @@ func TestCommandLabel(t *testing.T) {
 	ts := catalog(env{goos: "windows", home: `C:\u`, getenv: envOf(nil)}, located{bins: map[string]string{"npm": `C:\node\npm.cmd`}})
 	if got := commandLabel(*toolByID(t, ts, "npm").command); got != "npm cache clean --force" {
 		t.Errorf("label = %q", got)
+	}
+}
+
+// TestCatalogClaimsTheDevCaches checks the split of ~/Library/Caches with 系统垃圾 (internal/engine/devcaches): every folder of the macOS catalog there is named in devcaches, so 系统垃圾 does not offer it too, and every name in devcaches is offered here, so nothing falls between the two pages.
+func TestCatalogClaimsTheDevCaches(t *testing.T) {
+	home := "/Users/u"
+	caches := filepath.Join(home, "Library", "Caches")
+	e := env{goos: "darwin", home: home, getenv: envOf(nil)}
+	reached := map[string]bool{}
+	for _, l := range []located{{bins: map[string]string{}}, {bins: map[string]string{}, brewCache: filepath.Join(caches, "Homebrew"), goCache: filepath.Join(caches, "go-build")}} {
+		for _, tl := range catalog(e, l) {
+			for _, d := range tl.dirs {
+				rel, err := filepath.Rel(caches, d.path)
+				if err != nil || strings.HasPrefix(rel, "..") {
+					continue
+				}
+				name := strings.Split(rel, string(filepath.Separator))[0]
+				if !devcaches.Owned(name) {
+					t.Errorf("%s offers %s, which devcaches does not name: 系统垃圾 would offer it too", tl.id, d.path)
+				}
+				reached[strings.ToLower(name)] = true
+			}
+		}
+	}
+	// Tools that list their entries themselves, by the folder they read.
+	reached["jetbrains"] = true
+	for _, name := range devcaches.MacOS() {
+		if !reached[strings.ToLower(name)] {
+			t.Errorf("devcaches names %s but no tool offers it: neither page would", name)
+		}
 	}
 }

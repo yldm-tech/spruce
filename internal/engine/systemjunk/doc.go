@@ -4,7 +4,7 @@
 //
 // macOS (darwinSpecs):
 //
-//   - 应用缓存: each child of ~/Library/Caches, except Apple's account, iCloud, keychain and similar caches (appleDenylist), the developer tool caches 开发者垃圾 offers (devCaches), the browser caches below and Spruce's own. A cache whose app is running goes to 正在运行的应用的缓存, which starts unchecked. Deleted for good.
+//   - 应用缓存: each child of ~/Library/Caches, except Apple's account, iCloud, keychain and similar caches (appleDenylist), the developer tool caches 开发者垃圾 offers (internal/engine/devcaches), the browser caches below and Spruce's own. A cache whose app is running goes to 正在运行的应用的缓存, which starts unchecked. Deleted for good.
 //   - 浏览器缓存: Cache, Code Cache and GPUCache of every Chrome, Edge, Brave, Arc and Opera profile (and the shared GPU shader caches), Firefox's cache2 and Safari's cache folder when it is readable. Never cookies, history, logins or the profiles themselves. A running browser's caches go to 正在运行的浏览器的缓存, which starts unchecked. Deleted for good.
 //   - 日志: each child of ~/Library/Logs but DiagnosticReports; 崩溃报告: each child of ~/Library/Logs/DiagnosticReports. Deleted for good.
 //   - 未完成的下载: .crdownload, .part, .download and .partial entries directly in Downloads, untouched for a day. Moved to the Trash.
