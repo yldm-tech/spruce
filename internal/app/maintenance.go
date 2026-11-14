@@ -10,6 +10,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
 
@@ -65,14 +66,15 @@ type RunSummary struct {
 
 // Maintenance is the controller of the 维护 page.
 type Maintenance struct {
-	svc     *maintenance.Service
-	history history.Store
-	log     *slog.Logger
+	svc      *maintenance.Service
+	history  history.Store
+	log      *slog.Logger
+	activity *schedule.Activity
 }
 
-// NewMaintenance returns the service over svc, recording every run in store.
-func NewMaintenance(svc *maintenance.Service, store history.Store, log *slog.Logger) *Maintenance {
-	return &Maintenance{svc: svc, history: store, log: log}
+// NewMaintenance returns the service over svc, running inside activity's gate (background work waits while a task runs) and recording every run in store.
+func NewMaintenance(svc *maintenance.Service, store history.Store, log *slog.Logger, activity *schedule.Activity) *Maintenance {
+	return &Maintenance{svc: svc, history: store, log: log, activity: activity}
 }
 
 // Catalog returns the maintenance tasks of this platform in display order.
@@ -96,6 +98,12 @@ func (m *Maintenance) Catalog() []TaskView {
 
 // Run runs the tasks named by ids, reports progress (nil reports nothing), records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress; the error's text is a sentence in Simplified Chinese for the page to show, and the engine's own error goes to the log. Admin tasks run together behind one system prompt. Cancelling ctx stops the run after the current task; the summary then says it was interrupted.
 func (m *Maintenance) Run(ctx context.Context, ids []string, progress func(ProgressEvent)) (RunSummary, error) {
+	run, end, err := m.activity.BeginClean(ctx)
+	if err != nil {
+		return RunSummary{}, gateError(ctx, m.log, err)
+	}
+	defer end()
+	ctx = run
 	started := time.Now()
 	results, err := m.svc.Run(ctx, ids, func(ev maintenance.Event) {
 		if progress != nil {

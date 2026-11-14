@@ -15,6 +15,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 )
 
@@ -66,7 +67,7 @@ func newTestUninstall(t *testing.T, eng *fakeUninstallEngine) (*Uninstall, *fake
 	t.Helper()
 	store := &fakeStore{}
 	home := filepath.Join(t.TempDir(), "home")
-	return NewUninstall(eng, store, home, slog.New(slog.DiscardHandler)), store, home
+	return NewUninstall(eng, store, home, slog.New(slog.DiscardHandler), schedule.NewActivity(nil)), store, home
 }
 
 func TestUninstallAppsAndLeftovers(t *testing.T) {

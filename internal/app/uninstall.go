@@ -14,6 +14,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 )
 
@@ -150,15 +151,16 @@ type UninstallerStatus struct {
 
 // Uninstall is the controller of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history.
 type Uninstall struct {
-	eng     UninstallEngine
-	history history.Store
-	home    string
-	log     *slog.Logger
+	eng      UninstallEngine
+	history  history.Store
+	home     string
+	log      *slog.Logger
+	activity *schedule.Activity
 }
 
-// NewUninstall returns the service over eng, recording removals in store; home shortens paths in the history.
-func NewUninstall(eng UninstallEngine, store history.Store, home string, log *slog.Logger) *Uninstall {
-	return &Uninstall{eng: eng, history: store, home: home, log: log}
+// NewUninstall returns the service over eng, removing inside activity's gate and recording removals in store; home shortens paths in the history.
+func NewUninstall(eng UninstallEngine, store history.Store, home string, log *slog.Logger, activity *schedule.Activity) *Uninstall {
+	return &Uninstall{eng: eng, history: store, home: home, log: log, activity: activity}
 }
 
 // Apps lists the installed apps, sorted by name, without their sizes, icons and last use (Measure streams those).
@@ -222,6 +224,12 @@ func leftoverView(l uninstall.Leftover) UninstallLeftover {
 
 // Remove moves the planned app (macOS) and the chosen leftovers to the Trash, reports progress (throttled; nil reports nothing) and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Cancelling ctx stops after the current item.
 func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress func(cleanup.Progress)) (UninstallOutcome, error) {
+	clean, end, err := u.activity.BeginClean(ctx)
+	if err != nil {
+		return UninstallOutcome{}, gateError(ctx, u.log, err)
+	}
+	defer end()
+	ctx = clean
 	res, err := u.eng.Remove(ctx, uninstall.Request{AppID: req.AppID, LeftoverIDs: req.LeftoverIDs}, throttled(progress))
 	if err != nil {
 		return UninstallOutcome{}, u.userError(ctx, "remove", err, "卸载没能开始，详情已记录到日志")

@@ -46,6 +46,7 @@ type SettingsLimits struct {
 	DevArtifactMinAgeDays SettingRange `json:"devArtifactMinAgeDays"`
 	LargeFileMinMB        SettingRange `json:"largeFileMinMB"`
 	RetentionDays         SettingRange `json:"retentionDays"`
+	LowDiskGB             SettingRange `json:"lowDiskGB"`
 	// MaxPaths is how many entries each folder list keeps.
 	MaxPaths int `json:"maxPaths"`
 }
@@ -58,6 +59,7 @@ func (s *Settings) Limits() SettingsLimits {
 		DevArtifactMinAgeDays: SettingRange{settings.MinDevArtifactMinAge, settings.MaxDevArtifactMinAge},
 		LargeFileMinMB:        SettingRange{settings.MinLargeFileMB, settings.MaxLargeFileMB},
 		RetentionDays:         SettingRange{settings.MinRetentionDays, settings.MaxRetentionDays},
+		LowDiskGB:             SettingRange{settings.MinLowDiskGB, settings.MaxLowDiskGB},
 		MaxPaths:              settings.MaxPaths,
 	}
 }

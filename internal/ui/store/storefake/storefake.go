@@ -121,6 +121,7 @@ func (f settingsSvc) Limits() app.SettingsLimits {
 		DevArtifactMinAgeDays: app.SettingRange{Min: settings.MinDevArtifactMinAge, Max: settings.MaxDevArtifactMinAge},
 		LargeFileMinMB:        app.SettingRange{Min: settings.MinLargeFileMB, Max: settings.MaxLargeFileMB},
 		RetentionDays:         app.SettingRange{Min: settings.MinRetentionDays, Max: settings.MaxRetentionDays},
+		LowDiskGB:             app.SettingRange{Min: settings.MinLowDiskGB, Max: settings.MaxLowDiskGB},
 		MaxPaths:              settings.MaxPaths,
 	}
 }
