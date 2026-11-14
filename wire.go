@@ -159,7 +159,9 @@ func wire(e env) (shell.Deps, error) {
 					e.log.Error("health monitor stopped", "err", err)
 				}
 			},
-			func(ctx context.Context) { app.FollowSettings(ctx, settingsStore, monitor, historyStore, ledger, e.log) },
+			func(ctx context.Context) {
+				app.FollowSettings(ctx, settingsStore, monitor, historyStore, ledger, e.log)
+			},
 		},
 		DataDir:  e.dataDir,
 		Log:      e.log,
