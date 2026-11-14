@@ -1,4 +1,4 @@
-package smartscan
+package overview
 
 import (
 	"strconv"
@@ -7,14 +7,13 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
-	"github.com/yldm-tech/spruce/internal/ui/cleanflow"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 )
 
-// scanning is the page while it scans (.smart-scanning): the overall ring, one row per source with its own bar and state, and 停止.
-func scanning(f *cleanflow.Flow) core.Node {
-	overall := func() (float64, bool) { return OverallFraction(f.Progress.Get()) }
+// checkProgress is the conclusion's place while the first check runs (state A): the overall ring, what the check does, one row per source with its own bar and state, and 停止.
+func checkProgress(progress func() cleanup.Progress, stop func()) core.Node {
+	overall := func() (float64, bool) { return OverallFraction(progress()) }
 	percent := core.Text{ContentFunc: func() string {
 		v, ok := overall()
 		if !ok {
@@ -24,19 +23,22 @@ func scanning(f *cleanflow.Flow) core.Node {
 	}}
 	rows := make([]core.Node, len(Sources))
 	for i, id := range Sources {
-		rows[i] = sourceRow{ID: id, Row: func() SourceRow { return SourceRows(f.Progress.Get())[i] }}
+		rows[i] = sourceRow{ID: id, Row: func() SourceRow { return SourceRows(progress())[i] }}
 	}
-	return core.View{Role: core.RoleRegion, Label: "正在扫描", TestID: "scanning", Busy: func() bool { return true },
-		Style: core.Style{FlexGrow: 1, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 16, Padding: core.Symmetric(24, 0)},
+	return core.View{Role: core.RoleRegion, Label: "正在检查", TestID: "check-progress", Busy: func() bool { return true },
+		Style: core.Style{FlexShrink: 0, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Edges{Top: 16, Bottom: 8}, TextAlign: core.TextAlignCenter},
 		Children: []core.Node{
-			kit.ProgressRing{Value: overall, Size: 120, Label: "智能扫描进度", Children: []core.Node{percent}, TestID: "scan-ring"},
-			kit.Text("正在扫描…", kit.FontTitle, kit.Bold, kit.ColorText),
-			core.View{Role: core.RoleGroup, Label: "扫描进度", Style: core.Style{Width: core.Pct(100), MaxWidth: core.Pt(620), Gap: 10}, Children: rows},
-			kit.Button{Text: "停止", Variant: kit.ButtonGhost, OnPress: f.Stop, TestID: "scan-stop"},
+			kit.ProgressRing{Value: overall, Size: 96, Label: "检查进度", Children: []core.Node{percent}, TestID: "check-ring"},
+			kit.Text("正在检查哪些空间可以放心释放…", kit.FontTitle, kit.Bold, kit.ColorText),
+			core.Text{Content: "只读取，不会删除任何东西，通常不到一分钟。", Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody,
+				LineHeightMultiple: 1.5, Color: kit.ColorTextMuted}},
+			core.View{Role: core.RoleGroup, Label: "检查进度", Style: core.Style{Width: core.Pct(100), MaxWidth: core.Pt(620), Gap: 10, Margin: core.Edges{Top: 4}},
+				Children: rows},
+			kit.Button{Text: "停止", Variant: kit.ButtonGhost, OnPress: stop, TestID: "check-stop"},
 		}}
 }
 
-// sourceRow is one source while the scan runs (.smart-scan-row): its tile, name and scope over its bar, and its state on the right.
+// sourceRow is one source while the check runs (.smart-scan-row): its tile, name and scope over its bar, and its state on the right.
 type sourceRow struct {
 	ID  app.CleanerID
 	Row func() SourceRow
@@ -53,7 +55,7 @@ func (r sourceRow) Render(cx *core.Scope) core.Node {
 			return core.Func(func(*core.Scope) core.Node { return kit.SweepBar{Height: 6, TestID: "sweep-" + id} })
 		}
 		return core.Func(func(*core.Scope) core.Node {
-			return kit.Meter{Value: func() float64 { return r.Row().Fraction }, Height: 6, Label: meta.Title + "扫描进度", TestID: "bar-" + id}
+			return kit.Meter{Value: func() float64 { return r.Row().Fraction }, Height: 6, Label: meta.Title + "检查进度", TestID: "bar-" + id}
 		})
 	})
 	status := core.Text{TestID: "row-status-" + id, ContentFunc: func() string { return RowStatusText(r.Row()) }, StyleFunc: func() core.Style {
@@ -66,7 +68,7 @@ func (r sourceRow) Render(cx *core.Scope) core.Node {
 	}}
 	return core.View{TestID: "row-" + id,
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(14, 18), CornerRadius: kit.RadiusCard,
-			Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard},
+			Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, TextAlign: core.TextAlignLeft},
 		Children: []core.Node{
 			kit.IconTile{Tone: meta.Tone, Size: 36, GlyphSize: 18, Glyph: meta.Glyph, Radius: kit.RadiusCardIcon},
 			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 4}, Children: []core.Node{

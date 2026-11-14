@@ -14,7 +14,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/shell"
 )
 
-// TestSmoke starts the app on the real engine with a temporary home and data folder, checks that it opens on 概览, goes to 维护 through the sidebar and finds the task catalog there. It never presses 扫描 or 运行, so nothing is scanned, cleaned or run.
+// TestSmoke starts the app on the real engine with a temporary home and data folder, checks that it opens on 概览, goes to 维护 through the sidebar and finds the task catalog there. It never presses 开始检查 or 运行, so nothing is scanned, cleaned or run.
 func TestSmoke(t *testing.T) {
 	dir := t.TempDir()
 	home, dataDir := dir+string(os.PathSeparator)+"home", dir+string(os.PathSeparator)+"data"
@@ -36,6 +36,8 @@ func TestSmoke(t *testing.T) {
 	deps.Background = nil
 	a := nsgotest.Start(t, core.AppRoot(shell.App(deps)), nsgotest.Size(1280, 820))
 	a.WaitFor("text:Spruce 会在后台定期检查，告诉你哪些空间可以放心释放", 10*time.Second)
+	// Until 概览's controller is wired, 概览 is stopped and offers 开始检查.
+	a.WaitFor("id:overview-page >> id:check-start", 10*time.Second)
 	if got := len(a.Query("id:sidebar >> role:link")); got != 7 {
 		t.Errorf("the sidebar has %d entries, want 7", got)
 	}

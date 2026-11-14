@@ -32,8 +32,8 @@ import (
 	uihistory "github.com/yldm-tech/spruce/internal/ui/pages/history"
 	uiinstallers "github.com/yldm-tech/spruce/internal/ui/pages/installers"
 	uimaintenance "github.com/yldm-tech/spruce/internal/ui/pages/maintenance"
+	uioverview "github.com/yldm-tech/spruce/internal/ui/pages/overview"
 	uisettings "github.com/yldm-tech/spruce/internal/ui/pages/settings"
-	uismartscan "github.com/yldm-tech/spruce/internal/ui/pages/smartscan"
 	uispace "github.com/yldm-tech/spruce/internal/ui/pages/space"
 	uisystemjunk "github.com/yldm-tech/spruce/internal/ui/pages/systemjunk"
 	uiuninstall "github.com/yldm-tech/spruce/internal/ui/pages/uninstall"
@@ -142,7 +142,7 @@ func wire(e env) (shell.Deps, error) {
 	return shell.Deps{
 		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: app.NewHistory(historyStore, ledger, e.log), Alerts: healthSvc,
 			Permissions: permissions, Locations: spaceSvc},
-		SmartScan:   uismartscan.Deps{Cleanup: cleanups, Files: files},
+		Overview:    uioverview.Deps{Files: files, Home: e.home},
 		SystemJunk:  uisystemjunk.Deps{Cleanup: cleanups, Files: files},
 		DevJunk:     uidevjunk.Deps{Cleanup: cleanups, Files: files},
 		Installers:  uiinstallers.Deps{Cleanup: cleanups, Files: files},
