@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +46,11 @@ type Env struct {
 	Now func() time.Time
 	// Log receives what the page is not told; nil discards it.
 	Log *slog.Logger
+	// MayRead reports whether a folder may be read (the background read gate), asked after the exclusions and before the folder is listed; a folder it refuses is skipped silently, neither read nor counted as denied. On macOS it keeps background checks out of the Downloads folder until a foreground read has entered it. Nil reads every folder.
+	MayRead func(path string) bool
+
+	// volumes is the folder the mounted volumes appear in, whose Trash folders Bin measures besides TrashPath: /Volumes on macOS, none on Windows. Tests point it at a temporary folder.
+	volumes string
 }
 
 // Category IDs, stable across scans.
@@ -59,6 +66,9 @@ const (
 	catIncompleteDownload = "incomplete-downloads"
 	catTrash              = "trash"
 )
+
+// warnRunningUnknown is the warning of the caches a scan could not sort by running app.
+const warnRunningUnknown = "无法确认哪些应用正在运行"
 
 // maxItems caps the items of one category, keeping the largest: the page virtualizes long lists, but tens of thousands of crash reports help nobody. Items left out are not deleted.
 const maxItems = 3000
@@ -133,15 +143,17 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	rep := newReporter(progress)
 
 	running, err := c.env.Running(ctx)
+	unsure := err != nil
 	if err != nil {
 		if ctx.Err() != nil {
 			return cleanup.ScanResult{}, ctx.Err()
 		}
-		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open.
+		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open. The caches the list would have sorted carry a warning, which keeps automatic rules away from them.
 		c.env.Log.Warn("list running apps", "err", err)
 		running = Running{}
 	}
-	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path}
+	exclusions := c.exclusions()
+	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path, exclusions: exclusions}
 	specs := c.specs(c.env)
 
 	// The Trash is measured beside the other locations.
@@ -163,7 +175,7 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		}
 		cands[i] = s.collect(ctx, sc)
 	}
-	items, err := measure(ctx, sc, cands, c.exclusions(), rep)
+	items, err := measure(ctx, sc, cands, exclusions, rep)
 	<-trashDone
 	if err != nil {
 		return cleanup.ScanResult{}, err
@@ -183,6 +195,9 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 				return dup
 			})
 			if len(cat.Items) > 0 {
+				if unsure && (cat.ID == catAppCaches || cat.ID == catBrowserCaches) {
+					cat.Warning = warnRunningUnknown
+				}
 				cats = append(cats, cat)
 			}
 		}
@@ -249,6 +264,34 @@ func assemble(s spec, found []candidate, log *slog.Logger) []cleanup.Category {
 	return out
 }
 
+// mayMeasureTrash asks the read gate (Env.MayRead) about every Trash folder Bin.Size reads: TrashPath and, on macOS, the user's .Trashes folder on each mounted volume, which lies in a prompting folder (a removable or network volume). Only the volumes folder itself is listed, which reads nothing on the volumes. Without a gate everything may be read.
+func (c *Cleaner) mayMeasureTrash() bool {
+	if c.env.MayRead == nil {
+		return true
+	}
+	if !c.env.MayRead(c.env.TrashPath) {
+		return false
+	}
+	if c.env.volumes == "" {
+		return true
+	}
+	vols, err := os.ReadDir(c.env.volumes)
+	if err != nil {
+		return true // no volumes to read: Bin.Size finds none either
+	}
+	uid := strconv.Itoa(os.Getuid())
+	for _, v := range vols {
+		// The startup volume appears there as a symlink to /; its Trash is TrashPath. Bin.Size skips it and anything that is not a folder in the same way.
+		if v.Type()&fs.ModeSymlink != 0 || !v.IsDir() {
+			continue
+		}
+		if !c.env.MayRead(filepath.Join(c.env.volumes, v.Name(), ".Trashes", uid)) {
+			return false
+		}
+	}
+	return true
+}
+
 // binName is what the system calls its Trash.
 func binName() string {
 	if runtime.GOOS == "windows" {
@@ -269,6 +312,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 		Deletion:    cleanup.DeletePermanent,
 		Warning:     "清空后无法恢复，默认不选",
 		Items:       []cleanup.Item{},
+	}
+	if !c.mayMeasureTrash() {
+		// Measuring would read a Trash folder the read gate refuses; the Trash is left out of this check rather than measured in part.
+		return nil, nil, nil
 	}
 	u, err := c.env.Bin.Size(ctx)
 	switch {
