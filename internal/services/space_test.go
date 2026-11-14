@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
@@ -324,6 +325,17 @@ func TestSpaceLocationsAndChooser(t *testing.T) {
 	f.svc.volumes = func(context.Context) ([]space.Volume, error) { return nil, errors.New("boom") }
 	if loc := f.svc.Locations(t.Context()); loc.Volumes == nil || len(loc.Volumes) != 0 || len(loc.Targets) == 0 {
 		t.Errorf("locations without disks %+v", loc)
+	}
+
+	// A disk list that never comes (a network share that stopped answering) does not hold the folders back.
+	f.svc.volumes = func(ctx context.Context) ([]space.Volume, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	short, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if loc := f.svc.Locations(short); len(loc.Volumes) != 0 || len(loc.Targets) == 0 {
+		t.Errorf("locations with a stuck disk list %+v", loc)
 	}
 
 	f.svc.choose = func(context.Context, string) (string, error) { return f.data, nil }

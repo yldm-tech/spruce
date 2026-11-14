@@ -177,7 +177,7 @@ func NewSpace(home string, current func() settings.AppSettings, bin trash.Bin, s
 // Locations returns the disks and folders the start screen offers. A disk list the system cannot give is logged and left empty; the folders are still offered.
 func (s *Space) Locations(ctx context.Context) SpaceLocations {
 	out := SpaceLocations{Volumes: []SpaceVolume{}, Targets: []SpaceTarget{}}
-	vols, err := s.volumes(ctx)
+	vols, err := s.listVolumes(ctx)
 	if err != nil {
 		s.log.Warn("list volumes", "err", err)
 	}
@@ -188,6 +188,30 @@ func (s *Space) Locations(ctx context.Context) SpaceLocations {
 		out.Targets = append(out.Targets, SpaceTarget{ID: t.ID, Name: t.Name, Path: t.Path})
 	}
 	return out
+}
+
+// spaceVolumesTimeout bounds listing the disks.
+const spaceVolumesTimeout = 5 * time.Second
+
+// listVolumes lists the disks but gives up after spaceVolumesTimeout: listing the mounts waits on every file system (gopsutil asks macOS with MNT_WAIT), and a network share that stopped answering would otherwise hold the start screen for good. The abandoned call ends whenever the system answers.
+func (s *Space) listVolumes(ctx context.Context) ([]space.Volume, error) {
+	ctx, cancel := context.WithTimeout(ctx, spaceVolumesTimeout)
+	defer cancel()
+	type result struct {
+		vols []space.Volume
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		vols, err := s.volumes(ctx)
+		done <- result{vols, err}
+	}()
+	select {
+	case r := <-done:
+		return r.vols, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // ChooseFolder shows the system's folder picker over the calling window and returns the chosen folder, or "" when the user cancelled.
@@ -255,7 +279,7 @@ func (s *Space) scanError(ctx context.Context, path string, err error) error {
 	case errors.Is(err, fs.ErrNotExist):
 		return errors.New("这个文件夹已经不存在了")
 	case errors.Is(err, fs.ErrPermission):
-		return errors.New("Spruce 没有读取这个文件夹的权限")
+		return errors.New("没有读取这个文件夹的权限")
 	case errors.Is(err, space.ErrNotDir):
 		return errors.New("只能分析文件夹")
 	}
@@ -277,7 +301,7 @@ func (s *Space) nameFor(ctx context.Context, root string) string {
 			return t.Name
 		}
 	}
-	if vols, err := s.volumes(ctx); err == nil {
+	if vols, err := s.listVolumes(ctx); err == nil {
 		for _, v := range vols {
 			if filepath.Clean(v.Path) == root {
 				return v.Name

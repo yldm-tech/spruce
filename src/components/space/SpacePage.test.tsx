@@ -190,6 +190,7 @@ afterEach(() => {
 describe("SpacePage start screen", () => {
   it("lists the disks with their capacity and the quick folders", async () => {
     renderPage();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("空间透视");
     const disk = await screen.findByRole("button", { name: /Macintosh HD/ });
     expect(within(disk).getByText("可用 120 GB，共 500 GB")).toBeTruthy();
     expect(within(disk).getByText("已用 76%")).toBeTruthy();
@@ -273,10 +274,10 @@ describe("SpacePage scan", () => {
 
   it("explains a scan that failed", async () => {
     const user = userEvent.setup();
-    fakes.Space.scan.mockRejectedValue(new Error("Spruce 没有读取这个文件夹的权限"));
+    fakes.Space.scan.mockRejectedValue(new Error("没有读取这个文件夹的权限"));
     renderPage();
     await user.click(await screen.findByRole("button", { name: /^应用程序/ }));
-    expect((await screen.findByRole("alert")).textContent).toBe("Spruce 没有读取这个文件夹的权限");
+    expect((await screen.findByRole("alert")).textContent).toBe("没有读取这个文件夹的权限");
   });
 });
 

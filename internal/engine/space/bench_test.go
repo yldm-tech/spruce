@@ -59,14 +59,13 @@ func BenchmarkScan(b *testing.B) {
 	b.Logf("built %d files in %v", files, time.Since(start).Round(time.Millisecond))
 
 	var heapMB, peakMB float64
-	var tree *Tree
+	var st Stats
+	var nodes, large int
 	for b.Loop() {
-		tree = nil
 		runtime.GC()
 		var before runtime.MemStats
 		runtime.ReadMemStats(&before)
-		var err error
-		tree, err = Scan(b.Context(), root, Options{LargeFileMin: 1 << 20})
+		tree, err := Scan(b.Context(), root, Options{LargeFileMin: 1 << 20})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -77,8 +76,9 @@ func BenchmarkScan(b *testing.B) {
 		runtime.ReadMemStats(&after)
 		heapMB = float64(after.HeapAlloc-min(before.HeapAlloc, after.HeapAlloc)) / 1e6
 		peakMB = max(peakMB, float64(during.HeapSys)/1e6)
+		st, nodes, large = tree.Stats(), len(tree.nodes), len(tree.LargeFiles())
+		runtime.KeepAlive(tree)
 	}
-	st := tree.Stats()
 	if st.Files != int64(files) {
 		b.Fatalf("scanned %d files of %d", st.Files, files)
 	}
@@ -86,5 +86,5 @@ func BenchmarkScan(b *testing.B) {
 	b.ReportMetric(float64(files)/perOp, "files/s")
 	b.ReportMetric(heapMB, "tree-MB")
 	b.ReportMetric(peakMB, "heap-sys-MB")
-	b.Logf("%s: %d files, %d folders, %d nodes kept, %d large files, %.2fs per scan", runtime.GOOS, st.Files, st.Dirs, len(tree.nodes), len(tree.LargeFiles()), perOp)
+	b.Logf("%s: %d files, %d folders, %d nodes kept, %d large files, last walk %v, %.2fs per loop", runtime.GOOS, st.Files, st.Dirs, nodes, large, st.Duration.Round(time.Millisecond), perOp)
 }

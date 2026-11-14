@@ -8,7 +8,6 @@ import { HistoryPage } from "../history/HistoryPage";
 import { InstallersPage } from "../installers/InstallersPage";
 import { SettingsPage } from "../settings/SettingsPage";
 import { SmartScanPage } from "../smart-scan/SmartScanPage";
-import { SpacePage } from "../space/SpacePage";
 import { SystemJunkPage } from "../system-junk/SystemJunkPage";
 import { UninstallPage } from "../uninstall/UninstallPage";
 import { PAGES, type PageId } from "./pages";
@@ -19,7 +18,6 @@ const SHELLS: [PageId, ComponentType][] = [
   ["dev-junk", DevJunkPage],
   ["installers", InstallersPage],
   ["uninstall", UninstallPage],
-  ["space", SpacePage],
   ["health", HealthPage],
   ["history", HistoryPage],
   ["settings", SettingsPage],
