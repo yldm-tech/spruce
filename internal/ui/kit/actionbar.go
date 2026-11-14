@@ -52,7 +52,7 @@ func statView(stat func() Stat, end bool) core.Node {
 		Children: []core.Node{
 			TextFunc(func() string { return get().Label }, FontSmall, Regular, ColorTextMuted),
 			core.Text{ContentFunc: func() string { return get().Value },
-				Style: core.Style{FontFamily: FontSans, FontSize: FontStat, FontWeight: Bold, LetterSpacingEm: LetterSpacingStat, Color: ColorText}},
+				Style: core.Style{FontFamily: FontFace(Bold), FontSize: FontStat, FontWeight: FaceWeight(Bold), LetterSpacingEm: LetterSpacingStat, Color: ColorText}},
 		},
 	}
 }

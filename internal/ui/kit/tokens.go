@@ -114,8 +114,8 @@ const (
 	BlurOverlay core.Points = 16
 )
 
-// FontSans is the app's font list: Inter (bundled, Latin only), then the system's Chinese UI font.
-var FontSans = "Inter, PingFang SC, Microsoft YaHei UI, Noto Sans SC, system-ui"
+// FontSans is the app's font list at the regular weight: Inter (bundled, Latin only), then the system's Chinese UI font. Styles that set a weight take FontFace and FaceWeight instead.
+var FontSans = FontFace(core.FontWeightNormal)
 
 // Tone is one of the tile gradients (package tone).
 type Tone = tone.Tone

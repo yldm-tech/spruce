@@ -2,15 +2,14 @@ package shell
 
 import (
 	"github.com/nsgo-dev/nsgo/core"
-	"github.com/nsgo-dev/nsgo/desktop"
 
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// minTitleStrip is the least height of the sidebar's top strip, where the traffic lights sit on macOS; it drags the window.
-const minTitleStrip core.Points = 30
+// titleStrip is the height of the sidebar's top strip, where the traffic lights sit on macOS; it drags the window. The design's is max(the window controls' bottom, 30): the controls of the platform's title bar end above 30 points on macOS (about 23) and are on the right on Windows, so it is 30, while desktop.TitleBar reports the whole bar's height (32 on macOS), which would push the sidebar down.
+const titleStrip core.Points = 30
 
 // Sidebar is the app's sidebar: one entry per page in its group, the current one lit, the footer's two as bare glyphs. It shows disabled and out of reach of assistive technology while an overlay is open.
 type Sidebar struct {
@@ -19,10 +18,8 @@ type Sidebar struct {
 }
 
 // Render implements core.Node.
-func (s Sidebar) Render(cx *core.Scope) core.Node {
-	strip := core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, StyleFunc: func() core.Style {
-		return core.Style{FlexShrink: 0, Height: core.Pt(max(desktop.TitleBar(cx).Top, minTitleStrip))}
-	}}
+func (s Sidebar) Render(*core.Scope) core.Node {
+	strip := core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, Style: core.Style{FlexShrink: 0, Height: core.Pt(titleStrip)}}
 	children := []core.Node{strip}
 	var group []core.Node
 	section := "-"
@@ -44,7 +41,7 @@ func (s Sidebar) Render(cx *core.Scope) core.Node {
 			section = m.Section
 			if section != "" {
 				group = append(group, core.Text{Content: section, Style: core.Style{Padding: core.Edges{Left: 10, Right: 10, Bottom: 6},
-					FontFamily: kit.FontSans, FontSize: kit.FontSection, FontWeight: kit.Semibold, LetterSpacingEm: kit.LetterSpacingSection,
+					FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontSection, FontWeight: kit.FaceWeight(kit.Semibold), LetterSpacingEm: kit.LetterSpacingSection,
 					Color: kit.ColorTextSection}})
 			}
 		}
@@ -77,7 +74,7 @@ func (s Sidebar) item(r nav.Route, footer bool) core.Node {
 				CornerRadius: kit.RadiusNavItem, FontFamily: kit.FontSans, FontSize: size, Color: color, Cursor: core.CursorPointer,
 				FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}}
 			if current() {
-				st.FontWeight, st.Color, st.Background = kit.Semibold, kit.ColorText, kit.SurfaceNavActive
+				st.FontFamily, st.FontWeight, st.Color, st.Background = kit.FontFace(kit.Semibold), kit.FaceWeight(kit.Semibold), kit.ColorText, kit.SurfaceNavActive
 			}
 			return st
 		},

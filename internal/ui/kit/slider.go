@@ -58,5 +58,5 @@ func (s Slider) Render(*core.Scope) core.Node {
 	}
 	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12},
 		Children: []core.Node{slider, Tabular(core.Text{ContentFunc: text, Style: core.Style{MinWidth: core.Pt(64), TextAlign: core.TextAlignEnd,
-			FontFamily: FontSans, FontSize: FontCardTitle, FontWeight: Bold, Color: ColorText}})}}
+			FontFamily: FontFace(Bold), FontSize: FontCardTitle, FontWeight: FaceWeight(Bold), Color: ColorText}})}}
 }

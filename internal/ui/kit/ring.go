@@ -73,7 +73,7 @@ func (p ProgressRing) Render(cx *core.Scope) core.Node {
 	children := []core.Node{canvas}
 	if len(p.Children) > 0 {
 		children = append(children, core.View{Style: core.Style{Position: core.Relative, AlignItems: core.AlignCenter,
-			FontFamily: FontSans, FontSize: 20, FontWeight: Bold, FontVariant: core.FontTabularNums, Color: ColorText}, Children: p.Children})
+			FontFamily: FontFace(Bold), FontSize: 20, FontWeight: FaceWeight(Bold), FontVariant: core.FontTabularNums, Color: ColorText}, Children: p.Children})
 	}
 	return core.View{Role: core.RoleProgressBar, Label: p.Label, TestID: p.TestID,
 		AccessibilityValue: func() core.AccessibilityValue {

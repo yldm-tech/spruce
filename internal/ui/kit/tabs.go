@@ -33,7 +33,7 @@ func (t Tabs[T]) Render(*core.Scope) core.Node {
 			},
 			Style: core.Style{MinHeight: core.Pt(32), Padding: core.Symmetric(0, 16), CornerRadius: 16, JustifyContent: core.JustifyCenter,
 				FontFamily: FontSans, FontSize: FontBody, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
-				Selected: &core.Style{Background: SurfaceNavActive, Color: ColorText, FontWeight: Semibold}},
+				Selected: &core.Style{Background: SurfaceNavActive, Color: ColorText, FontFamily: FontFace(Semibold), FontWeight: FaceWeight(Semibold)}},
 			Children: []core.Node{core.Text{Content: o.Label}}}
 	}
 	return base.Tabs{Label: t.Label, Children: tabs,
@@ -65,7 +65,7 @@ func (c Chips[T]) Render(*core.Scope) core.Node {
 					FontSize: FontBody, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
 					Hover: &core.Style{Color: ColorText}}
 				if selected() {
-					st.BorderColor, st.Background, st.Color, st.FontWeight = core.Transparent, 0, RunButtonText, Semibold
+					st.BorderColor, st.Background, st.Color, st.FontFamily, st.FontWeight = core.Transparent, 0, RunButtonText, FontFace(Semibold), FaceWeight(Semibold)
 					st.Gradients = []core.Gradient{GradientAccent()}
 					st.Hover = &core.Style{Color: RunButtonText}
 				}

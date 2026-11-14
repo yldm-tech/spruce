@@ -46,7 +46,7 @@ func buttonStyle(v ButtonVariant, large bool) core.Style {
 		st.Disabled = &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault, Color: ColorText}
 	case ButtonLight, ButtonDanger:
 		st.MinHeight, st.Padding, st.CornerRadius = core.Pt(46), core.Symmetric(0, 40), 23
-		st.FontSize, st.FontWeight = FontCardTitle, Bold
+		st.FontSize, st.FontFamily, st.FontWeight = FontCardTitle, FontFace(Bold), FaceWeight(Bold)
 		st.Background, st.Color = ButtonLightBackground, ButtonLightText
 		if v == ButtonDanger {
 			st.Background, st.Color = 0, ButtonDangerText
@@ -55,7 +55,7 @@ func buttonStyle(v ButtonVariant, large bool) core.Style {
 		st.Disabled = &core.Style{Opacity: core.Alpha(0.6), Cursor: core.CursorDefault}
 	case ButtonAccent:
 		st.MinHeight, st.Padding, st.CornerRadius = core.Pt(32), core.Symmetric(0, 14), 16
-		st.FontWeight, st.Color = Semibold, RunButtonText
+		st.FontFamily, st.FontWeight, st.Color = FontFace(Semibold), FaceWeight(Semibold), RunButtonText
 		st.Gradients = []core.Gradient{GradientAccent()}
 		st.Disabled = &core.Style{Opacity: core.Alpha(0.6), Cursor: core.CursorDefault}
 	case ButtonLink:
@@ -161,7 +161,7 @@ func (b RunButton) Render(*core.Scope) core.Node {
 			{Spread: outer, Color: core.RGBA(0xffffff, 0.035)},
 			shadow(dy, blur, ShadowAccent),
 		},
-		FontFamily: FontSans, FontSize: FontRunButton, FontWeight: Bold, Color: RunButtonText, Cursor: core.CursorPointer,
+		FontFamily: FontFace(Bold), FontSize: FontRunButton, FontWeight: FaceWeight(Bold), Color: RunButtonText, Cursor: core.CursorPointer,
 		Transition:   core.Transition{Duration: 150_000_000, Easing: core.Ease, Properties: core.TransitionOpacity},
 		FocusVisible: focusRing(3, 4),
 		Disabled:     &core.Style{Opacity: core.Alpha(0.4), Filters: []core.Filter{core.Saturate(0.4)}, Cursor: core.CursorNotAllowed},
