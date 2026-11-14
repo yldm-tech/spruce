@@ -83,7 +83,11 @@ func TestLinksAreTakenOnce(t *testing.T) {
 		t.Errorf("back after GoDrill: %s", n.Current())
 	}
 
+	asked := n.HistoryAsked()
 	n.GoHistory(history.KindAuto, "run-1")
+	if n.HistoryAsked() != asked+1 {
+		t.Error("GoHistory was not counted")
+	}
 	if k, r := n.TakeHistoryFilter(); n.Current() != History || k != history.KindAuto || r != "run-1" {
 		t.Errorf("GoHistory: %s %q %q", n.Current(), k, r)
 	}

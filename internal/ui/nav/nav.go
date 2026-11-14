@@ -99,11 +99,14 @@ type Navigator struct {
 	devTab      DevTab
 	card        string
 	spacePath   string
+
+	// histAsked counts GoHistory's requests, so 操作历史 sees one made while it is already open.
+	histAsked *core.Signal[int]
 }
 
 // NewNavigator returns a navigator on start.
 func NewNavigator(cx *core.Scope, start Route) *Navigator {
-	return &Navigator{current: core.NewSignal(cx, start)}
+	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0)}
 }
 
 // Current returns the page shown; reading it subscribes.
@@ -159,8 +162,12 @@ func (n *Navigator) TakeReveal() string {
 // GoHistory opens 操作历史 with the filter of kind selected ("" for all) and the run runID expanded ("" for none).
 func (n *Navigator) GoHistory(kind history.Kind, runID string) {
 	n.histKind, n.histRun = kind, runID
+	n.histAsked.Set(n.histAsked.GetUntracked() + 1)
 	n.Go(History)
 }
+
+// HistoryAsked counts GoHistory's requests; reading it subscribes, so 操作历史 takes a request made while it is open (查看 in a toast shown over it).
+func (n *Navigator) HistoryAsked() int { return n.histAsked.Get() }
 
 // TakeHistoryFilter returns what GoHistory asked for, or zero values, and forgets it.
 func (n *Navigator) TakeHistoryFilter() (history.Kind, string) {

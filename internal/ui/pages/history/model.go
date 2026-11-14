@@ -281,7 +281,7 @@ func TaskLines(results []taskresult.Result, catalog []app.TaskView) []TaskLine {
 	return lines
 }
 
-// RestoredNote is what a run's summary line adds once 放回原处 put its items back, from the KindRestore runs among runs: 「 · 已放回原处」 when one put back everything it tried, else 「 · 已放回 {a} 项」 with all they put back; "" before any.
+// RestoredNote is what a run's summary line adds once 放回原处 put its items back, from the KindRestore runs among runs: 「 · 已放回原处」 when one left nothing in the Trash (a restore that stopped part-way counts what it did not get to as Failed), else 「 · 已放回 {a} 项」 with all they put back; "" before any.
 func RestoredNote(run enginehist.Run, runs []enginehist.Run) string {
 	restored, whole := 0, false
 	for _, r := range runs {

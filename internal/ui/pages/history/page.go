@@ -119,7 +119,13 @@ func rowTitle(s string) core.Text {
 
 // runRow is one run: a button with the kind's tile, title and summary line, the start time and a chevron, which shows or hides the run's details under it. A run 放回原处 can put back shows that button left of the time; it is a sibling of the row's button, not inside it, so the row's press area lies under the line and the line itself lets presses through to it.
 func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core.Node {
-	open := core.NewSignal(cx, run.ID == s.Opened)
+	open := core.NewSignal(cx, run.ID == s.Opened.GetUntracked())
+	// GoHistory asking for this run opens it, also while the page is open.
+	cx.Effect(func() {
+		if s.Opened.Get() == run.ID {
+			cx.Untrack(func() { open.Set(true) })
+		}
+	})
 	meta := KindMeta(run.Kind)
 	title := RunTitle(run)
 	summary := RunSummary(run)

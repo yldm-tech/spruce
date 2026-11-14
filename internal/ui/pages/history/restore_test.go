@@ -100,6 +100,8 @@ func TestRestorePartlyShowsWhatStayed(t *testing.T) {
 		r.Summary = &enginehist.Totals{Items: 2, Trashed: 100, Failed: 1}
 		r.RestoreOf = runID
 		r.Details = []string{"~/Downloads/a.dmg：原位置已有同名项目"}
+		// The restore tried every item: the run is no longer offered (2.11), even though one stayed in the Trash.
+		svc.SetRestorable()
 		svc.Record(r)
 		return app.RestoreOutcome{RunID: "r1", Restored: 2, Failed: 1}, nil
 	}
@@ -116,10 +118,14 @@ func TestRestorePartlyShowsWhatStayed(t *testing.T) {
 	}
 	p.WaitFor("id:run-r1", wait)
 	p.Find("id:run-r1 >> text:放回 2 项（" + format.Bytes(100) + "），1 项没能放回")
-	// What stayed in the Trash can still be tried again.
-	if !p.Exists("id:run-t1-restore") {
-		t.Error("the button went away while items remain")
+	p.WaitForGone("id:run-t1-restore", wait)
+	// 查看 in the toast, pressed while the page is open, opens the restore's record.
+	if p.Exists("id:run-r1 >> id:run-details") {
+		t.Fatal("the restore's record is open already")
 	}
+	p.nav.GoHistory("", toast.ViewRun)
+	p.WaitFor("id:run-r1 >> id:run-details", wait)
+	p.Find("id:run-r1 >> text:~/Downloads/a.dmg：原位置已有同名项目")
 }
 
 func TestRestoreWithoutTheControllerSaysSo(t *testing.T) {
@@ -199,4 +205,29 @@ func TestOpensAsGoHistoryAsked(t *testing.T) {
 	if k, r := p.nav.TakeHistoryFilter(); k != "" || r != "" {
 		t.Errorf("left %q %q", k, r)
 	}
+}
+
+func TestFollowsGoHistoryWhileOpen(t *testing.T) {
+	auto := span("a1", enginehist.KindAuto, daysAgo(0, 3, 0, 0), 4)
+	auto.Rule = "installers"
+	auto.Details = []string{"旧安装包：2 项（1 GB）"}
+	p := start(t, historyfake.New(auto, junkRun()))
+	p.WaitFor("id:chip-all", wait)
+	p.Press("id:chip-systemJunk")
+	p.WaitUntil(wait, func() bool { return !p.Exists("id:run-a1") })
+	// A request made while the page is open (查看 in a toast over it) is taken at once: the filter it names and its run expanded.
+	p.nav.GoHistory(enginehist.KindAuto, "a1")
+	p.WaitFor("id:run-a1 >> id:run-details", wait)
+	if !p.Find("id:chip-auto").Props.Pressed || p.Exists("id:run-j1") {
+		t.Error("the 自动清理 filter is not chosen")
+	}
+	if k, r := p.nav.TakeHistoryFilter(); k != "" || r != "" {
+		t.Errorf("the request was left for a later visit: %q %q", k, r)
+	}
+	// Closed by hand, the same request opens it again.
+	p.Press("id:run-a1-head")
+	p.WaitForGone("id:run-a1 >> id:run-details", wait)
+	p.nav.GoHistory("", "a1")
+	p.WaitFor("id:run-a1 >> id:run-details", wait)
+	p.WaitFor("id:run-j1", wait)
 }

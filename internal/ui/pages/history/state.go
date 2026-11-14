@@ -35,15 +35,15 @@ type State struct {
 	Restorable *core.Signal[map[string]bool]
 	// Restoring is the run being put back, "" for none.
 	Restoring *core.Signal[string]
-	// Opened is the run GoHistory asked to show expanded, "" for none.
-	Opened string
+	// Opened is the run GoHistory asked last to show expanded, "" for none; every request notifies, so a row opens again when asked again.
+	Opened *core.Signal[string]
 
 	kinds *core.Memo[[]enginehist.Kind]
 	// seq numbers the loads, so only the latest one's answer is shown.
 	seq int
 }
 
-// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation. The filter and the expanded run start as GoHistory asked, when it did (nav, nil in tests that mount the page alone).
+// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation. The filter and the expanded run start as GoHistory asked, when it did, and follow every later request while the page is open (查看 in a toast shown over it); nav is nil in tests that mount the page alone.
 func NewState(cx *core.Scope, stores *store.Stores, catalog Catalog, n *nav.Navigator) *State {
 	hist := stores.History
 	s := &State{cx: cx, ctx: cx.Context(), hist: hist, stores: stores,
@@ -54,11 +54,27 @@ func NewState(cx *core.Scope, stores *store.Stores, catalog Catalog, n *nav.Navi
 		Catalog:    core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
 		Restorable: core.NewSignalFunc[map[string]bool](cx, nil, nil),
 		Restoring:  core.NewSignal(cx, ""),
+		Opened:     core.NewSignalFunc(cx, "", nil),
 	}
 	if n != nil {
-		kind, run := n.TakeHistoryFilter()
-		s.Filter.Set(kind)
-		s.Opened = run
+		take := func() {
+			kind, run := n.TakeHistoryFilter()
+			s.Filter.Set(kind)
+			s.Opened.Set(run)
+		}
+		var seen int
+		cx.Untrack(func() {
+			seen = n.HistoryAsked()
+			take()
+		})
+		cx.Effect(func() {
+			asked := n.HistoryAsked()
+			if asked == seen {
+				return
+			}
+			seen = asked
+			cx.Untrack(take)
+		})
 	}
 	s.kinds = core.NewMemoFunc(cx, func() []enginehist.Kind { return KindsIn(s.Runs.Get()) }, slices.Equal)
 	if catalog != nil {
