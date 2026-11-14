@@ -68,15 +68,24 @@ func (s ScanIdle) Render(*core.Scope) core.Node {
 		children = append(children, s.Details)
 	}
 	children = append(children,
-		core.View{Style: core.Style{MaxWidth: core.Pt(440), AlignItems: core.AlignCenter}, Children: []core.Node{kit.ErrorLine{Text: s.Error, TestID: "scan-error"}}},
+		// Only there while there is an error, so the gaps around it stay the design's.
+		core.Show{When: func() bool { return s.Error != nil && s.Error() != "" }, Then: func(*core.Scope) core.Node {
+			return core.Text{ContentFunc: s.Error, LiveRegion: core.LiveRegionPolite, Role: core.RoleAlert, TestID: "scan-error",
+				Style: core.Style{MaxWidth: core.Pt(440), FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
+					Color: kit.ColorWarning, TextAlign: core.TextAlignCenter}}
+		}},
 		core.View{Style: core.Style{Margin: core.Edges{Top: 22}},
 			Children: []core.Node{kit.RunButton{Text: label, OnPress: s.OnStart, Disabled: s.Disabled, Ref: s.Ref, TestID: "scan"}}},
 	)
 	return core.View{Role: core.RoleRegion, Label: s.Title, TestID: s.TestID, Style: stateStyle, Children: children}
 }
 
-// IdleDetails is the quiet text under ScanIdle's description (.cleaner-idle-details), one line per entry.
+// IdleDetails is the quiet text under ScanIdle's description (.cleaner-idle-details), one line per entry; nothing, not even a gap, without lines.
 func IdleDetails(lines func() []string) core.Node {
+	return core.Show{When: func() bool { return len(lines()) > 0 }, Then: func(*core.Scope) core.Node { return idleDetails(lines) }}
+}
+
+func idleDetails(lines func() []string) core.Node {
 	return core.View{Style: core.Style{MaxWidth: core.Pt(520), AlignItems: core.AlignCenter, Gap: 4}, Children: []core.Node{
 		core.Each(lines, func(s string) string { return s }, func(_ *core.Scope, line func() string, _ func() int) core.Node {
 			return core.Text{ContentFunc: line, MaxLines: 1, EllipsizeMode: core.EllipsizeTail, Style: core.Style{FontFamily: kit.FontSans,

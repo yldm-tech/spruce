@@ -87,9 +87,10 @@ func TestScreensSystemJunk(t *testing.T) {
 
 	close(scanRelease)
 	a.WaitFor("id:category-list", 10*time.Second)
+	a.Screenshot("system-junk-results")
 	a.Press("id:expand-user-caches")
 	a.Press("role:checkbox com.example.app01")
-	a.Screenshot("system-junk-results")
+	a.Screenshot("system-junk-results-expanded")
 
 	a.Press("id:check-trash")
 	a.Press("id:clean")
@@ -105,4 +106,33 @@ func TestScreensSystemJunk(t *testing.T) {
 	a.Screenshot("system-junk-done")
 	a.Press("id:done-close")
 	a.WaitForGone("id:done", 10*time.Second)
+}
+
+// TestScreensSystemJunkLongList expands a category of 3,000 items and scrolls through it: the design's largest list, for its look and, under -trace, its commit times.
+func TestScreensSystemJunkLongList(t *testing.T) {
+	mod := time.Now().Add(-50 * time.Hour)
+	items := make([]cleanup.Item, 3000)
+	var size int64
+	for i := range items {
+		p := fmt.Sprintf("/Users/me/Library/Caches/com.example.big/entry-%04d", i)
+		items[i] = cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: int64(3000-i) * 41_000, ModTime: mod, Selected: true}
+		size += items[i].Size
+	}
+	big := cleanup.Category{ID: "big", Title: "应用缓存", Description: "应用临时保存的数据，删除后会自动重建", Icon: "cache", Kind: cleanup.KindCache,
+		Deletion: cleanup.DeletePermanent, Selected: true, Items: items, Size: size}
+	c := &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+		return cleanflowfake.Result(big), nil
+	}}
+	a := screensApp(t, storefake.New(t.TempDir()), shell.Deps{SystemJunk: systemjunk.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "system-junk")
+	a.WaitFor("id:scan", 10*time.Second)
+	a.Press("id:scan")
+	a.WaitFor("id:category-list", 10*time.Second)
+	a.Press("id:expand-big")
+	a.WaitFor("id:items-big", 10*time.Second)
+	a.Mark("scroll")
+	for i := 1; i <= 20; i++ {
+		a.Scroll("id:items-big", 2400)
+	}
+	a.Mark("scrolled")
+	a.Screenshot("system-junk-long-list")
 }

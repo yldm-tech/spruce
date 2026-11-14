@@ -198,7 +198,9 @@ func TestCleansWithoutAskingWhenConfirmationIsOff(t *testing.T) {
 	fakes := newFakes(t)
 	fakes.Settings.General.ConfirmBeforeClean = false
 	c := &cleanflowfake.Cleaner{
-		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) { return scanOf(), nil },
+		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+			return scanOf(), nil
+		},
 		OnClean: func(context.Context, app.CleanerID, cleanup.CleanRequest, func(cleanup.Progress)) (cleanup.CleanResult, error) {
 			return cleaned, nil
 		}}
@@ -434,7 +436,9 @@ func TestCleaningOverlay(t *testing.T) {
 	fakes.Settings.General.ConfirmBeforeClean = false
 	progress := make(chan cleanup.Progress)
 	c := &cleanflowfake.Cleaner{
-		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) { return scanOf(), nil },
+		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+			return scanOf(), nil
+		},
 		OnClean: func(ctx context.Context, _ app.CleanerID, _ cleanup.CleanRequest, send func(cleanup.Progress)) (cleanup.CleanResult, error) {
 			for {
 				select {

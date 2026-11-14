@@ -91,7 +91,9 @@ func start(t *testing.T, c *cleanflowfake.Cleaner, fakes *storefake.Services) *p
 func newFakes(t *testing.T) *storefake.Services { return storefake.New(t.TempDir()) }
 
 func scanning(r cleanup.ScanResult) *cleanflowfake.Cleaner {
-	return &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) { return r, nil }}
+	return &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+		return r, nil
+	}}
 }
 
 // ticking settles until selector matches one view, moving the manual clock so throttled progress comes through.
