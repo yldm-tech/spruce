@@ -117,6 +117,7 @@ func main() {
 	// page: uninstall
 
 	// page: space
+	mygo.Bind(services.NewSpace(home, settingsStore.Get, trash.System(), historyStore, logger))
 
 	// page: health
 
