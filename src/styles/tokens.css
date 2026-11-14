@@ -1,4 +1,4 @@
-/* Design tokens of the approved 维护 design (1280x820, dark). Every colour, gradient, radius and font used by the design lives here; components reference these variables instead of literals. */
+/* Design tokens of the approved 维护 design (1280x820, dark), which every page shares. Every colour, gradient, radius and font lives here; components reference these variables instead of literals. */
 :root {
   color-scheme: dark;
 
@@ -86,6 +86,33 @@
   --gradient-cyan: linear-gradient(135deg, #5cf0e6, #10a3c4);
   --gradient-amber: var(--gradient-accent);
   --gradient-red: linear-gradient(135deg, #ff8a80, #f0435a);
+  /* The footer pages (操作历史, 设置) have glyphs instead of tiles in the sidebar; their page headers use these quieter tiles. */
+  --gradient-slate: linear-gradient(135deg, #a9b8d6, #5a6b93);
+  --gradient-graphite: linear-gradient(135deg, #c4bcd8, #6f668c);
+
+  /* ---- Glows under the page header tile, one per tile gradient ---- */
+  --glow-violet: rgba(122, 60, 255, 0.45);
+  --glow-green: rgba(19, 168, 107, 0.45);
+  --glow-orange: rgba(255, 107, 44, 0.45);
+  --glow-pink: rgba(230, 62, 140, 0.45);
+  --glow-blue: rgba(47, 107, 255, 0.45);
+  --glow-cyan: rgba(16, 163, 196, 0.45);
+  --glow-amber: var(--shadow-accent-soft);
+  --glow-red: rgba(240, 67, 90, 0.45);
+  --glow-slate: rgba(90, 107, 147, 0.45);
+  --glow-graphite: rgba(111, 102, 140, 0.45);
+
+  /* ---- Lists, checkboxes and dialogs of the cleaner pages ---- */
+  --surface-row-hover: rgba(255, 255, 255, 0.06);
+  --surface-list: rgba(0, 0, 0, 0.14);
+  --checkbox-off: rgba(255, 255, 255, 0.28);
+  --checkbox-on: var(--color-accent);
+  --checkbox-mark: var(--run-button-text);
+  --progress-track: var(--overlay-spinner-track);
+  --progress-fill: var(--overlay-spinner);
+  --color-danger: #ff8a80;
+  --button-danger-background: linear-gradient(135deg, #ff8a80, #f0435a);
+  --button-danger-text: #ffffff;
 
   /* ---- Radii ---- */
   --radius-nav-icon: 8px;
@@ -93,6 +120,7 @@
   --radius-card-icon: 12px;
   --radius-header-icon: 14px;
   --radius-card: 20px;
+  --radius-checkbox: 6px;
   --radius-dialog: 28px;
   --radius-pill: 999px;
 

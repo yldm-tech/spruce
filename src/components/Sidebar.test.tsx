@@ -42,28 +42,29 @@ describe("Sidebar", () => {
     const link = await screen.findByRole("link", { name: "维护" });
     expect(link.getAttribute("href")).toBe("/maintenance");
     expect(link.getAttribute("aria-current")).toBe("page");
-    expect(link.getAttribute("aria-disabled")).toBeNull();
   });
 
-  it("renders every other entry disabled with the coming-soon tooltip", async () => {
+  it("links every page in the designed order", async () => {
     renderAt("/maintenance");
     await screen.findByRole("link", { name: "维护" });
-    for (const name of [
-      "智能扫描",
-      "系统垃圾",
-      "开发者垃圾",
-      "安装包",
-      "应用卸载",
-      "空间透视",
-      "健康监测",
-      "操作历史",
-      "设置",
-    ]) {
-      const entry = screen.getByRole("link", { name });
-      expect(entry.getAttribute("aria-disabled")).toBe("true");
-      expect(entry.getAttribute("title")).toBe("即将推出");
-      expect(entry.hasAttribute("href")).toBe(false);
-    }
+    const links = screen.getAllByRole("link");
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["智能扫描", "/smart-scan"],
+      ["系统垃圾", "/system-junk"],
+      ["开发者垃圾", "/dev-junk"],
+      ["安装包", "/installers"],
+      ["应用卸载", "/uninstall"],
+      ["空间透视", "/space"],
+      ["维护", "/maintenance"],
+      ["健康监测", "/health"],
+      ["操作历史", "/history"],
+      ["设置", "/settings"],
+    ]);
+    // Only the current page is marked, and nothing is disabled any more.
+    expect(links.filter((l) => l.getAttribute("aria-current") === "page").map((l) => l.textContent)).toEqual([
+      "维护",
+    ]);
+    expect(links.some((l) => l.hasAttribute("aria-disabled"))).toBe(false);
   });
 
   it("is inert while a page's modal overlay is up", async () => {

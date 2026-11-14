@@ -1,0 +1,702 @@
+/* What every page shares, after the 维护 design (maintenance-lean.html, 1280x820): the page column, its header, the round action button, the overlays and dialogs, and the cleaner pages' lists. Values come from tokens.css; literal pixel sizes are the design's. */
+
+/* ---- Page ---- */
+
+/* The page scrolls inside .app-main, whose box the overlays cover. */
+.page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 32px 24px;
+}
+
+/* The layer page overlays are drawn in (OverlayHost): over the whole main area, letting clicks through where it is empty. */
+.overlay-host {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.overlay-host > * {
+  pointer-events: auto;
+}
+
+.overlay-host:empty {
+  display: none;
+}
+
+/* ---- Header ---- */
+
+/* The header reaches the top edge of the window (the design's 20px top padding is inside it) and drags the window, staying clear of the Windows caption buttons at the top right. */
+.page-header {
+  --app-region: drag;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 20px;
+  padding-right: var(--mygo-titlebar-inset-right, 0px);
+}
+
+.page-header-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.page-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.page-header-text h1 {
+  margin: 0;
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.page-header-text span {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+/* Buttons in the header must stay clickable inside the drag region. */
+.page-header-actions {
+  --app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---- Icon tiles ---- */
+
+/* The corner radius comes from the tile's own class (.nav-icon in global.css, the ones below), so it never depends on which style sheet loads last. */
+.icon-tile {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.page-header-icon {
+  border-radius: var(--radius-header-icon);
+}
+
+.category-icon {
+  border-radius: var(--radius-card-icon);
+}
+
+.empty-state-tile {
+  border-radius: 16px;
+}
+
+/* ---- Action bar ---- */
+
+.action-bar {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  /* The action button's outer ring (18px) stays clear of the content above. */
+  padding-top: 18px;
+}
+
+.action-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.action-stat--end {
+  align-items: flex-end;
+}
+
+.action-stat-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.action-stat-value {
+  font-size: var(--font-size-stat);
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing-stat);
+}
+
+.action-button {
+  width: 92px;
+  height: 92px;
+  flex: none;
+  border-radius: 46px;
+  border: 0;
+  cursor: pointer;
+  font-size: var(--font-size-run-button);
+  font-weight: 700;
+  color: var(--run-button-text);
+  background: var(--run-button-background);
+  box-shadow: var(--run-button-shadow);
+  transition:
+    opacity 0.15s ease,
+    filter 0.15s ease;
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  filter: saturate(0.4);
+}
+
+.action-button:focus-visible {
+  outline: 3px solid var(--color-text);
+  outline-offset: 4px;
+}
+
+/* ---- Buttons ---- */
+
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 19px;
+  background: var(--surface-button-ghost);
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.ghost-button:hover {
+  color: var(--color-text-link-hover);
+}
+
+.ghost-button:disabled,
+.link-button:disabled,
+.icon-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.link-button {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.link-button:hover:not(:disabled) {
+  color: var(--color-text-link-hover);
+}
+
+.icon-button {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 15px;
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--surface-button-ghost);
+  color: var(--color-text);
+}
+
+.ghost-button:focus-visible,
+.link-button:focus-visible,
+.icon-button:focus-visible,
+.done-button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* ---- Overlays ---- */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(var(--overlay-blur));
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+}
+
+.overlay--run {
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* It takes focus only to keep focus off the inert page; the whole area has nothing to outline. */
+.overlay--run:focus {
+  outline: none;
+}
+
+.overlay--dialog {
+  padding: 24px;
+}
+
+.run-spinner {
+  animation: spin 0.9s linear infinite;
+}
+
+.run-spinner-track {
+  stroke: var(--progress-track);
+}
+
+.run-spinner-arc {
+  stroke: var(--overlay-spinner);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-spinner {
+    animation-duration: 3s;
+  }
+}
+
+.overlay-title {
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.overlay-sub {
+  font-size: 14px;
+  color: var(--color-text-overlay-sub);
+}
+
+.overlay-progress {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-note {
+  max-width: 360px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+/* ---- Progress ring ---- */
+
+.progress-ring {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.progress-ring svg {
+  position: absolute;
+  inset: 0;
+}
+
+.progress-ring-fill {
+  stroke: var(--progress-fill);
+  transition: stroke-dashoffset 0.25s ease;
+}
+
+.progress-ring-center {
+  position: relative;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Dialogs ---- */
+
+.glass-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 480px;
+  max-height: 100%;
+  padding: 40px 52px;
+  border-radius: var(--radius-dialog);
+  background: var(--surface-dialog);
+  border: 1px solid var(--border-dialog);
+  box-shadow: var(--shadow-dialog);
+}
+
+.glass-card:focus {
+  outline: none;
+}
+
+/* Only the lines give way when the card meets the window's height. */
+.glass-card > * {
+  flex-shrink: 0;
+}
+
+.glass-card > .done-sub {
+  flex-shrink: 1;
+}
+
+.done-badge {
+  width: 88px;
+  height: 88px;
+  border-radius: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gradient-accent);
+  box-shadow: 0 16px 40px var(--shadow-accent);
+}
+
+.done-title {
+  margin-top: 6px;
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.done-big {
+  font-size: var(--font-size-done);
+  font-weight: 700;
+  letter-spacing: var(--letter-spacing-stat);
+  line-height: 1.1;
+}
+
+/* One line each; with every line listed it can outgrow a short window, so it scrolls instead of pushing 完成 off the card. */
+.done-sub {
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-nav-footer);
+  white-space: pre-line;
+}
+
+.done-button {
+  margin-top: 10px;
+  min-height: 46px;
+  padding: 0 40px;
+  border-radius: 23px;
+  border: 0;
+  background: var(--button-light-background);
+  color: var(--button-light-text);
+  font-size: var(--font-size-card-title);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.done-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.done-button--danger {
+  background: var(--button-danger-background);
+  color: var(--button-danger-text);
+}
+
+.confirm-card {
+  padding: 32px 40px;
+}
+
+.confirm-message {
+  max-width: 380px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-nav-footer);
+}
+
+.confirm-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.confirm-buttons .done-button,
+.confirm-buttons .ghost-button {
+  margin-top: 0;
+  min-height: 46px;
+  padding: 0 28px;
+  border-radius: 23px;
+  font-size: var(--font-size-card-title);
+}
+
+/* ---- Empty state and scan states ---- */
+
+.empty-state,
+.scan-state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 0;
+  text-align: center;
+}
+
+.empty-state-title,
+.scan-state-title {
+  font-size: var(--font-size-title);
+  font-weight: 700;
+}
+
+.empty-state-description,
+.scan-state-sub {
+  max-width: 440px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-overlay-sub);
+}
+
+.scan-state-tile {
+  border-radius: 22px;
+  margin-bottom: 6px;
+}
+
+.scan-state-path {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-body);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-state-error {
+  max-width: 440px;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+/* The button's outer ring (18px) stays clear of the text above. */
+.scan-state-action {
+  margin-top: 22px;
+}
+
+/* ---- Checkbox ---- */
+
+/* A real checkbox lies invisible over the drawn box, so clicks, keyboard and screen readers all reach it. */
+.checkbox {
+  position: relative;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.checkbox input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.checkbox input:disabled {
+  cursor: default;
+}
+
+.checkbox-box {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-checkbox);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--checkbox-off);
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.checkbox-box svg {
+  stroke: var(--checkbox-mark);
+  opacity: 0;
+}
+
+.checkbox input:checked + .checkbox-box,
+.checkbox input:indeterminate + .checkbox-box {
+  background: var(--checkbox-on);
+  border-color: var(--checkbox-on);
+}
+
+.checkbox input:checked + .checkbox-box svg,
+.checkbox input:indeterminate + .checkbox-box svg {
+  opacity: 1;
+}
+
+.checkbox input:disabled + .checkbox-box {
+  opacity: 0.45;
+}
+
+.checkbox input:focus-visible + .checkbox-box {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* ---- Category list ---- */
+
+.category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.category-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.category-toolbar-text {
+  margin-right: auto;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.category-toolbar-error {
+  flex-basis: 100%;
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.category-card {
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+  overflow: hidden;
+}
+
+.category-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.category-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.category-title {
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+}
+
+.category-description,
+.category-warning {
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.category-warning {
+  color: var(--color-warning);
+}
+
+.category-figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.category-size {
+  font-size: var(--font-size-card-title);
+  font-weight: 700;
+}
+
+.category-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.item-list-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.item-list {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--surface-list);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 18px 0 18px;
+}
+
+.item-row:hover {
+  background: var(--surface-row-hover);
+}
+
+.item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.item-name,
+.item-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-name {
+  font-size: var(--font-size-body);
+}
+
+.item-path {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.item-age,
+.item-size {
+  flex: none;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.item-size {
+  min-width: 64px;
+  text-align: right;
+  font-size: var(--font-size-body);
+  color: var(--color-text);
+}

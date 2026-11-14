@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { TaskView } from "../../mygo";
+import { ProgressRing } from "../common/ProgressRing";
 
 /** How far a run got, from the progress channel. */
 export interface RunProgress {
@@ -37,16 +38,7 @@ export function RunOverlay({ tasks, progress }: RunOverlayProps) {
 
   return (
     <div ref={ref} tabIndex={-1} role="group" aria-label="正在维护系统" className="overlay overlay--run">
-      <svg width="96" height="96" viewBox="0 0 96 96" aria-hidden="true" className="run-spinner">
-        <circle className="run-spinner-track" cx="48" cy="48" r="40" fill="none" strokeWidth="8" />
-        <path
-          className="run-spinner-arc"
-          d="M48 8 A40 40 0 0 1 88 48"
-          fill="none"
-          strokeWidth="8"
-          strokeLinecap="round"
-        />
-      </svg>
+      <ProgressRing label="正在维护系统" />
       <span className="overlay-title">正在维护系统…</span>
       <span className="overlay-sub">{`共 ${total} 项任务，不会动你的文档和照片`}</span>
       <span className="overlay-progress">{runStatusText(tasks, progress)}</span>

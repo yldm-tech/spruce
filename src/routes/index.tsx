@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-// Only 维护 exists in this milestone, so the app opens on it.
+// The app opens on 维护, the first page that was built; scripts/e2e-smoke.sh expects it there.
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
     throw redirect({ to: "/maintenance", replace: true });

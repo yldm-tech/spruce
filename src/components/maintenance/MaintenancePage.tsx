@@ -3,6 +3,9 @@ import { Channel } from "mygo-runtime";
 import { useEffect, useRef, useState } from "react";
 
 import { Maintenance, Permissions, type ProgressEvent, type RunSummary, type TaskView } from "../../mygo";
+import { ActionBar } from "../common/ActionBar";
+import { Page, PageHeader } from "../common/Page";
+import { PAGES } from "../common/pages";
 import { useBlockShell } from "../ShellBlock";
 import { AlertBanner } from "./AlertBanner";
 import { DoneOverlay } from "./DoneOverlay";
@@ -125,28 +128,8 @@ export function MaintenancePage() {
 
   return (
     <>
-      <div className="maint-page" inert={phase !== "idle"}>
-        <header className="maint-header">
-          <div className="maint-header-title">
-            <span aria-hidden="true" className="maint-header-icon">
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="2"
-                strokeLinejoin="round"
-              >
-                <path d="M13 3L5 14h6l-1 7 8-11h-6z" />
-              </svg>
-            </span>
-            <div className="maint-header-text">
-              <h1>维护</h1>
-              <span>给系统做一次轻量保养，不会动你的文档和照片</span>
-            </div>
-          </div>
-        </header>
+      <Page blocked={phase !== "idle"}>
+        <PageHeader {...PAGES.maintenance} />
 
         <AlertBanner />
 
@@ -173,26 +156,15 @@ export function MaintenancePage() {
           ))}
         </section>
 
-        <footer className="maint-footer">
-          <div className="maint-stat maint-stat--end">
-            <span className="maint-stat-label">已选择</span>
-            <span className="maint-stat-value">{`${selected.length} 项`}</span>
-          </div>
-          <button
-            ref={runButtonRef}
-            type="button"
-            className="run-button"
-            disabled={selected.length === 0}
-            onClick={start}
-          >
-            运行
-          </button>
-          <div className="maint-stat">
-            <span className="maint-stat-label">预计用时</span>
-            <span className="maint-stat-value">{formatEstimate(estimate)}</span>
-          </div>
-        </footer>
-      </div>
+        <ActionBar
+          ref={runButtonRef}
+          label="运行"
+          disabled={selected.length === 0}
+          onClick={start}
+          start={{ label: "已选择", value: `${selected.length} 项` }}
+          end={{ label: "预计用时", value: formatEstimate(estimate) }}
+        />
+      </Page>
 
       {/* Mounted from the first render and outside the inert page, so screen readers announce the run as soon as it starts. */}
       <div role="status" aria-live="polite" className="visually-hidden">
