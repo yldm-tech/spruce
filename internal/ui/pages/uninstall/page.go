@@ -111,7 +111,7 @@ func Page(cx *core.Scope) core.Node {
 	}
 
 	return core.Group{
-		kit.Page{Children: []core.Node{
+		column{Children: []core.Node{
 			kit.PageHeader{Route: nav.Uninstall, Actions: []core.Node{refresh}},
 			body,
 			core.Text{Content: footnote, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted}},
@@ -120,6 +120,17 @@ func Page(cx *core.Scope) core.Node {
 		kit.LiveStatus{Text: s.LiveText},
 		flow(cx, s, actionRef, listRef),
 	}
+}
+
+// column is the page's column as kit.Page lays it out, without its scroll view: the columns take the height between the header and the action bar and scroll inside, as the design's grid row minmax(0, 1fr) does, which a scroll view's unbounded content height cannot. It fills the shell's main area absolutely, so its content's height never grows the window's root past the window (the shell sizes the root by its content). The window's minimum height leaves the columns more than their 300-point minimum, so the page itself never needs to scroll.
+type column struct {
+	Children []core.Node
+}
+
+// Render implements core.Node.
+func (c column) Render(*core.Scope) core.Node {
+	return core.View{TestID: "uninstall-page", Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0),
+		Left: core.Pt(0), Gap: 18, Padding: core.Edges{Left: 32, Right: 32, Bottom: 24}}, Children: c.Children}
 }
 
 // narrowBelow is the width of the columns under which they share it evenly and the rows drop the App Store badge: the design's 1080-point window less the sidebar and the page's margins.
@@ -131,9 +142,9 @@ func columns(cx *core.Scope, s *State, listRef *core.Ref) core.Node {
 	share := func(grow float32, minWide, minNarrow core.Points) func() core.Style {
 		return func() core.Style {
 			if narrow.Get() {
-				return core.Style{FlexGrow: 1, FlexShrink: 1, FlexBasis: core.Pt(0), MinWidth: core.Pt(minNarrow)}
+				return core.Style{FlexGrow: 1, FlexShrink: 1, FlexBasis: core.Pt(0), MinWidth: core.Pt(minNarrow), MinHeight: core.Pt(0)}
 			}
-			return core.Style{FlexGrow: grow, FlexShrink: 1, FlexBasis: core.Pt(0), MinWidth: core.Pt(minWide)}
+			return core.Style{FlexGrow: grow, FlexShrink: 1, FlexBasis: core.Pt(0), MinWidth: core.Pt(minWide), MinHeight: core.Pt(0)}
 		}
 	}
 	return core.View{

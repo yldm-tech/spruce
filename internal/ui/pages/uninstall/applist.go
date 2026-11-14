@@ -108,7 +108,7 @@ func appList(cx *core.Scope, s *State, listRef *core.Ref, narrow func() bool) co
 					FontSize: kit.FontBody, Color: kit.ColorTextMuted}}
 		})
 	})
-	return kit.Card{Clip: true, TestID: "app-list-card", Style: core.Style{FlexGrow: 1, MinHeight: core.Pt(0)},
+	return kit.Card{Clip: true, TestID: "app-list-card", Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)},
 		Children: []core.Node{tools, count, rows}}
 }
 
@@ -176,7 +176,7 @@ func listBox(cx *core.Scope, s *State, listRef *core.Ref, narrow, searchFocused 
 		},
 		EstimatedSize:     rowHeight,
 		Ref:               scroll,
-		Style:             core.Style{FlexGrow: 1, MinHeight: core.Pt(0), Padding: core.All(6)},
+		Style:             core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), Padding: core.All(6)},
 		ViewabilityConfig: core.ViewabilityConfig{ItemVisiblePercentThreshold: 100},
 		OnViewableItemsChange: func(v core.ViewableItems) {
 			first, last = -1, -1
@@ -195,7 +195,7 @@ func listBox(cx *core.Scope, s *State, listRef *core.Ref, narrow, searchFocused 
 		Focusable: func() bool { return true },
 		OnFocus:   func() { focused.Set(true) },
 		OnBlur:    func() { focused.Set(false) },
-		Style:     core.Style{Group: listGroup, FlexGrow: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
+		Style:     core.Style{Group: listGroup, FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
 		Children:  []core.Node{list, keys, searchKeys}}
 }
 

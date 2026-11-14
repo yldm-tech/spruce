@@ -51,7 +51,7 @@ func detail(cx *core.Scope, s *State) core.Node {
 		}
 		return ""
 	})
-	return kit.Card{Clip: true, TestID: "detail", Style: core.Style{FlexGrow: 1, MinHeight: core.Pt(0)}, Children: []core.Node{
+	return kit.Card{Clip: true, TestID: "detail", Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)}, Children: []core.Node{
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if picked.Get() == "" {
 				return core.Func(func(*core.Scope) core.Node {
