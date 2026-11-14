@@ -89,6 +89,9 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 
 	started := c.opts.Now()
 	res := cleanup.CleanResult{StartedAt: started, Failed: []cleanup.Failure{}}
+	// The deleter asks git again before each project's build output goes; how strict it is depends on the mode.
+	c.del.setMode(req.Mode)
+	defer c.del.setMode(cleanup.ModeDefault)
 	if fileItems > 0 {
 		fileRes, err := c.exec.Clean(ctx, fileReq, func(p cleanup.Progress) {
 			p.Total = total

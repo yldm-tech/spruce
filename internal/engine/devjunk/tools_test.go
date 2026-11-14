@@ -239,7 +239,7 @@ func TestLocateDarwin(t *testing.T) {
 	f.On("/opt/homebrew/bin/brew", "--cache").Return("Warning: something\n", 0)
 	f.On(xcodeSelectPath, "-p").Return(devDir+"\n", 0)
 
-	l := locate(context.Background(), e, f, look, devices)
+	l := locate(context.Background(), e, f, look, devices, false)
 	if l.bins["go"] != "/opt/homebrew/bin/go" || l.bins["brew"] != "/opt/homebrew/bin/brew" {
 		t.Errorf("bins = %v", l.bins)
 	}
@@ -268,11 +268,11 @@ func TestLocateDarwin(t *testing.T) {
 	if err := os.Remove(filepath.Join(devDir, "usr", "bin", "simctl")); err != nil {
 		t.Fatal(err)
 	}
-	if l := locate(context.Background(), e, f, look, devices); l.xcrun != "" {
+	if l := locate(context.Background(), e, f, look, devices, false); l.xcrun != "" {
 		t.Errorf("xcrun = %q without simctl", l.xcrun)
 	}
 	g := execxtest.New()
-	locate(context.Background(), e, g, lookPathOf(nil), filepath.Join(home, "missing"))
+	locate(context.Background(), e, g, lookPathOf(nil), filepath.Join(home, "missing"), false)
 	g.AssertNotCalled(t, xcodeSelectPath)
 	if len(g.Calls()) != 0 {
 		t.Errorf("locate ran %v with no tools installed", g.Calls())
@@ -291,7 +291,7 @@ func TestLocateWindows(t *testing.T) {
 	f := execxtest.New()
 	f.On(goExe, "env", "GOCACHE", "GOMODCACHE").Return("C:\\Users\\u\\AppData\\Local\\go-build\r\nC:\\Users\\u\\go\\pkg\\mod\r\n", 0)
 	f.On(`C:\Users\u\AppData\Roaming\npm\pnpm.cmd`, "store", "path").Fail(exec.ErrNotFound)
-	l := locate(context.Background(), e, f, look, "")
+	l := locate(context.Background(), e, f, look, "", false)
 	if l.bins["go"] != goExe || l.bins["pip"] != `C:\Python312\Scripts\pip.exe` || l.bins["brew"] != "" {
 		t.Errorf("bins = %v", l.bins)
 	}

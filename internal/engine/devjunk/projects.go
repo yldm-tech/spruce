@@ -100,34 +100,36 @@ type artifactRule struct {
 	kind    string
 	// inside also matches anywhere inside such a project, not only next to its marker (Python caches sit in every package folder).
 	inside bool
+	// generated marks folder names that only ever hold generated content, so untracked files inside them do not make the project dirty (gitstate.Artifact.Generated). bin and obj (.NET), build (Gradle, Dart) and Pods are not: people keep their own files there.
+	generated bool
 }
 
 var artifactRules = []artifactRule{
-	{name: "node_modules", markers: markPackageJSON, kind: "node-modules"},
-	{name: ".next", markers: markPackageJSON, kind: "web-build"},
-	{name: ".nuxt", markers: markPackageJSON, kind: "web-build"},
-	{name: ".svelte-kit", markers: markPackageJSON, kind: "web-build"},
-	{name: ".turbo", markers: markPackageJSON, kind: "web-build"},
-	{name: ".parcel-cache", markers: markPackageJSON, kind: "web-build"},
-	{name: ".angular", sub: "cache", markers: markPackageJSON, kind: "web-build"},
-	{name: ".expo", markers: markPackageJSON, kind: "web-build"},
-	{name: "target", markers: markCargo, kind: "rust-target"},
-	{name: "target", markers: markPom, kind: "maven-target"},
+	{name: "node_modules", markers: markPackageJSON, kind: "node-modules", generated: true},
+	{name: ".next", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".nuxt", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".svelte-kit", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".turbo", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".parcel-cache", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".angular", sub: "cache", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: ".expo", markers: markPackageJSON, kind: "web-build", generated: true},
+	{name: "target", markers: markCargo, kind: "rust-target", generated: true},
+	{name: "target", markers: markPom, kind: "maven-target", generated: true},
 	{name: "build", markers: markGradle, kind: "gradle"},
-	{name: ".gradle", markers: markGradle, kind: "gradle"},
+	{name: ".gradle", markers: markGradle, kind: "gradle", generated: true},
 	{name: "Pods", markers: markPodfile, kind: "cocoapods"},
-	{name: "DerivedData", markers: markXcodeProject, kind: "xcode-project"},
-	{name: ".build", markers: markPackageSwift, kind: "swiftpm"},
-	{name: "__pycache__", markers: markPython, kind: "python", inside: true},
-	{name: ".pytest_cache", markers: markPython, kind: "python", inside: true},
-	{name: ".mypy_cache", markers: markPython, kind: "python", inside: true},
-	{name: ".ruff_cache", markers: markPython, kind: "python", inside: true},
-	{name: ".tox", markers: markPython, kind: "python"},
+	{name: "DerivedData", markers: markXcodeProject, kind: "xcode-project", generated: true},
+	{name: ".build", markers: markPackageSwift, kind: "swiftpm", generated: true},
+	{name: "__pycache__", markers: markPython, kind: "python", inside: true, generated: true},
+	{name: ".pytest_cache", markers: markPython, kind: "python", inside: true, generated: true},
+	{name: ".mypy_cache", markers: markPython, kind: "python", inside: true, generated: true},
+	{name: ".ruff_cache", markers: markPython, kind: "python", inside: true, generated: true},
+	{name: ".tox", markers: markPython, kind: "python", generated: true},
 	{name: "bin", markers: markCsproj, kind: "dotnet"},
 	{name: "obj", markers: markCsproj, kind: "dotnet"},
-	{name: "zig-cache", markers: markZig, kind: "zig"},
-	{name: ".zig-cache", markers: markZig, kind: "zig"},
-	{name: ".dart_tool", markers: markPubspec, kind: "dart"},
+	{name: "zig-cache", markers: markZig, kind: "zig", generated: true},
+	{name: ".zig-cache", markers: markZig, kind: "zig", generated: true},
+	{name: ".dart_tool", markers: markPubspec, kind: "dart", generated: true},
 	{name: "build", markers: markPubspec, kind: "dart"},
 }
 
@@ -144,6 +146,8 @@ type artifact struct {
 	info    fs.FileInfo
 	// active is the project's last activity.
 	active time.Time
+	// generated is the rule's generated flag.
+	generated bool
 }
 
 // projectWalk finds build output under one project root.
@@ -152,6 +156,7 @@ type projectWalk struct {
 	root       string
 	exclusions []string
 	excluded   func(path string, exclusions []string) bool
+	mayRead    func(path string) bool
 	onDir      func(path string)
 
 	sem chan struct{}
@@ -164,10 +169,10 @@ type projectWalk struct {
 	firstErr error
 }
 
-// walkProjects walks root and returns the build output it found and how many folders could not be read for lack of permission. onDir is called with each folder read (from several goroutines).
-func walkProjects(ctx context.Context, root string, exclusions []string, excluded func(string, []string) bool, onDir func(string)) ([]artifact, int64, error) {
+// walkProjects walks root and returns the build output it found and how many folders could not be read for lack of permission. mayRead, when not nil, is asked before each folder is read, the root included; a folder it refuses is skipped silently. onDir is called with each folder read (from several goroutines).
+func walkProjects(ctx context.Context, root string, exclusions []string, excluded func(string, []string) bool, mayRead func(string) bool, onDir func(string)) ([]artifact, int64, error) {
 	w := &projectWalk{
-		ctx: ctx, root: root, exclusions: exclusions, excluded: excluded, onDir: onDir,
+		ctx: ctx, root: root, exclusions: exclusions, excluded: excluded, mayRead: mayRead, onDir: onDir,
 		sem: make(chan struct{}, walkWorkers), activity: map[string]time.Time{},
 	}
 	w.visit(root, 0, "")
@@ -181,6 +186,9 @@ func walkProjects(ctx context.Context, root string, exclusions []string, exclude
 // visit reads dir (depth below the root), records the build output next to its markers and walks the other sub-folders. pyProject is the nearest Python project folder above dir, or "".
 func (w *projectWalk) visit(dir string, depth int, pyProject string) {
 	if w.ctx.Err() != nil {
+		return
+	}
+	if w.mayRead != nil && !w.mayRead(dir) {
 		return
 	}
 	des, err := os.ReadDir(dir)
@@ -259,7 +267,7 @@ func (w *projectWalk) record(rule artifactRule, path, project string, siblings [
 	}
 	active := w.lastActivity(project, siblings)
 	w.mu.Lock()
-	w.found = append(w.found, artifact{path: path, kind: rule.kind, project: project, root: w.root, info: info, active: active})
+	w.found = append(w.found, artifact{path: path, kind: rule.kind, project: project, root: w.root, info: info, active: active, generated: rule.generated})
 	w.mu.Unlock()
 }
 
