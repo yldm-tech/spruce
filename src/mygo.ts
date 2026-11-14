@@ -29,6 +29,33 @@ export interface AppSettings {
   general: GeneralSettings;
 }
 
+/** BatteryState is what the battery is doing. */
+export type BatteryState = "charging" | "discharging" | "full" | "notCharging" | "unknown";
+
+/** BatteryStats is the internal battery (all of them together on a machine with several). */
+export interface BatteryStats {
+  present: boolean;
+  /** Percent is the charge, 0 to 100. */
+  percent: number;
+  state: BatteryState;
+  /** MinutesRemaining is the system's estimate until empty while discharging or until full while charging; nil while unknown (still calculating, or on external power without charging). */
+  minutesRemaining?: number;
+  /** CycleCount is nil when the battery does not report it. */
+  cycleCount?: number;
+  /** HealthPercent is the full charge capacity as a percent of the design capacity; nil when either is unknown. */
+  healthPercent?: number;
+}
+
+/** CPUStats is the CPU use since the previous sample. */
+export interface CPUStats {
+  /** Percent is the whole machine's use, 0 to 100. */
+  percent: number;
+  /** PerCore is each logical CPU's use, 0 to 100, in the system's order. */
+  perCore: number[];
+  /** Load is the load average; only macOS has one. */
+  load?: LoadAverage;
+}
+
 /** Category is one group of items the page lists, with one checkbox. */
 export interface Category {
   /** ID is stable across scans and unique within a ScanResult, e.g. "user-caches". */
@@ -110,6 +137,21 @@ export interface CleanupSettings {
 /** DeletionMode is how a category's items are removed. */
 export type DeletionMode = "permanent" | "trash";
 
+/** DiskIO is the throughput of every physical disk together since the previous sample, in bytes per second. */
+export interface DiskIO {
+  readPerSec: number;
+  writePerSec: number;
+}
+
+/** DiskUsage is the system volume's space. */
+export interface DiskUsage {
+  total: number;
+  /** Used is Total minus Free, which on macOS includes the other volumes sharing the APFS container, as Finder counts it. */
+  used: number;
+  /** Free is the space available to the user. */
+  free: number;
+}
+
 /** Failure is one item that was not deleted. */
 export interface Failure {
   itemId: string;
@@ -167,6 +209,34 @@ export interface Item {
 /** Kind is what kind of operation a Run was. */
 export type Kind = "maintenance" | "systemJunk" | "devJunk" | "installers" | "uninstall" | "space" | "smartScan";
 
+/** LoadAverage is the number of runnable threads averaged over 1, 5 and 15 minutes. */
+export interface LoadAverage {
+  one: number;
+  five: number;
+  fifteen: number;
+}
+
+/** MemoryPressure is the kernel's memory pressure level (kern.memorystatus_vm_pressure_level), as Activity Monitor's memory pressure graph colours it. */
+export type MemoryPressure = "normal" | "warning" | "critical";
+
+/** MemoryStats is the physical memory and swap in use. */
+export interface MemoryStats {
+  total: number;
+  /** Used is what gopsutil counts as used: total minus what is available without swapping (on macOS free plus inactive pages). */
+  used: number;
+  percent: number;
+  /** Swap is the swap files on macOS and the page file on Windows; nil when it could not be read. */
+  swap: SwapStats | null;
+  /** Pressure is the kernel's memory pressure level; only macOS reports one. */
+  pressure?: MemoryPressure;
+}
+
+/** NetworkIO is the throughput of every interface except loopback together since the previous sample, in bytes per second. */
+export interface NetworkIO {
+  uploadPerSec: number;
+  downloadPerSec: number;
+}
+
 /** Outcome is how a maintenance task ended. */
 export type Outcome = "applied" | "unchanged" | "skipped" | "unavailable" | "failed";
 
@@ -175,6 +245,25 @@ export type PermissionState = "granted" | "denied" | "unknown" | "notRequired";
 
 /** Phase is the stage a Progress event belongs to. */
 export type Phase = "scanning" | "cleaning";
+
+/** ProcessLists are the processes using the most CPU and the most memory. */
+export interface ProcessLists {
+  /** TopCPU is most CPU first; processes first seen in this sample have no CPU figure yet and are not in it. */
+  topCpu: ProcessUsage[];
+  /** TopMemory is most memory first. */
+  topMemory: ProcessUsage[];
+}
+
+/** ProcessUsage is one process in a top list. */
+export interface ProcessUsage {
+  pid: number;
+  /** Name is the display name package health uses for alerts, e.g. "Google Chrome" for its helpers on macOS. */
+  name: string;
+  /** CPUPercent is the share of one logical CPU since the previous sample (a process busy on two cores is 200); nil when unknown. */
+  cpuPercent: number | null;
+  /** Memory is the resident set (RSS) on macOS and the working set on Windows, in bytes; nil when unknown. */
+  memory: number | null;
+}
 
 /** Progress is streamed to the page while a scan or a clean runs. */
 export interface Progress {
@@ -268,6 +357,33 @@ export interface ScanResult {
   duration: number;
 }
 
+/** SwapStats is the swap space in use. */
+export interface SwapStats {
+  total: number;
+  used: number;
+}
+
+/** SystemInfo is what does not change while the app runs. Fields that could not be read are empty. */
+export interface SystemInfo {
+  /** OSName is e.g. "macOS" or "Windows 11 Pro". */
+  osName: string;
+  /** OSVersion is e.g. "26.1" on macOS or "24H2" on Windows. */
+  osVersion: string;
+  /** OSBuild is e.g. "25B78" on macOS or "26100.2314" on Windows. */
+  osBuild: string;
+  /** Model is the hardware model: the identifier on macOS (hw.model, e.g. "Mac16,8"), the BIOS manufacturer and product name on Windows. */
+  model: string;
+  cpuModel: string;
+  /** PhysicalCores and LogicalCores are 0 when unknown. */
+  physicalCores: number;
+  logicalCores: number;
+  /** PerformanceCores and EfficiencyCores split PhysicalCores on Apple Silicon; 0 elsewhere. */
+  performanceCores?: number;
+  efficiencyCores?: number;
+  /** BootTime is when the system started; absent when unknown. */
+  bootTime?: string;
+}
+
 /** TaskView is one card of the 维护 page. */
 export interface TaskView {
   id: string;
@@ -298,6 +414,21 @@ export interface TrashUsage {
   bytes: number;
   /** Items counts the top-level items. */
   items: number;
+}
+
+/** Vitals is one sample of the machine. A nil metric could not be read for this sample; the others do not depend on it. */
+export interface Vitals {
+  at: string;
+  cpu: CPUStats | null;
+  memory: MemoryStats | null;
+  /** Disk is the system volume. */
+  disk: DiskUsage | null;
+  diskIo: DiskIO | null;
+  /** Network sums every interface except loopback. */
+  network: NetworkIO | null;
+  /** Battery is nil when it could not be read; Present is false on a machine without one. */
+  battery: BatteryStats | null;
+  processes: ProcessLists | null;
 }
 
 // ---- Services ----
@@ -395,6 +526,25 @@ export const Cleanup = {
   /** Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese. */
   scan(cleaner: CleanerID, progress: Channel<Progress>): Promise<ScanResult> {
     return call("Cleanup.Scan", cleaner, progress);
+  },
+} as const;
+
+/**
+ * Sysinfo is the bound service behind the 健康监测 dashboard. The CPU alert on the same page comes from Health.
+ *
+ * Bound API (TypeScript view):
+ *
+ * 	Sysinfo.info(): Promise<SystemInfo>
+ * 	Sysinfo.watch(samples: Channel<Vitals>): Promise<void>
+ */
+export const Sysinfo = {
+  /** Info returns what does not change while the app runs: the OS, the model, the CPU and its cores, and the boot time. Fields that could not be read are empty. */
+  info(): Promise<SystemInfo> {
+    return call("Sysinfo.Info");
+  },
+  /** Watch streams the machine's vitals to the page: first the samples kept from the last two minutes (oldest first), then a new one every two seconds, until the page closes the channel or goes away. Sampling runs only while at least one page watches. */
+  watch(samples: Channel<Vitals>): Promise<void> {
+    return call("Sysinfo.Watch", samples);
   },
 } as const;
 

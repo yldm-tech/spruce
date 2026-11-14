@@ -128,3 +128,25 @@
   --sidebar-width: 228px;
   --main-min-width: 560px;
 }
+
+/* ---- health ---- */
+/* The 健康监测 dashboard: sparkline colours (lines and the fill under them), the usage meters and the memory pressure levels. */
+:root {
+  --chart-cpu: #ffd23f;
+  --chart-cpu-fill: rgba(255, 210, 63, 0.16);
+  --chart-memory: #c08bff;
+  --chart-memory-fill: rgba(192, 139, 255, 0.16);
+  --chart-disk-read: #5cf0e6;
+  --chart-disk-write: #ff8fc8;
+  --chart-net-down: #6cc4ff;
+  --chart-net-up: #4be3a0;
+  --meter-track: rgba(255, 255, 255, 0.14);
+  --meter-fill: var(--gradient-accent);
+  --meter-fill-warning: linear-gradient(90deg, #ffd27a, #ffb25c);
+  --meter-fill-critical: var(--button-danger-background);
+  --core-bar-track: rgba(255, 255, 255, 0.1);
+  --core-bar-fill: var(--color-accent-bright);
+  --pressure-normal: #4be3a0;
+  --pressure-warning: var(--color-warning);
+  --pressure-critical: var(--color-danger);
+}
