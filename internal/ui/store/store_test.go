@@ -238,7 +238,14 @@ func TestPermissionLocationsAndBlock(t *testing.T) {
 	block := make(chan struct{})
 	close(block)
 	st := newStores(t, h, &fakeSettings{}, fakeAlerts{ch: make(chan []health.Alert), block: block}, fakeFeed{make(chan settings.AppSettings)}, make(chan history.Run))
+	// The first check has not answered yet: nothing is known.
+	if st.Permission.Checked() || st.Permission.FullDiskAccess() != maintenance.PermissionUnknown {
+		t.Errorf("before the first answer: checked %v, %q", st.Permission.Checked(), st.Permission.FullDiskAccess())
+	}
 	h.until(t, func() bool { return st.Permission.FullDiskAccess() == maintenance.PermissionDenied })
+	if !st.Permission.Checked() {
+		t.Error("not checked after the answer")
+	}
 	var guided maintenance.PermissionState
 	st.Permission.Guide(func(s maintenance.PermissionState, err error) { guided = s })
 	if !st.Permission.Guiding() {

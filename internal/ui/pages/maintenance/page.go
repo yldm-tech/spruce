@@ -25,13 +25,16 @@ func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	perm := store.Use(cx).Permission
 	s := NewState(cx, deps.Maintenance, perm.Recheck)
+	// Full Disk Access changes in System Settings: it is read again as the page opens, and again after a run or a guide.
+	perm.Recheck()
 	runRef := new(core.Ref)
 	// 完成 takes the card away with the phase, so the focus goes back to 运行 here rather than as the card closes.
 	finish := func() {
 		s.Finish()
 		runRef.Focus()
 	}
-	missing := func() bool { return shared.NeedsFullDiskAccess(perm.FullDiskAccess()) }
+	// Nothing is asked for before the first check answers.
+	missing := func() bool { return perm.Checked() && shared.NeedsFullDiskAccess(perm.FullDiskAccess()) }
 	onGuided := func(st maintenance.PermissionState) {
 		if st == maintenance.PermissionGranted {
 			s.Guided.Set(true)

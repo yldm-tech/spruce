@@ -85,7 +85,11 @@ type disk struct {
 	has, loaded bool
 }
 
+// diskCard is the free space of the system disk. Free space changes outside the app, so the disks are read again each time the card shows; what was read before stays until the new answer arrives.
 func diskCard(cx *core.Scope, st *store.Stores) core.Node {
+	if core.Untracked(cx, func() bool { _, ok := st.Locations.Get(); return ok }) {
+		st.Locations.Bump()
+	}
 	d := core.NewMemo(cx, func() disk {
 		l, loaded := st.Locations.Get()
 		if v := SystemVolume(l); v != nil {
@@ -175,14 +179,18 @@ func cpuCard(st *store.Stores) core.Node {
 	}
 }
 
-// fullDiskAccessCard is the Full Disk Access card, absent where the system does not ask for it. The store reads the state once the app opens; until it answers the state is unknown, shown as 无法确定.
+// fullDiskAccessCard is the Full Disk Access card, absent where the system does not ask for it. It reads the state again as it shows, since it changes in System Settings; until the store first answers it says 正在检查… and offers no guide.
 func fullDiskAccessCard(cx *core.Scope, st *store.Stores) core.Node {
 	perm := st.Permission
+	perm.Recheck()
 	failed := core.NewSignal(cx, false)
 	granted := func() bool { return perm.FullDiskAccess() == maintenance.PermissionGranted }
 	card := statusCard{Title: "完全磁盘访问权限", Tone: kit.ToneAmber, Glyph: "lock", TestID: "status-fda",
 		Warning: func() bool { return perm.FullDiskAccess() == maintenance.PermissionDenied },
 		Value: func() string {
+			if !perm.Checked() {
+				return "正在检查…"
+			}
 			switch perm.FullDiskAccess() {
 			case maintenance.PermissionGranted:
 				return "已开启"
@@ -198,7 +206,7 @@ func fullDiskAccessCard(cx *core.Scope, st *store.Stores) core.Node {
 			return FullDiskAccessNote()
 		},
 		Actions: []core.Node{
-			core.Show{When: func() bool { return !granted() }, Then: func(*core.Scope) core.Node {
+			core.Show{When: func() bool { return perm.Checked() && !granted() }, Then: func(*core.Scope) core.Node {
 				return kit.Button{Variant: kit.ButtonGhost, TestID: "grant", Disabled: perm.Guiding,
 					TextFunc: func() string {
 						if perm.Guiding() {

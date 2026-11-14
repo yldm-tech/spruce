@@ -27,6 +27,7 @@ type page struct {
 	svc    *maintenancefake.Service
 	fakes  *storefake.Services
 	stores *store.Stores
+	shown  *core.Signal[bool]
 }
 
 func start(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services) *page {
@@ -35,7 +36,9 @@ func start(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
 		maintenance.DepsKey.Provide(cx, maintenance.Deps{Maintenance: svc})
-		return maintenance.Page(cx)
+		// The page sits behind a switch (shown), so a test can leave it and open it again.
+		p.shown = core.NewSignal(cx, true)
+		return core.Show{When: p.shown.Get, Then: maintenance.Page}
 	}, nsgotest.Size(1052, 820))
 	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) > 0 })
 	return p
@@ -270,6 +273,31 @@ func TestFullDiskAccessOnTheDatabaseCard(t *testing.T) {
 	if _, guides := fakes.Counts(); guides != 1 {
 		t.Errorf("guides %d", guides)
 	}
+}
+
+// Nothing is asked for before the first check answers, and the state is read again each time the page opens, since it changes in System Settings.
+func TestFullDiskAccessIsCheckedAsThePageOpens(t *testing.T) {
+	fakes := newFakes(t)
+	fakes.Permission = enginemaint.PermissionDenied
+	release := make(chan struct{})
+	fakes.CheckRelease = release
+	p := start(t, &maintenancefake.Service{Tasks: maintenancefake.MacCatalog()}, fakes)
+	p.Press("role:switch 优化应用数据库")
+	p.Settle()
+	if p.Exists("role:button 去授权") {
+		t.Fatal("去授权 offered before the first check answered")
+	}
+	close(release)
+	p.WaitFor("role:button 去授权", wait)
+
+	// Granted in System Settings while the app runs: the prompt is gone once the page opens again.
+	fakes.SetPermission(enginemaint.PermissionGranted)
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("role:switch", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor("role:switch 优化应用数据库", wait)
+	p.Press("role:switch 优化应用数据库")
+	p.WaitForGone("role:button 去授权", wait)
 }
 
 // onlyDatabases turns 优化应用数据库 on and every other switch off.

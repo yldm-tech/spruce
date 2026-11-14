@@ -258,23 +258,28 @@ func (a *Alerts) OpenSystemMonitor(done func(error)) {
 		})
 }
 
-// Permission holds whether the app has Full Disk Access, shared by 维护, 智能扫描, 空间透视 and 设置.
+// Permission holds whether the app has Full Disk Access, shared by 维护, 智能扫描, 空间透视 and 设置. It changes outside the app (System Settings), so every page that shows it calls Recheck as it opens.
 type Permission struct {
 	cx      *core.Scope
 	ctx     context.Context
 	svc     PermissionService
 	state   *core.Signal[maintenance.PermissionState]
+	checked *core.Signal[bool]
 	guiding *core.Signal[bool]
 }
 
 func newPermission(cx *core.Scope, ctx context.Context, svc PermissionService) *Permission {
-	p := &Permission{cx: cx, ctx: ctx, svc: svc, state: core.NewSignal(cx, maintenance.PermissionUnknown), guiding: core.NewSignal(cx, false)}
+	p := &Permission{cx: cx, ctx: ctx, svc: svc, state: core.NewSignal(cx, maintenance.PermissionUnknown), checked: core.NewSignal(cx, false),
+		guiding: core.NewSignal(cx, false)}
 	p.Recheck()
 	return p
 }
 
-// FullDiskAccess returns the last known state; reading it subscribes.
+// FullDiskAccess returns the last known state, PermissionUnknown until the first check answers (Checked); reading it subscribes.
 func (p *Permission) FullDiskAccess() maintenance.PermissionState { return p.state.Get() }
+
+// Checked reports whether a check or the guide has answered yet; until then the pages say 正在检查… and offer no guide. Reading it subscribes.
+func (p *Permission) Checked() bool { return p.checked.Get() }
 
 // Guiding reports whether the guide waits in System Settings.
 func (p *Permission) Guiding() bool { return p.guiding.Get() }
@@ -286,6 +291,7 @@ func (p *Permission) Recheck() {
 			if err == nil {
 				p.state.Set(st)
 			}
+			p.checked.Set(true)
 		})
 }
 
@@ -298,6 +304,7 @@ func (p *Permission) Guide(done func(maintenance.PermissionState, error)) {
 	async.Do(p.cx, p.ctx, p.svc.GuideFullDiskAccess, func(st maintenance.PermissionState, err error) {
 		p.guiding.Set(false)
 		p.state.Set(st)
+		p.checked.Set(true)
 		if done != nil {
 			done(st, err)
 		}

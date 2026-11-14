@@ -144,15 +144,21 @@ func historySection(st *store.Settings, clearRef *core.Ref, onClear func()) core
 	)
 }
 
-// permissionsSection shows Full Disk Access on macOS, with the guide the 维护 page uses. Windows has no such permission, so it shows nothing there.
+// permissionsSection shows Full Disk Access on macOS, with the guide the 维护 page uses; it reads the state again as it shows, and says 正在检查… until the store first answers. Windows has no such permission, so it shows nothing there.
 func permissionsSection(perm *store.Permission) core.Node {
+	perm.Recheck()
 	return core.Show{When: func() bool {
 		return runtime.GOOS != "windows" && perm.FullDiskAccess() != maintenance.PermissionNotRequired
 	},
 		Then: func(cx *core.Scope) core.Node {
 			failed := core.NewSignal(cx, false)
 			granted := func() bool { return perm.FullDiskAccess() == maintenance.PermissionGranted }
-			state := core.Text{ContentFunc: func() string { return PermissionText(perm.FullDiskAccess()) }, TestID: "permission-state",
+			state := core.Text{ContentFunc: func() string {
+				if !perm.Checked() {
+					return "正在检查…"
+				}
+				return PermissionText(perm.FullDiskAccess())
+			}, TestID: "permission-state",
 				StyleFunc: func() core.Style {
 					c := kit.ColorWarning
 					if granted() {
@@ -160,7 +166,7 @@ func permissionsSection(perm *store.Permission) core.Node {
 					}
 					return core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: c}
 				}}
-			guide := core.Show{When: func() bool { return !granted() }, Then: func(*core.Scope) core.Node {
+			guide := core.Show{When: func() bool { return perm.Checked() && !granted() }, Then: func(*core.Scope) core.Node {
 				return kit.Button{Variant: kit.ButtonGhost, TestID: "grant-full-disk-access", Disabled: perm.Guiding,
 					TextFunc: func() string {
 						if perm.Guiding() {

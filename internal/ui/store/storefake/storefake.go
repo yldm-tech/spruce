@@ -28,8 +28,9 @@ type Services struct {
 	Permission maintenance.PermissionState
 	Guided     maintenance.PermissionState
 	GuideErr   error
-	// GuideRelease, when set, holds the guide until it receives.
+	// GuideRelease, when set, holds the guide until it receives; CheckRelease holds every FullDiskAccess check the same way.
 	GuideRelease chan struct{}
+	CheckRelease chan struct{}
 	// MonitorErr is what OpenSystemMonitor returns; Monitors counts its calls.
 	MonitorErr error
 	Monitors   int
@@ -184,6 +185,12 @@ type permissionSvc struct{ s *Services }
 
 func (f permissionSvc) FullDiskAccess() (maintenance.PermissionState, error) {
 	f.s.mu.Lock()
+	release := f.s.CheckRelease
+	f.s.mu.Unlock()
+	if release != nil {
+		<-release
+	}
+	f.s.mu.Lock()
 	defer f.s.mu.Unlock()
 	return f.s.Permission, nil
 }
@@ -209,6 +216,13 @@ func (f permissionSvc) GuideFullDiskAccess(ctx context.Context) (maintenance.Per
 }
 
 type locationSvc struct{ s *Services }
+
+// SetLocations changes what Locations answers from now on.
+func (s *Services) SetLocations(l app.SpaceLocations) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Locations = l
+}
 
 func (f locationSvc) Locations(context.Context) app.SpaceLocations {
 	f.s.mu.Lock()

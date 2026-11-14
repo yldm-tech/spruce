@@ -77,6 +77,7 @@ type page struct {
 	fakes  *storefake.Services
 	stores *store.Stores
 	nav    *nav.Navigator
+	shown  *core.Signal[bool]
 	tb     testing.TB
 }
 
@@ -99,7 +100,9 @@ func start(t *testing.T, c *cleanflowfake.Cleaner, fakes *storefake.Services) *p
 		p.nav = nav.NewNavigator(cx, nav.SmartScan)
 		nav.Key.Provide(cx, p.nav)
 		smartscan.DepsKey.Provide(cx, smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}})
-		return smartscan.Page(cx)
+		// The page sits behind a switch (shown), so a test can leave it and open it again.
+		p.shown = core.NewSignal(cx, true)
+		return core.Show{When: p.shown.Get, Then: smartscan.Page}
 	}, nsgotest.Size(1052, 820))
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
 	return p
@@ -252,6 +255,39 @@ func TestLowDisk(t *testing.T) {
 	if got := p.nav.Current(); got != nav.Space {
 		t.Errorf("went to %q", got)
 	}
+}
+
+// reopen leaves the page and opens it again.
+func (p *page) reopen() {
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:status", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor("id:status", wait)
+}
+
+// Full Disk Access says 正在检查… with no 去授权 until the first check answers; it and the free space are read again each time the page opens, since both change outside the app.
+func TestStatusIsReadAgainAsThePageOpens(t *testing.T) {
+	fakes := newFakes(t)
+	release := make(chan struct{})
+	fakes.CheckRelease = release
+	p := start(t, &cleanflowfake.Cleaner{}, fakes)
+	p.waitText("id:status-fda-value", "正在检查…")
+	if p.Exists("id:grant") {
+		t.Error("去授权 offered before the first check answered")
+	}
+	close(release)
+	p.waitText("id:status-fda-value", "未开启")
+	p.WaitFor("id:grant", wait)
+	p.waitText("id:status-disk-value", "可用 120 GB")
+
+	fakes.SetPermission(maintenance.PermissionGranted)
+	l := fakes.Deps().Locations.Locations(context.Background())
+	l.Volumes = []app.SpaceVolume{{Path: "/", Name: "Macintosh HD", Total: 1000e9, Free: 200e9, Startup: true}}
+	fakes.SetLocations(l)
+	p.reopen()
+	p.waitText("id:status-fda-value", "已开启")
+	p.WaitForGone("id:grant", wait)
+	p.waitText("id:status-disk-value", "可用 200 GB")
 }
 
 // 去授权 waits in System Settings and says when it could not open it.

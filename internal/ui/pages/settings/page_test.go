@@ -472,6 +472,30 @@ func TestFullDiskAccessGuide(t *testing.T) {
 	}
 }
 
+// Until the first check answers the section says 正在检查… and offers no guide; it reads the state again each time the page opens, since it changes in System Settings.
+func TestFullDiskAccessIsCheckedAsThePageOpens(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	fakes.Permission = maintenance.PermissionDenied
+	release := make(chan struct{})
+	fakes.CheckRelease = release
+	p := start(t, options{fakes: fakes})
+	p.Find("id:section-permissions >> text:正在检查…")
+	if p.Exists("id:grant-full-disk-access") {
+		t.Error("去授权 offered before the first check answered")
+	}
+	close(release)
+	p.WaitFor("id:section-permissions >> text:未授权", wait)
+	p.WaitFor("id:grant-full-disk-access", wait)
+
+	// Granted in System Settings while the app runs: the page shows it as it opens again.
+	fakes.SetPermission(maintenance.PermissionGranted)
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:section-about", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor("id:section-permissions >> text:已授权", wait)
+	p.WaitForGone("id:grant-full-disk-access", wait)
+}
+
 func TestFullDiskAccessGuideFailure(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	fakes.Permission = maintenance.PermissionDenied
