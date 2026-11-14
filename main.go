@@ -26,6 +26,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 	"github.com/yldm-tech/spruce/internal/engine/systemjunk"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
+	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 	"github.com/yldm-tech/spruce/internal/services"
 )
 
@@ -129,6 +130,13 @@ func main() {
 	services.RegisterCleaner(cleanups, services.CleanerInstallers, installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
 
 	// page: uninstall
+	mygo.Bind(services.NewUninstall(uninstall.New(uninstall.Config{
+		Home:       home,
+		IconCache:  filepath.Join(dataDir, "app-icons"),
+		Runner:     runner,
+		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
+		Self:       exe,
+	}), historyStore, home, logger))
 
 	// page: space
 

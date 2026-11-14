@@ -1,0 +1,404 @@
+/* The 应用卸载 page's own parts: the two columns (the app list and the picked app), its rows, badges and leftovers. The page column, header, action bar, overlays and dialogs are in ../common/common.css; values come from tokens.css, and the cards follow the 维护 design's glass cards. */
+
+/* ---- Columns ---- */
+
+/* The columns fill the height between the header and the action bar and scroll inside, so the round button stays in view. */
+.uninstall-body {
+  flex: 1 1 auto;
+  min-height: 300px;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(300px, 1.15fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.uninstall-list-card,
+.uninstall-detail-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+}
+
+.uninstall-list-card {
+  overflow: hidden;
+}
+
+.uninstall-detail-card {
+  gap: 16px;
+  padding: 22px;
+  overflow-y: auto;
+}
+
+.uninstall-detail-card--empty {
+  justify-content: center;
+}
+
+/* ---- Search and order ---- */
+
+.uninstall-list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 8px;
+}
+
+.uninstall-search {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  border: 1px solid var(--uninstall-input-border);
+  background: var(--uninstall-input-background);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-body);
+}
+
+.uninstall-search::placeholder {
+  color: var(--uninstall-input-placeholder);
+}
+
+.uninstall-search:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.uninstall-sort {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 17px;
+  background: var(--uninstall-input-background);
+}
+
+.uninstall-sort-button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 14px;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.uninstall-sort-button[aria-pressed="true"] {
+  background: var(--surface-button-ghost);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.uninstall-sort-button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.uninstall-list-count,
+.uninstall-list-empty {
+  padding: 0 18px 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.uninstall-list-empty {
+  padding-top: 24px;
+  text-align: center;
+  font-size: var(--font-size-body);
+}
+
+/* ---- App rows ---- */
+
+.uninstall-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.uninstall-listbox {
+  padding: 6px;
+}
+
+.uninstall-listbox:focus {
+  outline: none;
+}
+
+.uninstall-listbox:focus-visible .uninstall-row--selected {
+  outline: 2px solid var(--color-text);
+  outline-offset: -2px;
+}
+
+.uninstall-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 60px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.uninstall-row:hover {
+  background: var(--surface-row-hover);
+}
+
+.uninstall-row--selected,
+.uninstall-row--selected:hover {
+  background: var(--uninstall-row-selected);
+  border-color: var(--uninstall-row-selected-border);
+}
+
+.uninstall-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.uninstall-row-name,
+.uninstall-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uninstall-row-name {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.uninstall-row-sub {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.uninstall-row-size {
+  flex: none;
+  min-width: 64px;
+  text-align: right;
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+}
+
+.uninstall-icon {
+  flex: none;
+  object-fit: contain;
+}
+
+.uninstall-icon-tile {
+  border-radius: 22%;
+  box-shadow: var(--uninstall-icon-shadow);
+}
+
+.uninstall-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--uninstall-badge-background);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.uninstall-badge--running {
+  background: var(--uninstall-badge-running-background);
+  color: var(--uninstall-badge-running-text);
+}
+
+/* ---- Picked app ---- */
+
+.uninstall-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.uninstall-detail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.uninstall-detail-title h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.uninstall-detail-title span {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.uninstall-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.uninstall-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.uninstall-facts dt {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.uninstall-facts dd {
+  margin: 0;
+  font-size: var(--font-size-card-title);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.uninstall-fact-path {
+  grid-column: 1 / -1;
+}
+
+.uninstall-fact-path dd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-body);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.uninstall-fact-path dd span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uninstall-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uninstall-section-title {
+  font-size: var(--font-size-section);
+  font-weight: 600;
+  letter-spacing: var(--letter-spacing-section);
+  color: var(--color-text-section);
+}
+
+.uninstall-note {
+  margin: 0;
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.uninstall-note--warning {
+  color: var(--color-warning);
+}
+
+.uninstall-running {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--surface-banner);
+  border: 1px solid var(--border-banner);
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.uninstall-running > span {
+  flex: 1 1 160px;
+}
+
+.uninstall-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+/* ---- Leftovers ---- */
+
+.uninstall-leftovers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.uninstall-leftover-list {
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.uninstall-leftover-row {
+  padding: 0 10px 0 14px;
+}
+
+.uninstall-kind {
+  margin-right: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--uninstall-kind-text);
+}
+
+/* The Windows leftovers dialog holds a list, so it is wider than a confirmation and scrolls inside. */
+.uninstall-leftovers-card {
+  max-width: 620px;
+  width: 100%;
+  align-items: stretch;
+  text-align: left;
+  padding: 32px 36px;
+}
+
+.uninstall-leftovers-card .done-title,
+.uninstall-leftovers-card .confirm-buttons {
+  align-self: center;
+}
+
+.uninstall-leftovers-card .uninstall-leftovers {
+  min-height: 0;
+  flex-shrink: 1;
+  overflow-y: auto;
+}
+
+.uninstall-leftovers-card .confirm-message {
+  max-width: none;
+}
+
+/* ---- Footnote ---- */
+
+.uninstall-footnote {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 1080px) {
+  .uninstall-body {
+    grid-template-columns: minmax(260px, 1fr) minmax(280px, 1fr);
+  }
+
+  .uninstall-row .uninstall-badge:not(.uninstall-badge--running) {
+    display: none;
+  }
+}
