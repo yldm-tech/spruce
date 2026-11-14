@@ -113,6 +113,7 @@ func (f fakeHistory) Clear() error                    { return nil }
 func (f fakeHistory) Subscribe() (<-chan history.Run, func(), bool) {
 	return f.runs, func() {}, true
 }
+func (f fakeHistory) Restorable([]history.Run, time.Time) map[string]bool { return nil }
 
 type fakeAlerts struct {
 	initial []health.Alert

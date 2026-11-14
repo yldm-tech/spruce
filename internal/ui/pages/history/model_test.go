@@ -10,6 +10,8 @@ import (
 	enginehist "github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/kit/tone"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 )
 
 func at(y int, m time.Month, d, h, minute int) time.Time {
@@ -209,5 +211,72 @@ func TestCountText(t *testing.T) {
 	}
 	if got := CountText(3, 0, false); got != "共 3 条记录" {
 		t.Errorf("unknown %q", got)
+	}
+}
+
+func TestNewKindsMetaTitlesAndOrder(t *testing.T) {
+	for kind, want := range map[enginehist.Kind]nav.Meta{
+		enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
+		enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+	} {
+		if got := KindMeta(kind); got.Title != want.Title || got.Tone != want.Tone || got.Glyph != want.Glyph {
+			t.Errorf("KindMeta(%s) = %+v", kind, got)
+		}
+	}
+	if m := KindMeta(enginehist.KindSmartScan); m.Title != "清理建议" || m.Glyph != "page/overview" {
+		t.Errorf("smartScan meta %+v", m)
+	}
+	got := KindsIn([]enginehist.Run{run("1", enginehist.KindRestore, now), run("2", enginehist.KindSystemJunk, now), run("3", enginehist.KindAuto, now),
+		run("4", enginehist.KindSmartScan, now)})
+	want := []enginehist.Kind{enginehist.KindSmartScan, enginehist.KindAuto, enginehist.KindSystemJunk, enginehist.KindRestore}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("KindsIn = %v", got)
+	}
+	auto := run("a", enginehist.KindAuto, now)
+	for rule, title := range map[string]string{"app-caches": "旧的应用缓存", "installers": "旧安装包", "build-output": "闲置项目的构建产物",
+		"incomplete-downloads": "未完成的下载", "": "自动清理", "future": "自动清理"} {
+		auto.Rule = rule
+		if got := RunTitle(auto); got != title {
+			t.Errorf("RunTitle(rule %q) = %q", rule, got)
+		}
+	}
+	if got := RunTitle(run("j", enginehist.KindSystemJunk, now)); got != "系统垃圾" {
+		t.Errorf("RunTitle = %q", got)
+	}
+}
+
+func TestRestoreSummaryNoteAndToast(t *testing.T) {
+	r := run("r", enginehist.KindRestore, now)
+	r.Summary = &enginehist.Totals{Items: 3, Trashed: 3_100_000_000}
+	if got := RunSummary(r); got != "放回 3 项（"+format.Bytes(3_100_000_000)+"）" {
+		t.Errorf("summary %q", got)
+	}
+	r.Summary.Failed = 2
+	if got := RunSummary(r); got != "放回 3 项（"+format.Bytes(3_100_000_000)+"），2 项没能放回" {
+		t.Errorf("summary %q", got)
+	}
+
+	moved := run("m", enginehist.KindInstallers, now)
+	partial := run("p1", enginehist.KindRestore, now)
+	partial.RestoreOf, partial.Summary = "m", &enginehist.Totals{Items: 1, Failed: 2}
+	other := run("p2", enginehist.KindRestore, now)
+	other.RestoreOf, other.Summary = "elsewhere", &enginehist.Totals{Items: 5}
+	if got := RestoredNote(moved, []enginehist.Run{other}); got != "" {
+		t.Errorf("note before any restore %q", got)
+	}
+	if got := RestoredNote(moved, []enginehist.Run{partial, other}); got != " · 已放回 1 项" {
+		t.Errorf("partial note %q", got)
+	}
+	whole := run("p3", enginehist.KindRestore, now)
+	whole.RestoreOf, whole.Summary = "m", &enginehist.Totals{Items: 2}
+	if got := RestoredNote(moved, []enginehist.Run{whole, partial}); got != " · 已放回原处" {
+		t.Errorf("whole note %q", got)
+	}
+
+	if text, view, d := RestoreToast(app.RestoreOutcome{RunID: "x", Restored: 4}); text != "已放回原处 4 项" || view != "" || d != 6*time.Second {
+		t.Errorf("toast %q %q %v", text, view, d)
+	}
+	if text, view, d := RestoreToast(app.RestoreOutcome{RunID: "x", Restored: 1, Failed: 2}); text != "已放回 1 项，2 项没能放回" || view != "x" || d != 10*time.Second {
+		t.Errorf("toast %q %q %v", text, view, d)
 	}
 }

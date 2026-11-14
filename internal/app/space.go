@@ -15,11 +15,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/space"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 )
 
 // SpaceKind is what a SpaceEntry stands for.
@@ -136,6 +138,12 @@ type SpaceTrashResult struct {
 	Failed []SpaceFailure `json:"failed"`
 	// Root is the scanned location with its sizes corrected.
 	Root SpaceEntry `json:"root"`
+	// RunID is the history run that records the move, "" when nothing was recorded.
+	RunID string `json:"runId"`
+	// Undoable is set when the undo ledger kept at least one of the moves (macOS), so 撤销 can put them back.
+	Undoable bool `json:"undoable"`
+	// NotUndoable counts the moves the system put outside the Trash folders Spruce can put back from (iCloud Drive, for one).
+	NotUndoable int `json:"notUndoable"`
 }
 
 // Space is the controller of the 空间透视 page. It keeps the last scan's tree, so the page opens one folder at a time without scanning again; moving an entry to the Trash corrects the sizes above it in place.
@@ -146,6 +154,8 @@ type Space struct {
 	history  history.Store
 	log      *slog.Logger
 	activity *schedule.Activity
+	// ledger records the moves so they can be put back (SetSpaceLedger); nil records nothing.
+	ledger *undo.Ledger
 
 	// Replaced in tests.
 	volumes func(ctx context.Context) ([]space.Volume, error)
@@ -385,7 +395,7 @@ func (s *Space) LargeFiles(scanID string) ([]SpaceEntry, error) {
 	return out, nil
 }
 
-// Trash moves the entries at paths of the scan scanID to the Trash (Recycle Bin), never deleting anything for good, corrects the sizes above them, records the move in the history and returns what it did. Only entries the scan found are moved, and only where space.Guard allows it (inside the home folder or the scanned folder, not a system location, not excluded in the settings); an entry that changed since the scan is left in place.
+// Trash moves the entries at paths of the scan scanID to the Trash (Recycle Bin), never deleting anything for good, corrects the sizes above them, records the move in the history and returns what it did. Only entries the scan found are moved, and only where space.Guard allows it (inside the home folder or the scanned folder, not a system location, not excluded in the settings); an entry that changed since the scan is left in place. With a ledger (macOS) each move is journaled as it happens and kept for 撤销 and 放回原处, with the entry's parent folder (the folder space.Guard judged it against) as the root it may come back into.
 func (s *Space) Trash(ctx context.Context, scanID string, paths []string) (SpaceTrashResult, error) {
 	if s.scanning.Load() {
 		return SpaceTrashResult{}, errors.New("正在扫描，请等扫描结束后再试")
@@ -405,6 +415,9 @@ func (s *Space) Trash(ctx context.Context, scanID string, paths []string) (Space
 		return SpaceTrashResult{}, err
 	}
 	started := time.Now()
+	runID := newRunID(started)
+	ctx, u := beginUndo(ctx, s.ledger, s.log, undo.JournalMeta{RunID: runID, Kind: history.KindSpace, Started: started})
+	onMoved := cleanup.OnMoved(ctx)
 	g := s.guardLocked()
 	res := SpaceTrashResult{Failed: []SpaceFailure{}}
 	var move []string
@@ -416,8 +429,10 @@ func (s *Space) Trash(ctx context.Context, scanID string, paths []string) (Space
 		move = append(move, filepath.Clean(p))
 	}
 	var moved []string
-	if len(move) > 0 {
-		outcomes, err := s.bin.MoveToTrash(ctx, move)
+	var moves []cleanup.Moved
+	// One at a time, so each move is in the journal before the next starts.
+	for _, p := range move {
+		outcomes, err := s.bin.MoveToTrash(ctx, []string{p})
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("move to trash", "err", err)
 		}
@@ -430,12 +445,25 @@ func (s *Space) Trash(ctx context.Context, scanID string, paths []string) (Space
 			res.Trashed += e.Size
 			res.Items++
 			moved = append(moved, o.Path)
+			m := cleanup.Moved{ItemID: cleanup.ItemID(o.Path), CategoryID: undo.SpaceCategory, Path: o.Path, TrashedPath: o.TrashedPath,
+				Root: filepath.Dir(o.Path), Size: e.Size, Dir: e.Kind == space.KindDir, Dev: o.Dev, Ino: o.Ino}
+			moves = append(moves, m)
+			onMoved(m)
 		}
 	}
 	root := spaceEntryView(s.tree.Root(), "")
 	root.Name = s.name
 	res.Root = root
-	s.record(started, res, moved)
+	info := u.finish(time.Now(), moves)
+	if info != nil {
+		res.Undoable = true
+		res.NotUndoable = len(moves) - info.Items
+	} else if s.ledger != nil && trash.CanRestore() {
+		res.NotUndoable = len(moves)
+	}
+	if s.record(runID, started, res, moved, info) {
+		res.RunID = runID
+	}
 	return res, nil
 }
 
@@ -476,10 +504,10 @@ func (s *Space) trashReason(err error) string {
 	return "没能移到" + binName() + "，详情已记录到日志"
 }
 
-// record writes the move to the history: what went to the Trash and what stayed.
-func (s *Space) record(started time.Time, res SpaceTrashResult, moved []string) {
+// record writes the move to the history as runID, with what the ledger kept (info): what went to the Trash and what stayed. It reports whether a run was recorded.
+func (s *Space) record(runID string, started time.Time, res SpaceTrashResult, moved []string, info *history.UndoInfo) bool {
 	if res.Items == 0 && len(res.Failed) == 0 {
-		return
+		return false
 	}
 	var lines []string
 	for i, p := range moved {
@@ -497,17 +525,20 @@ func (s *Space) record(started time.Time, res SpaceTrashResult, moved []string) 
 		lines = append(lines, spaceShortPath(s.home, f.Path)+"："+f.Reason)
 	}
 	run := history.Run{
-		ID:        newRunID(started),
+		ID:        runID,
 		Kind:      history.KindSpace,
 		StartedAt: started,
 		EndedAt:   time.Now(),
 		Summary:   &history.Totals{Trashed: res.Trashed, Items: res.Items, Failed: len(res.Failed)},
 		Details:   lines,
+		Undo:      info,
 	}
 	if err := s.history.Append(run); err != nil {
 		// The items are already in the Trash; failing the call would tell the user they were not.
 		s.log.Error("record space trash in history", "err", err)
+		return false
 	}
+	return true
 }
 
 // spaceShortPath replaces the home folder at the start of p with "~", as the cleaners' history lines do.

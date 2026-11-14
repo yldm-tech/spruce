@@ -4,6 +4,7 @@ package storefake
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -40,6 +41,8 @@ type Services struct {
 	// ClearErr is what clearing the history fails with, clearing nothing; ClearRelease, when set, holds each clear until it receives.
 	ClearErr     error
 	ClearRelease chan struct{}
+	// Restorable are the IDs of the runs 放回原处 can put back; Restorable answers those still among the runs it is given.
+	Restorable map[string]bool
 	// Overview, when set, is 概览's controller; nil leaves it unwired, as in the app before it is.
 	Overview *Overview
 
@@ -169,6 +172,28 @@ func (f historySvc) Clear() error {
 
 func (f historySvc) Subscribe() (<-chan history.Run, func(), bool) {
 	return f.s.runsCh, func() {}, true
+}
+
+func (f historySvc) Restorable(runs []history.Run, _ time.Time) map[string]bool {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	out := map[string]bool{}
+	for _, r := range runs {
+		if f.s.Restorable[r.ID] {
+			out[r.ID] = true
+		}
+	}
+	return out
+}
+
+// SetRestorable changes which runs 放回原处 can put back from now on.
+func (s *Services) SetRestorable(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Restorable = map[string]bool{}
+	for _, id := range ids {
+		s.Restorable[id] = true
+	}
 }
 
 type alertSvc struct{ s *Services }

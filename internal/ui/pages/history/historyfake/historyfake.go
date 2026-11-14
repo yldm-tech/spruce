@@ -1,8 +1,9 @@
-// Package historyfake is a store.HistoryService for tests that can fail its loads and its clear, and counts its calls. Only tests import it.
+// Package historyfake is a store.HistoryService for tests that can fail its loads and its clear, says which runs 放回原处 can put back, and counts its calls. Only tests import it.
 package historyfake
 
 import (
 	"sync"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/history"
@@ -18,6 +19,8 @@ type Service struct {
 	limits   []int
 	clears   int
 	ch       chan history.Run
+	// restorable are the IDs of the runs 放回原处 can put back.
+	restorable map[string]bool
 }
 
 // New returns a service holding runs.
@@ -63,6 +66,29 @@ func (s *Service) Record(run history.Run) {
 	s.runs = append([]history.Run{run}, s.runs...)
 	s.mu.Unlock()
 	s.ch <- run
+}
+
+// Restorable answers the runs among runs that SetRestorable named.
+func (s *Service) Restorable(runs []history.Run, _ time.Time) map[string]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]bool{}
+	for _, r := range runs {
+		if s.restorable[r.ID] {
+			out[r.ID] = true
+		}
+	}
+	return out
+}
+
+// SetRestorable makes the runs ids the ones 放回原处 can put back, from now on.
+func (s *Service) SetRestorable(ids ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.restorable = map[string]bool{}
+	for _, id := range ids {
+		s.restorable[id] = true
+	}
 }
 
 // FailList makes the next List calls return errs, one each.

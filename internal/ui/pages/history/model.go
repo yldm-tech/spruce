@@ -8,8 +8,10 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	enginehist "github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/rules"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/kit/tone"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/maintenance"
 )
@@ -17,15 +19,17 @@ import (
 // Limit is how many runs the page asks for: everything the store keeps.
 const Limit = enginehist.MaxRuns
 
-// KindOrder lists the kinds in the order the filter chips show them: the sidebar's.
+// KindOrder lists the kinds in the order the filter chips show them: the sidebar's, 自动清理 after 清理建议 and 放回原处 last.
 var KindOrder = []enginehist.Kind{
 	enginehist.KindSmartScan,
+	enginehist.KindAuto,
 	enginehist.KindSystemJunk,
 	enginehist.KindDevJunk,
 	enginehist.KindInstallers,
 	enginehist.KindUninstall,
 	enginehist.KindSpace,
 	enginehist.KindMaintenance,
+	enginehist.KindRestore,
 }
 
 var kindRoutes = map[enginehist.Kind]nav.Route{
@@ -38,14 +42,45 @@ var kindRoutes = map[enginehist.Kind]nav.Route{
 	enginehist.KindSmartScan:   nav.Overview,
 }
 
-// KindMeta is the page a run's kind belongs to (its title, tile tone and glyph). A kind this build does not know, written by a newer version, shows as the history page's own, titled 其他操作.
+// kindMetas are the kinds that belong to no page of their own: the automatic rules and 放回原处.
+var kindMetas = map[enginehist.Kind]nav.Meta{
+	enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
+	enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+}
+
+// KindMeta is the page a run's kind belongs to (its title, tile tone and glyph); 概览's cleans are titled 清理建议, as the page itself is 概览. A kind this build does not know, written by a newer version, shows as the history page's own, titled 其他操作.
 func KindMeta(k enginehist.Kind) nav.Meta {
+	if m, ok := kindMetas[k]; ok {
+		return m
+	}
 	if r, ok := kindRoutes[k]; ok {
-		return r.Meta()
+		m := r.Meta()
+		if k == enginehist.KindSmartScan {
+			m.Title = "清理建议"
+		}
+		return m
 	}
 	m := nav.History.Meta()
 	m.Title = "其他操作"
 	return m
+}
+
+// ruleTitles are the automatic rules' labels, as 设置 → 自动清理 shows them.
+var ruleTitles = map[string]string{
+	string(rules.AppCaches):           "旧的应用缓存",
+	string(rules.Installers):          "旧安装包",
+	string(rules.BuildOutput):         "闲置项目的构建产物",
+	string(rules.IncompleteDownloads): "未完成的下载",
+}
+
+// RunTitle is a row's title: an automatic run's rule label, else its kind's title.
+func RunTitle(r enginehist.Run) string {
+	if r.Kind == enginehist.KindAuto {
+		if t, ok := ruleTitles[r.Rule]; ok {
+			return t
+		}
+	}
+	return KindMeta(r.Kind).Title
 }
 
 // DayGroup is the runs of one local calendar day, newest first.
@@ -124,6 +159,13 @@ func RunSummary(r enginehist.Run) string {
 	if s == nil {
 		return "没有记录结果"
 	}
+	if r.Kind == enginehist.KindRestore {
+		line := "放回 " + strconv.Itoa(s.Items) + " 项（" + format.Bytes(s.Trashed) + "）"
+		if s.Failed > 0 {
+			line += "，" + strconv.Itoa(s.Failed) + " 项没能放回"
+		}
+		return line
+	}
 	var parts []string
 	if s.Freed > 0 || s.Trashed == 0 {
 		parts = append(parts, "释放 "+format.Bytes(s.Freed))
@@ -141,7 +183,7 @@ func RunSummary(r enginehist.Run) string {
 // TotalFreed adds up the space the clean-ups among runs freed for good (what went to the Trash is freed only once it is emptied); cleanups counts those runs.
 func TotalFreed(runs []enginehist.Run) (bytes int64, cleanups int) {
 	for _, r := range runs {
-		if r.Summary == nil {
+		if r.Summary == nil || r.Kind == enginehist.KindRestore {
 			continue
 		}
 		bytes += r.Summary.Freed
@@ -237,4 +279,39 @@ func TaskLines(results []taskresult.Result, catalog []app.TaskView) []TaskLine {
 		lines[i] = TaskLine{TaskID: r.TaskID, Title: title, Status: StatusLabel(r), Message: r.Message, Attention: maintenance.IsIssue(r)}
 	}
 	return lines
+}
+
+// RestoredNote is what a run's summary line adds once 放回原处 put its items back, from the KindRestore runs among runs: 「 · 已放回原处」 when one left nothing in the Trash (a restore that stopped part-way counts what it did not get to as Failed), else 「 · 已放回 {a} 项」 with all they put back; "" before any.
+func RestoredNote(run enginehist.Run, runs []enginehist.Run) string {
+	restored, whole := 0, false
+	for _, r := range runs {
+		if r.Kind != enginehist.KindRestore || r.RestoreOf != run.ID || r.Summary == nil {
+			continue
+		}
+		restored += r.Summary.Items
+		if r.Summary.Failed == 0 && r.Summary.Items > 0 {
+			whole = true
+		}
+	}
+	switch {
+	case whole:
+		return " · 已放回原处"
+	case restored > 0:
+		return " · 已放回 " + strconv.Itoa(restored) + " 项"
+	}
+	return ""
+}
+
+// Restore toasts last 6 s, or 10 s with 查看.
+const (
+	toastShort = 6 * time.Second
+	toastLong  = 10 * time.Second
+)
+
+// RestoreToast is the toast after 放回原处: 「已放回原处 {n} 项」, or 「已放回 {a} 项，{b} 项没能放回」 with 查看 (the 放回原处 run, whose details say why).
+func RestoreToast(out app.RestoreOutcome) (text, viewRun string, d time.Duration) {
+	if out.Failed == 0 {
+		return "已放回原处 " + strconv.Itoa(out.Restored) + " 项", "", toastShort
+	}
+	return "已放回 " + strconv.Itoa(out.Restored) + " 项，" + strconv.Itoa(out.Failed) + " 项没能放回", out.RunID, toastLong
 }

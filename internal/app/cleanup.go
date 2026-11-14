@@ -17,6 +17,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/schedule"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 )
 
 // CleanerID names a cleaner that the Cleanup service runs. Each cleaner page has one; its engine registers a cleanup.Scanner under it in main.go with RegisterCleaner.
@@ -69,6 +70,8 @@ type Cleanup struct {
 	home     string
 	log      *slog.Logger
 	activity *schedule.Activity
+	// ledger records what each clean moved to the Trash so it can be put back (SetLedger); nil records nothing.
+	ledger *undo.Ledger
 	// goos is runtime.GOOS; tests replace it.
 	goos string
 
@@ -95,6 +98,8 @@ type CleanOptions struct {
 type CleanRun struct {
 	Result cleanup.CleanResult
 	RunID  string
+	// Undo is what the undo ledger kept of the clean's moves, as the history run records it; nil when nothing can be put back. Result.Moved less Undo.Items are the moves Spruce cannot put back.
+	Undo *history.UndoInfo
 }
 
 // RegisterCleaner makes s the cleaner for id. It is a function rather than a method so the page cannot call it. It panics on an unknown or repeated id, so a wiring mistake shows at startup.
@@ -162,7 +167,7 @@ func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.Clea
 	return run.Result, err
 }
 
-// CleanWith is Clean recorded as opts says. Every clean runs inside the activity gate (Activity.BeginClean), which stops background work first and refuses while another Spruce process cleans; the run ID is made before the clean, and the history run is appended after it even when ctx has ended (quitting, 停止), so what was done is never lost.
+// CleanWith is Clean recorded as opts says. Every clean runs inside the activity gate (Activity.BeginClean), which stops background work first and refuses while another Spruce process cleans; the run ID is made before the clean, and the history run is appended after it even when ctx has ended (quitting, 停止), so what was done is never lost. With a ledger (SetLedger, macOS) every move to the Trash is journaled as it happens and recorded in the ledger before the history run, which then carries Run.Undo.
 //
 // An automatic clean (opts.Kind KindAuto) must come from an automatic rule inside the background slot, and only ever moves to the Trash: ctx must come from schedule.Activity.BeginAutoClean, the platform macOS, the cleaner CleanerSmartScanBackground and every item named; req.Mode is forced to cleanup.ModeTrashOnly whatever the caller passed. A clean that breaks any of these is refused (schedule.ErrNotAuto) before anything is deleted, and so is an automatic context with another kind.
 func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, opts CleanOptions, progress func(cleanup.Progress)) (CleanRun, error) {
@@ -187,16 +192,23 @@ func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.
 		ctx = clean
 	}
 	runID := newRunID(time.Now())
+	kind := cmp.Or(opts.Kind, cleanerKinds[cleaner])
+	ctx, u := beginUndo(ctx, c.ledger, c.log, undo.JournalMeta{RunID: runID, Kind: kind, Rule: opts.Rule, Started: time.Now()})
 	res, err := s.Clean(ctx, req, throttled(progress))
 	if err != nil {
+		// A refused clean moved nothing: its journal goes.
+		u.finish(time.Now(), nil)
 		return CleanRun{}, c.userError(ctx, cleaner, "clean", err)
 	}
-	out := CleanRun{Result: res}
+	// The ledger first, so the history run carries what it can put back; neither uses ctx, which may have ended.
+	out := CleanRun{Result: res, Undo: u.finish(res.StartedAt.Add(res.Duration), res.Moved)}
 	if res.Removed+len(res.Failed) > 0 {
-		kind := cmp.Or(opts.Kind, cleanerKinds[cleaner])
 		details := c.details(res)
 		if opts.Detail != "" {
 			details = append([]string{opts.Detail}, details...)
+		}
+		if line := undoLine(out.Undo, res.Removed, len(res.Moved)); line != "" {
+			details = append(details, line)
 		}
 		run := history.Run{
 			ID:        runID,
@@ -206,6 +218,7 @@ func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.
 			Summary:   &history.Totals{Freed: res.Freed, Trashed: res.Trashed, Items: res.Removed, Failed: len(res.Failed)},
 			Details:   details,
 			Rule:      opts.Rule,
+			Undo:      out.Undo,
 		}
 		if err := c.history.Append(run); err != nil {
 			// The items are already gone; failing the call would tell the user they were not.
