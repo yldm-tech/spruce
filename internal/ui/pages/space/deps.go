@@ -8,9 +8,8 @@ import (
 	"github.com/yldm-tech/spruce/internal/app"
 )
 
-// Service is the 空间透视 flow: *app.Space.
+// Service is the 空间透视 flow: *app.Space. The start screen's disks and folders come from store.Locations.
 type Service interface {
-	Locations(ctx context.Context) app.SpaceLocations
 	Scan(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error)
 	Current() *app.SpaceSummary
 	Children(scanID string, id int) (app.SpaceListing, error)
