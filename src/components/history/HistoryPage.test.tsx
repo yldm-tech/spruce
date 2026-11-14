@@ -32,14 +32,36 @@ vi.mock("../../mygo", () => ({
 }));
 
 const CATALOG: TaskView[] = [
-  { id: "dns", title: "刷新 DNS 缓存", description: "", icon: "network", defaultOn: true, needsAdmin: true, estimatedSeconds: 5 },
-  { id: "databases", title: "优化应用数据库", description: "", icon: "database", defaultOn: false, needsAdmin: false, estimatedSeconds: 45 },
+  {
+    id: "dns",
+    title: "刷新 DNS 缓存",
+    description: "",
+    icon: "network",
+    defaultOn: true,
+    needsAdmin: true,
+    estimatedSeconds: 5,
+  },
+  {
+    id: "databases",
+    title: "优化应用数据库",
+    description: "",
+    icon: "database",
+    defaultOn: false,
+    needsAdmin: false,
+    estimatedSeconds: 45,
+  },
 ];
 
 const SETTINGS: AppSettings = {
   version: 1,
   health: { cpuThreshold: 40, sustainMinutes: 10, enabled: true },
-  cleanup: { exclusions: [], devProjectRoots: [], devArtifactMinAgeDays: 30, installerRoots: [], largeFileMinMB: 500 },
+  cleanup: {
+    exclusions: [],
+    devProjectRoots: [],
+    devArtifactMinAgeDays: 30,
+    installerRoots: [],
+    largeFileMinMB: 500,
+  },
   history: { retentionDays: 180 },
   general: { launchAtLogin: false, confirmBeforeClean: true },
 };
@@ -88,7 +110,9 @@ const UNINSTALL: Run = {
 const RUNS = [MAINTENANCE, JUNK, UNINSTALL];
 
 function renderPage() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <HistoryPage />
@@ -118,6 +142,8 @@ describe("HistoryPage list", () => {
   it("groups the runs by day with a title, summary and time per row, and totals the freed space", async () => {
     renderPage();
     const today = await screen.findByRole("region", { name: "今天" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("操作历史");
+    expect(screen.getByText("Spruce 做过的每一次维护和清理")).toBeTruthy();
     const yesterday = screen.getByRole("region", { name: "昨天" });
     expect(fakes.History.list).toHaveBeenCalledWith(500);
 
@@ -145,9 +171,14 @@ describe("HistoryPage list", () => {
     await user.click(head);
     expect(head.getAttribute("aria-expanded")).toBe("true");
     const details = document.getElementById(head.getAttribute("aria-controls") ?? "") as HTMLElement;
-    const tasks = within(details).getAllByRole("listitem").map((li) => li.textContent);
+    const tasks = within(details)
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
     // The skipped task first, as the 维护 done card lists it, then the completed one.
-    expect(tasks).toEqual(["优化应用数据库已跳过Safari 仍在运行，已跳过", "刷新 DNS 缓存已完成已刷新 DNS 缓存"]);
+    expect(tasks).toEqual([
+      "优化应用数据库已跳过Safari 仍在运行，已跳过",
+      "刷新 DNS 缓存已完成已刷新 DNS 缓存",
+    ]);
     expect(within(details).getByText("开始 10:15:03 · 结束 10:15:31 · 用时 28 秒")).toBeTruthy();
     await user.click(head);
     expect(details.hidden).toBe(true);
@@ -181,7 +212,13 @@ describe("HistoryPage list", () => {
     renderPage();
     await screen.findByRole("region", { name: "今天" });
     await waitFor(() => expect(fakes.appended.size).toBe(1));
-    const fresh: Run = { ...JUNK, id: "j2", kind: "devJunk", startedAt: iso(daysAgo(0, 11, 0)), endedAt: iso(daysAgo(0, 11, 0), 1) };
+    const fresh: Run = {
+      ...JUNK,
+      id: "j2",
+      kind: "devJunk",
+      startedAt: iso(daysAgo(0, 11, 0)),
+      endedAt: iso(daysAgo(0, 11, 0), 1),
+    };
     fakes.History.list.mockResolvedValue([fresh, ...RUNS]);
     act(() => {
       for (const fn of fakes.appended) fn(fresh);

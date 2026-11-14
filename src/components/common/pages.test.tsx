@@ -4,9 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { DevJunkPage } from "../dev-junk/DevJunkPage";
 import { HealthPage } from "../health/HealthPage";
-import { HistoryPage } from "../history/HistoryPage";
 import { InstallersPage } from "../installers/InstallersPage";
-import { SettingsPage } from "../settings/SettingsPage";
 import { SmartScanPage } from "../smart-scan/SmartScanPage";
 import { SpacePage } from "../space/SpacePage";
 import { SystemJunkPage } from "../system-junk/SystemJunkPage";
@@ -21,8 +19,6 @@ const SHELLS: [PageId, ComponentType][] = [
   ["uninstall", UninstallPage],
   ["space", SpacePage],
   ["health", HealthPage],
-  ["history", HistoryPage],
-  ["settings", SettingsPage],
 ];
 
 describe("page shells", () => {

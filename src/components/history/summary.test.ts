@@ -69,14 +69,18 @@ describe("runSummary", () => {
 
   it("reports freed space, the Trash and failures of a clean-up", () => {
     const t = at(2026, 11, 14);
-    expect(runSummary(run("s", "systemJunk", t, { summary: { freed: 1_234_000_000, items: 34, failed: 2 } }))).toBe(
-      "释放 1.2 GB，34 项，2 项未能处理",
-    );
-    expect(runSummary(run("u", "uninstall", t, { summary: { freed: 0, trashed: 300_000_000, items: 3, failed: 0 } }))).toBe(
-      "移到废纸篓 300 MB，3 项",
-    );
     expect(
-      runSummary(run("x", "smartScan", t, { summary: { freed: 5_000_000, trashed: 2_000_000, items: 9, failed: 0 } })),
+      runSummary(run("s", "systemJunk", t, { summary: { freed: 1_234_000_000, items: 34, failed: 2 } })),
+    ).toBe("释放 1.2 GB，34 项，2 项未能处理");
+    expect(
+      runSummary(
+        run("u", "uninstall", t, { summary: { freed: 0, trashed: 300_000_000, items: 3, failed: 0 } }),
+      ),
+    ).toBe("移到废纸篓 300 MB，3 项");
+    expect(
+      runSummary(
+        run("x", "smartScan", t, { summary: { freed: 5_000_000, trashed: 2_000_000, items: 9, failed: 0 } }),
+      ),
     ).toBe("释放 5 MB，移到废纸篓 2 MB，9 项");
     expect(runSummary(run("z", "space", t, { summary: { freed: 0, items: 0, failed: 1 } }))).toBe(
       "释放 0 B，0 项，1 项未能处理",
@@ -99,11 +103,14 @@ describe("totals and kinds", () => {
 
   it("lists the kinds present in the sidebar's order", () => {
     const t = at(2026, 11, 14);
-    expect(kindsIn([run("1", "maintenance", t), run("2", "space", t), run("3", "smartScan", t), run("4", "space", t)])).toEqual([
-      "smartScan",
-      "space",
-      "maintenance",
-    ]);
+    expect(
+      kindsIn([
+        run("1", "maintenance", t),
+        run("2", "space", t),
+        run("3", "smartScan", t),
+        run("4", "space", t),
+      ]),
+    ).toEqual(["smartScan", "space", "maintenance"]);
   });
 
   it("names kinds after their pages and copes with unknown ones", () => {
@@ -115,9 +122,33 @@ describe("totals and kinds", () => {
 
 describe("taskLines", () => {
   const catalog: TaskView[] = [
-    { id: "dns", title: "刷新 DNS 缓存", description: "", icon: "network", defaultOn: true, needsAdmin: true, estimatedSeconds: 5 },
-    { id: "icons", title: "重建图标缓存", description: "", icon: "icons", defaultOn: true, needsAdmin: true, estimatedSeconds: 5 },
-    { id: "databases", title: "优化应用数据库", description: "", icon: "database", defaultOn: false, needsAdmin: false, estimatedSeconds: 5 },
+    {
+      id: "dns",
+      title: "刷新 DNS 缓存",
+      description: "",
+      icon: "network",
+      defaultOn: true,
+      needsAdmin: true,
+      estimatedSeconds: 5,
+    },
+    {
+      id: "icons",
+      title: "重建图标缓存",
+      description: "",
+      icon: "icons",
+      defaultOn: true,
+      needsAdmin: true,
+      estimatedSeconds: 5,
+    },
+    {
+      id: "databases",
+      title: "优化应用数据库",
+      description: "",
+      icon: "database",
+      defaultOn: false,
+      needsAdmin: false,
+      estimatedSeconds: 5,
+    },
   ];
 
   it("puts the tasks needing attention first, then catalog order, with each task's status and message", () => {

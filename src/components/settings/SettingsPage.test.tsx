@@ -68,7 +68,9 @@ function defaults(): AppSettings {
 }
 
 function renderPage() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={queryClient}>
       <SettingsPage />
@@ -92,7 +94,10 @@ beforeEach(() => {
   fakes.Settings.get.mockResolvedValue(defaults());
   fakes.Settings.update.mockImplementation(async (next) => next);
   fakes.Settings.limits.mockResolvedValue(LIMITS);
-  fakes.Settings.about.mockResolvedValue({ version: "0.1.0", dataDir: "/Users/me/Library/Application Support/Spruce" });
+  fakes.Settings.about.mockResolvedValue({
+    version: "0.1.0",
+    dataDir: "/Users/me/Library/Application Support/Spruce",
+  });
   fakes.Settings.chooseFolder.mockResolvedValue("");
   fakes.Permissions.fullDiskAccess.mockResolvedValue("granted");
   fakes.Files.reveal.mockResolvedValue(undefined);
@@ -108,7 +113,10 @@ describe("SettingsPage switches", () => {
     const user = userEvent.setup();
     renderPage();
     await user.click(await screen.findByRole("switch", { name: "登录时启动 Spruce" }));
-    expect(lastUpdate()).toEqual({ ...defaults(), general: { launchAtLogin: true, confirmBeforeClean: true } });
+    expect(lastUpdate()).toEqual({
+      ...defaults(),
+      general: { launchAtLogin: true, confirmBeforeClean: true },
+    });
 
     await user.click(screen.getByRole("switch", { name: "清理前确认" }));
     expect(lastUpdate().general).toEqual({ launchAtLogin: true, confirmBeforeClean: false });
@@ -126,7 +134,9 @@ describe("SettingsPage switches", () => {
     const toggle = await screen.findByRole("switch", { name: "登录时启动 Spruce" });
     await user.click(toggle);
     const general = section("通用");
-    expect((await within(general).findByRole("alert")).textContent).toBe("无法更改「登录时启动」，其他设置没有保存");
+    expect((await within(general).findByRole("alert")).textContent).toBe(
+      "无法更改「登录时启动」，其他设置没有保存",
+    );
     // The stored settings come back.
     await waitFor(() => expect(toggle).toHaveProperty("checked", false));
     expect(fakes.Settings.get.mock.calls.length).toBeGreaterThan(1);
@@ -137,11 +147,11 @@ describe("SettingsPage health", () => {
   it("draws the sliders over the ranges of the settings package and saves once the user stops", async () => {
     renderPage();
     const threshold = await screen.findByRole("slider", { name: "提醒阈值" });
-    expect([threshold.getAttribute("min"), threshold.getAttribute("max"), threshold.getAttribute("aria-valuetext")]).toEqual([
-      "20",
-      "800",
-      "40%",
-    ]);
+    expect([
+      threshold.getAttribute("min"),
+      threshold.getAttribute("max"),
+      threshold.getAttribute("aria-valuetext"),
+    ]).toEqual(["20", "800", "40%"]);
     fireEvent.change(threshold, { target: { value: "60" } });
     fireEvent.change(threshold, { target: { value: "75" } });
     expect(threshold.getAttribute("aria-valuetext")).toBe("75%");
@@ -213,7 +223,9 @@ describe("SettingsPage folders", () => {
     fakes.Settings.chooseFolder.mockResolvedValueOnce("/Users/me/Movies");
     await user.click(within(exclusions).getByRole("button", { name: "添加…" }));
     expect(fakes.Settings.chooseFolder).toHaveBeenLastCalledWith("选择要排除的文件夹");
-    await waitFor(() => expect(lastUpdate().cleanup.exclusions).toEqual(["/Users/me/Keep", "/Users/me/Movies"]));
+    await waitFor(() =>
+      expect(lastUpdate().cleanup.exclusions).toEqual(["/Users/me/Keep", "/Users/me/Movies"]),
+    );
     expect(await within(exclusions).findByText("/Users/me/Movies")).toBeTruthy();
 
     fakes.Settings.chooseFolder.mockResolvedValueOnce("/users/ME/keep");
@@ -237,7 +249,9 @@ describe("SettingsPage folders", () => {
     const dev = (await screen.findByText("开发项目所在文件夹")).closest(".setting-row") as HTMLElement;
     fakes.Settings.chooseFolder.mockResolvedValueOnce("/Users/me/code");
     await user.click(within(dev).getByRole("button", { name: "添加…" }));
-    await waitFor(() => expect(lastUpdate().cleanup.devProjectRoots).toEqual(["/Users/me/Projects", "/Users/me/code"]));
+    await waitFor(() =>
+      expect(lastUpdate().cleanup.devProjectRoots).toEqual(["/Users/me/Projects", "/Users/me/code"]),
+    );
     expect(lastUpdate().cleanup.exclusions).toEqual(["/Users/me/Keep"]);
 
     const installers = screen.getByText("安装包查找位置").closest(".setting-row") as HTMLElement;
@@ -277,7 +291,9 @@ describe("SettingsPage history, permissions and about", () => {
     renderPage();
     const permissions = await screen.findByRole("region", { name: "权限" });
     expect(await within(permissions).findByText("未授权")).toBeTruthy();
-    expect(within(permissions).getByText(/Safari 和邮件的数据库、读取废纸篓和查找部分应用的残留文件/)).toBeTruthy();
+    expect(
+      within(permissions).getByText(/Safari 和邮件的数据库、读取废纸篓和查找部分应用的残留文件/),
+    ).toBeTruthy();
     await user.click(within(permissions).getByRole("button", { name: "去授权" }));
     expect(await within(permissions).findByText("已授权")).toBeTruthy();
     expect(within(permissions).queryByRole("button", { name: "去授权" })).toBeNull();
@@ -297,6 +313,7 @@ describe("SettingsPage history, permissions and about", () => {
     const user = userEvent.setup();
     renderPage();
     const about = await screen.findByRole("region", { name: "关于" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("设置");
     expect(await within(about).findByText("版本 0.1.0")).toBeTruthy();
     expect(within(about).getByText("/Users/me/Library/Application Support/Spruce")).toBeTruthy();
     expect(within(about).getByText("MyGo")).toBeTruthy();
