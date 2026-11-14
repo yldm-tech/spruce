@@ -14,6 +14,11 @@ func NewProcessSource() ProcessSource {
 	return &gopsutilSource{names: make(map[procKey]string)}
 }
 
+// DisplayName is the name the monitor gives p in its alerts (on macOS the app bundle a helper belongs to, on Windows the executable's FileDescription), so other views name a process the way the alert does. It is empty when the process is gone.
+func DisplayName(ctx context.Context, p *process.Process) string {
+	return displayName(ctx, p)
+}
+
 type gopsutilSource struct {
 	mu sync.Mutex
 	// names caches display names by process, so the executable path (and on Windows its version resource) is read once per process rather than once per sample.

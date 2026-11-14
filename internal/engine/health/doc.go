@@ -15,6 +15,9 @@
 //	// OpenSystemMonitor opens the system's process monitor: Activity Monitor on macOS ("open -b com.apple.ActivityMonitor" through runner), Task Manager on Windows (ShellExecute of %SystemRoot%\System32\Taskmgr.exe, because Task Manager's manifest asks for elevation when available and CreateProcess refuses such programs).
 //	func OpenSystemMonitor(ctx context.Context, runner execx.Runner) error
 //
+//	// DisplayName is the name alerts give a process, for other views that list processes (the 健康监测 dashboard).
+//	func DisplayName(ctx context.Context, p *process.Process) string
+//
 // # Algorithm
 //
 // Every Config.Interval the Monitor takes a Snapshot. Processes are keyed by PID plus CreateTime, so a reused PID starts with no history. A process's CPU percent is the growth of its cumulative CPUTime between the oldest and the newest of its samples inside the last Config.Window, divided by the wall time between them; it needs at least two samples, and a gap longer than Window (sleep, failed samples) starts its history over. A process becomes hot when that percent is at least Config.Threshold and stays hot until it falls below Threshold minus Config.Hysteresis. It becomes an Alert once it has been hot continuously for Config.Sustain, with Since set to the sample at which the hot period began and Duration to the latest sample minus Since. The alert clears as soon as the process is no longer hot or exits. Names in Config.Ignore never alert, and neither does the app's own process. Memory is bounded by the number of running processes times Window/Interval samples; processes that exit are forgotten on the next sample.
