@@ -135,3 +135,19 @@ func TestScreensDevJunkNoFolders(t *testing.T) {
 	a.WaitFor("id:roots-notice", 10*time.Second)
 	a.Screenshot("dev-junk-tools-only")
 }
+
+// TestScreensDevJunkNothingFound shows a scan that found nothing but could not read two places: the warning sits above the empty state, as the old page drew it.
+func TestScreensDevJunkNothingFound(t *testing.T) {
+	c := &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+		r := cleanflowfake.Result()
+		r.Denied = 2
+		return r, nil
+	}}
+	fakes := storefake.New(t.TempDir())
+	fakes.Settings.Cleanup.DevProjectRoots = devJunkRoots
+	a := screensApp(t, fakes, shell.Deps{DevJunk: devjunk.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "dev-junk")
+	a.Press("id:scan")
+	a.WaitFor("id:empty", 10*time.Second)
+	a.Find("text:有 2 个位置没有权限读取，结果可能不完整。")
+	a.Screenshot("dev-junk-empty-denied")
+}
