@@ -132,7 +132,9 @@ func TestRunShowsProgressThenTheSummary(t *testing.T) {
 	p.Press("role:switch 优化应用数据库")
 	p.Press("id:run")
 	p.WaitFor("id:run-overlay", wait)
-	if got := svc.Runs(); len(got) != 1 || strings.Join(got[0], ",") != "dns,quicklook,icons,launchservices,databases" {
+	// The run starts on its own goroutine, after the overlay shows.
+	p.WaitUntil(wait, func() bool { return len(svc.Runs()) == 1 })
+	if got := svc.Runs(); strings.Join(got[0], ",") != "dns,quicklook,icons,launchservices,databases" {
 		t.Fatalf("runs %v", got)
 	}
 	if !p.stores.Block.Blocked() {

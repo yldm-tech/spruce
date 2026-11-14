@@ -125,7 +125,8 @@ func TestCancelledPickerStaysPut(t *testing.T) {
 	p.WaitFor("id:choose-folder", wait)
 	p.Press("id:choose-folder")
 	p.WaitUntil(wait, func() bool { return len(p.DirectoryPicks) == 1 })
-	p.Find("id:volume-/")
+	// The disks load on their own goroutine; the start screen shows them once they arrive.
+	p.WaitFor("id:volume-/", wait)
 	p.Find("id:choose-folder >> text:选择其他文件夹…")
 	if len(svc.Scans()) != 0 {
 		t.Errorf("scans %v", svc.Scans())
