@@ -840,14 +840,18 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 
 	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{},
 		Rules: []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: time.Now().Add(-3 * time.Hour), LastTrashed: 1 << 30}}})
-	p.WaitUntil(wait, func() bool { return p.text("rule-app-caches-status") == "现在符合条件的：12 项，"+format.Bytes(3<<30) })
+	p.WaitUntil(wait, func() bool {
+		return p.text("rule-app-caches-status") == "现在符合条件的：12 项，"+format.Bytes(3<<30)
+	})
 
 	// Turning a rule on is the user's action: it asks for notifications once, for the weekly summary, and says when it runs.
 	p.Press("role:switch 旧的应用缓存")
 	if got := p.updates(1).Automation; !got.AppCaches || got.Installers || !got.WeeklySummary {
 		t.Fatalf("automation %+v", got)
 	}
-	p.WaitUntil(wait, func() bool { return p.text("rule-app-caches-status") == "还没有运行过，下次后台检查时运行" })
+	p.WaitUntil(wait, func() bool {
+		return p.text("rule-app-caches-status") == "还没有运行过，下次后台检查时运行"
+	})
 	p.WaitUntil(wait, func() bool { return p.NotificationPermission == core.NotificationsGranted })
 
 	p.Press("role:switch 旧安装包")

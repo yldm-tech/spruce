@@ -153,7 +153,7 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 		group("提醒", "section-alerts",
 			switchSetting{Field: FieldLowDiskAlert, Label: "空间不足时提醒我", Description: "系统盘可用空间低于下面的值时发一条通知。", TestID: "low-disk-alert",
 				OnTurnOn: notify.ask,
-				Below: []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().General.LowDiskAlert && notify.denied() }, "notify-denied")}},
+				Below:    []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().General.LowDiskAlert && notify.denied() }, "notify-denied")}},
 			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold"},
 		),
 		permissionsGroup(stores.Permission),
@@ -193,7 +193,7 @@ func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []cor
 		group("通知", "section-auto-notify",
 			switchSetting{Field: FieldWeeklySummary, Label: "每周汇总", Description: "每周一告诉你自动清理了多少。", TestID: "auto-summary-notify",
 				OnTurnOn: notify.ask,
-				Below: []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().Automation.WeeklySummary && notify.denied() }, "notify-denied")}},
+				Below:    []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().Automation.WeeklySummary && notify.denied() }, "notify-denied")}},
 		),
 	}
 }
