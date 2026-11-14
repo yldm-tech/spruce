@@ -71,4 +71,10 @@ type Inputs struct {
 	// InstalledApps are the names of installed apps, for 「对应的应用都已装好」; nil leaves the fallback reason.
 	InstalledApps []string
 	Windows       bool
+	// Home is the user's home folder; the installers card names its Desktop and Documents 「桌面」「文稿」.
+	Home string
+	// Downloads is the Downloads folder (「下载」): the installers card is 「下载里的安装包」 when all of its items lie inside it. "" means Home's Downloads.
+	Downloads string
+	// InstallerRoots are settings Cleanup.InstallerRoots, the folders the installers card's reason names.
+	InstallerRoots []string
 }
