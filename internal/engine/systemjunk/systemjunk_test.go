@@ -762,6 +762,7 @@ func TestScanListsAFolderOnce(t *testing.T) {
 	inet := filepath.Join(local, "Microsoft", "Windows", "INetCache")
 	vars := map[string]string{"LOCALAPPDATA": local, "TEMP": inet}
 	fx.env.Getenv = func(k string) string { return vars[k] }
+	setAge(t, filepath.Join(inet, "IE"), 3*24*time.Hour)
 	res := scan(t, newCleaner(fx.env, windowsSpecs))
 	seen := map[string]string{}
 	for _, c := range res.Categories {

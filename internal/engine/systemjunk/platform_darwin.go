@@ -1,9 +1,13 @@
 package systemjunk
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/execx"
@@ -36,4 +40,29 @@ func runningApps(ctx context.Context, runner execx.Runner) (Running, error) {
 		return nil, err
 	}
 	return parseLSAppInfo(out.Stdout), nil
+}
+
+var (
+	lsappinfoName   = regexp.MustCompile(`^\s*\d+\)\s+"(.*)"\s+ASN:`)
+	lsappinfoBundle = regexp.MustCompile(`^\s*bundleID="([^"]+)"`)
+)
+
+// parseLSAppInfo reads the app names and bundle IDs out of `lsappinfo list`.
+func parseLSAppInfo(out []byte) Running {
+	r := Running{}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for s.Scan() {
+		line := s.Text()
+		if m := lsappinfoName.FindStringSubmatch(line); m != nil {
+			if n := strings.TrimSpace(m[1]); n != "" {
+				r[strings.ToLower(n)] = true
+			}
+			continue
+		}
+		if m := lsappinfoBundle.FindStringSubmatch(line); m != nil {
+			r[strings.ToLower(m[1])] = true
+		}
+	}
+	return r
 }

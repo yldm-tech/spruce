@@ -135,7 +135,7 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		if ctx.Err() != nil {
 			return cleanup.ScanResult{}, ctx.Err()
 		}
-		// Without the list every cache would look idle; the scan still helps, and the page asks to quit browsers in the description anyway.
+		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open.
 		c.env.Log.Warn("list running apps", "err", err)
 		running = Running{}
 	}

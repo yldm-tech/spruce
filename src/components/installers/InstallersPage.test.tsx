@@ -186,6 +186,8 @@ describe("InstallersPage idle", () => {
     };
     fakes.History.list.mockResolvedValue([run]);
     renderPage();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("安装包");
+    expect(screen.getByText("找出装完就没再用的安装包和磁盘映像")).toBeTruthy();
     const folders = await screen.findByRole("list", { name: "查找的文件夹" });
     expect(
       within(folders)

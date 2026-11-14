@@ -244,7 +244,8 @@ describe("SystemJunkPage idle", () => {
     };
     fakes.History.list.mockResolvedValue([{ ...run, id: "m", kind: "maintenance" }, run]);
     renderPage();
-    expect(screen.getByRole("heading", { name: "系统垃圾" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("系统垃圾");
+    expect(screen.getByText("清理应用缓存、日志和临时文件，不会动你的文档和照片")).toBeTruthy();
     expect(screen.getByText(/检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓/)).toBeTruthy();
     expect(await screen.findByText(/^上次清理：.*，释放 1.2 GB$/)).toBeTruthy();
     expect(fakes.History.list).toHaveBeenCalledWith(100);
