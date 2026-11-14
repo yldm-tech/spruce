@@ -231,8 +231,22 @@ func DeleteConfirm(r advice.Recommendation, n int, bytes int64) Confirm {
 		Message: format.Bytes(bytes) + "（" + strconv.Itoa(n) + " 项）会直接删除，不经过" + format.TrashName() + "，无法撤销。" + rest}
 }
 
-// CommandConfirm asks before running command, which cleans what description says, about bytes.
+// commandEffect is what a command category's description says the command does: the part after 「：」, else after the 「运行 …，」 it starts with (advice words a command card's consequence the same way). The confirmation names the command itself, so the description's own 「运行 …」 would say it twice.
+func commandEffect(desc string) string {
+	if _, rest, ok := strings.Cut(desc, "："); ok {
+		return rest
+	}
+	if strings.HasPrefix(desc, "运行") {
+		if _, rest, ok := strings.Cut(desc, "，"); ok {
+			return rest
+		}
+	}
+	return desc
+}
+
+// CommandConfirm asks before running command, which cleans what its category's description says, about bytes.
 func CommandConfirm(command, description string, bytes int64) Confirm {
+	description = commandEffect(description)
 	words := strings.Fields(command)
 	if len(words) > 2 {
 		words = words[:2]

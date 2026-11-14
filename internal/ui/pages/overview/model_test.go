@@ -177,10 +177,15 @@ func TestConfirmations(t *testing.T) {
 	if d.Title != "删除Xcode 编译缓存？" || d.Message != "17.2 GB（1 项）会直接删除，不经过废纸篓，无法撤销。下次编译会慢一些，Xcode 会重新建立索引。" || !d.Danger || d.ConfirmLabel != "删除" {
 		t.Errorf("delete %+v", d)
 	}
-	c := CommandConfirm("brew cleanup -s --prune=all", "清理下载的安装包和旧版本", 2_000_000_000)
+	c := CommandConfirm("brew cleanup -s --prune=all", "运行 brew cleanup -s --prune=all：清理下载的安装包和旧版本", 2_000_000_000)
 	if c.Title != "运行 brew cleanup？" || c.Message+c.Command+c.After != "将运行 brew cleanup -s --prune=all，清理下载的安装包和旧版本（约 2 GB），无法撤销。停止后，正在运行的命令会先完成。" ||
 		!c.Danger || c.ConfirmLabel != "运行" {
 		t.Errorf("command %+v", c)
+	}
+	for desc, want := range map[string]string{"运行 npm cache clean --force，清空 npm 下载的包": "清空 npm 下载的包", "下载过的包": "下载过的包"} {
+		if got := commandEffect(desc); got != want {
+			t.Errorf("effect of %q: %q", desc, got)
+		}
 	}
 	w := RecycleConfirm(advice.Recommendation{Title: "下载里的安装包"}, 3, 2_100_000_000)
 	if w.Title != "把下载里的安装包移到回收站？" || w.Message != "2.1 GB（3 项）会移到回收站，需要时可以在回收站里还原。" || w.Danger || w.ConfirmLabel != "移到回收站" {

@@ -3,6 +3,7 @@ package overview_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -138,6 +139,10 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 		})
 	}, nsgotest.Size(1052, 1400))
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
+	// The page has the controller's state before the test acts on it.
+	if ov != nil {
+		p.WaitUntil(wait, func() bool { return reflect.DeepEqual(p.stores.Overview.State(), ov.State()) })
+	}
 	return p
 }
 
@@ -643,7 +648,7 @@ func TestCommandCard(t *testing.T) {
 	p.WaitFor("id:rec-confirm", wait)
 	p.Find("id:rec-confirm >> text:运行 npm cache？")
 	msg := p.Find("id:rec-confirm-message")
-	if msg.Text != "将运行 npm cache clean --force，运行 npm cache clean --force，清空 npm 下载的包（约 1.3 GB），无法撤销。停止后，正在运行的命令会先完成。" {
+	if msg.Text != "将运行 npm cache clean --force，清空 npm 下载的包（约 1.3 GB），无法撤销。停止后，正在运行的命令会先完成。" {
 		t.Errorf("message %q", msg.Text)
 	}
 	if len(msg.Spans) != 3 {
@@ -857,7 +862,6 @@ func TestGrowth(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return p.Find("id:rec-app-caches-expand").Props.Expanded })
 
 	q := open(t, ready())
-	q.ov.GrowthErr = errors.New("too few snapshots")
 	r := start(t, newFakes(t), func() *storefake.Overview {
 		o := storefake.NewOverview(ready())
 		o.GrowthErr = errors.New("too few snapshots")
@@ -874,4 +878,20 @@ func TestGoOverviewCard(t *testing.T) {
 	if p.Exists("id:recs-more") {
 		t.Error("再显示 still shows")
 	}
+}
+
+// Installers outside 下载 make the card 旧安装包, naming the folders.
+func TestInstallersTitle(t *testing.T) {
+	res := scan()
+	for i := range res.Categories {
+		if res.Categories[i].ID == "installers:disk-images" {
+			res.Categories[i].Items = append(res.Categories[i].Items, item(home+"/Desktop/Bar.dmg", 300*mb, true, 30*24*time.Hour))
+		}
+	}
+	res = cleanup.NewResult(res.Categories, now)
+	st := ready()
+	st.Result = result(res)
+	p := open(t, st)
+	p.waitText("id:rec-installers-title", "旧安装包")
+	p.waitText("id:rec-installers-reason", "2 个安装包，都下载超过 7 天了，在下载、桌面里")
 }

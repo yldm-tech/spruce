@@ -147,9 +147,13 @@ func TestScreensOverview(t *testing.T) {
 
 	// A card at work: its progress in place of its button, the other cards waiting.
 	release := make(chan struct{})
-	ov.CleanRelease = release
 	ov.OnClean = func(ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
 		if origin.Recommendation == "tool-xcode-derived-data" {
+			progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Path: "/Users/me/Library/Developer/Xcode/DerivedData", Done: 0, Total: 1})
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
 			return app.OverviewOutcome{RunID: "run-del", Result: cleanup.CleanResult{Freed: 17_200_000_000, Removed: 1}}, nil
 		}
 		return app.OverviewOutcome{RunID: "run-trash", Undoable: true, Result: cleanup.CleanResult{Trashed: 2_132_000_000, Removed: 2}}, nil
@@ -159,11 +163,10 @@ func TestScreensOverview(t *testing.T) {
 	a.Press("id:confirm-ok")
 	a.WaitFor("id:rec-tool-xcode-derived-data-progress", wait)
 	a.Screenshot("overview-cleaning")
-	release <- struct{}{}
+	close(release)
 	a.WaitFor("id:toast", wait)
 
 	// A move to the Trash: at once, with 撤销.
-	ov.CleanRelease = nil
 	a.Press("id:rec-installers-act")
 	a.WaitFor("id:toast-undo", wait)
 	a.Screenshot("overview-toast-undo")
