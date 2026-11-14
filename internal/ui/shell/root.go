@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"cmp"
 	"fmt"
 	"time"
 
@@ -20,11 +19,10 @@ const (
 	toastLong  = 10 * time.Second
 )
 
-// Root is the window's root view: the sidebar and the page area over the page background, with the toast at the bottom of the page area, above the pages and below the dialogs. It opens on start ("" for nav.Start), hides the system's title bar (the sidebar and the page headers drag the window) and reports the window's frame to keepFrame as it moves.
-func Root(cx *core.Scope, block *store.Block, start nav.Route, keepFrame func(core.WindowFrame)) core.Node {
+// Root is the window's root view: the sidebar and the page area over the page background, with the toast at the bottom of the page area, above the pages and below the dialogs. It shows the page of the navigator the app provides (nav.Key), which outlives the window, so a window opened again shows the page the last one did; it hides the system's title bar (the sidebar and the page headers drag the window) and reports the window's frame to keepFrame as it moves.
+func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame)) core.Node {
 	desktop.SetTitleBar(cx, desktop.TitleBarHidden, 0)
-	navigator := nav.NewNavigator(cx, cmp.Or(start, nav.Start))
-	nav.Key.Provide(cx, navigator)
+	navigator := nav.Use(cx)
 	cx.Effect(func() {
 		if f := desktop.Frame(cx); f.Width > 0 && keepFrame != nil {
 			keepFrame(f)

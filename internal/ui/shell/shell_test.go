@@ -128,3 +128,75 @@ type showing struct {
 
 // show shows x as the toast.
 func (s *showing) show(x store.Toast) { s.app.Post(func() { s.Toasts.Show(x) }) }
+
+// startLaunch starts the shell on fakes as the system launched it (launched, nil for the user), counting the main views it shows.
+func startLaunch(t *testing.T, launched func() (bool, bool), keepInTray bool) (*nsgotest.App, *int) {
+	t.Helper()
+	fakes := storefake.New(t.TempDir())
+	fakes.Settings.General.KeepInTray = keepInTray
+	views := new(int)
+	d := shell.Deps{Stores: fakes.Deps(), LaunchedAtLogin: launched,
+		SetMainView: func(cx *core.Scope, view func(cx *core.Scope) core.Node) {
+			*views++
+			cx.SetMainView(view)
+		}}
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
+	return a, views
+}
+
+func TestLoginLaunchStaysInTheMenuBar(t *testing.T) {
+	a, views := startLaunch(t, func() (bool, bool) { return true, true }, true)
+	// The launch is known to be at login and the window is to stay in the menu bar: it never opens, and two seconds later still has not.
+	a.Advance(2 * time.Second)
+	if *views != 0 || a.Exists("id:sidebar") {
+		t.Fatalf("the window opened at a login start (%d views)", *views)
+	}
+}
+
+func TestLaunchesThatOpenTheWindow(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		launched func() (bool, bool)
+		keep     bool
+	}{
+		{"the user opened it", nil, true},
+		{"at login, closing the window quits", func() (bool, bool) { return true, true }, false},
+		{"never known", func() (bool, bool) { return false, false }, true},
+	} {
+		a, views := startLaunch(t, c.launched, c.keep)
+		a.Advance(2 * time.Second)
+		a.WaitFor("id:sidebar", wait)
+		if *views != 1 {
+			t.Errorf("%s: %d main views, want 1", c.name, *views)
+		}
+	}
+}
+
+func TestNotificationsNeedThePermissionAndOpenWhatTheyAreAbout(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{Headline: 18 << 30}})
+	fakes.Overview = ov
+	a, _ := startShell(t, fakes, nav.History)
+
+	// Without the permission nothing shows, and background work never asks for it.
+	ov.Notify(app.Notice{Kind: app.NoticeLowDisk, ID: "low-disk", Volume: "Macintosh HD", Free: 8 << 30, Recommended: 18 << 30})
+	a.Advance(time.Second)
+	if len(a.Notifications) != 0 || a.NotificationPermission != core.NotificationsNotAsked {
+		t.Fatalf("notifications %v, permission %v without asking", a.Notifications, a.NotificationPermission)
+	}
+
+	a.NotificationPermission = core.NotificationsGranted
+	ov.Notify(app.Notice{Kind: app.NoticeLowDisk, ID: "low-disk", Volume: "Macintosh HD", Free: 8 << 30, Recommended: 18 << 30})
+	a.WaitUntil(wait, func() bool { return len(a.Notifications) == 1 })
+	if n := a.Notifications[0]; n.ID != "low-disk" || n.Title != "磁盘空间不多了" {
+		t.Errorf("notification %+v", n)
+	}
+	a.PressNotification("low-disk")
+	a.WaitFor("role:header 概览", wait)
+
+	// The weekly summary replaces nothing and opens 操作历史.
+	ov.Notify(app.Notice{Kind: app.NoticeAutoSummary, ID: "auto-summary:2026-W46", Trashed: 3 << 30})
+	a.WaitUntil(wait, func() bool { return len(a.Notifications) == 1 && a.Notifications[0].ID == "auto-summary:2026-W46" })
+	a.PressNotification("auto-summary:2026-W46")
+	a.WaitFor("role:header 操作历史", wait)
+}

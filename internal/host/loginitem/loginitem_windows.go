@@ -81,3 +81,6 @@ func deleteValue(key, name string) error {
 	}
 	return nil
 }
+
+// Refresh does nothing on Windows: the Run value passes no argument, and Spruce opens its window at login there.
+func (it *Item) Refresh() error { return nil }
