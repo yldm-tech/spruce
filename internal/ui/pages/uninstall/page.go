@@ -122,7 +122,7 @@ func Page(cx *core.Scope) core.Node {
 	}
 }
 
-// column is the page's column as kit.Page lays it out, without its scroll view: the columns take the height between the header and the action bar and scroll inside, as the design's grid row minmax(0, 1fr) does, which a scroll view's unbounded content height cannot. It fills the shell's main area absolutely, so its content's height never grows the window's root past the window (the shell sizes the root by its content). The window's minimum height leaves the columns more than their 300-point minimum, so the page itself never needs to scroll.
+// column is the page's column as kit.Page lays it out, without its scroll view: the columns take the height between the header and the action bar and scroll inside, as the design's grid row minmax(0, 1fr) does, which a scroll view's unbounded content height cannot. It fills the shell's main area absolutely, so its content never sizes the main area. The window's minimum height leaves the columns more than their 300-point minimum, so the page itself never needs to scroll.
 type column struct {
 	Children []core.Node
 }
