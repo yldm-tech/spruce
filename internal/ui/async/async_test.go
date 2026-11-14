@@ -3,6 +3,7 @@ package async
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -241,5 +242,35 @@ func TestSubscribeForwardsUntilTheEnd(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("closed channel did not end the subscription")
+	}
+}
+
+// heapInUse is the live heap after a full collection.
+func heapInUse() uint64 {
+	var m runtime.MemStats
+	runtime.GC()
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
+// A feed left open for hours (健康监测's samples) opens a window per value; a window that has ended must leave nothing behind in its scope.
+func TestFeedKeepsNoMemoryPerWindow(t *testing.T) {
+	h := newHost(t)
+	f := NewFeed(h.root, 10*time.Millisecond, func(int) {})
+	windows := func(n int) {
+		for i := range n {
+			f.Send(i)
+			h.drain()
+			// Nothing else comes: the window ends empty and the next value opens another.
+			h.advance(10 * time.Millisecond)
+		}
+	}
+	windows(200)
+	before := heapInUse()
+	windows(20000)
+	after := heapInUse()
+	if after > before && after-before > 1<<20 {
+		t.Errorf("20000 windows kept %d bytes", after-before)
 	}
 }

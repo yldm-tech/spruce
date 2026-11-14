@@ -76,7 +76,19 @@ func (t *throttle[T]) open() {
 	if v, ok := t.take(); ok {
 		t.deliver(v)
 	}
-	t.cx.AfterFunc(t.every, t.tick)
+	t.arm()
+}
+
+// arm starts the timer that ends the window. A scope keeps every AfterFunc's cleanup until it is disposed, so each window's timer lives in a child scope of cx that goes as the window ends; armed on cx itself, a feed open for hours would keep one per window. tick runs with cx owning what it makes, as before.
+func (t *throttle[T]) arm() {
+	var w *core.Scope
+	t.cx.Run(func() { w = t.cx.Child() })
+	w.Run(func() {
+		w.AfterFunc(t.every, func() {
+			w.Dispose()
+			t.cx.Run(t.tick)
+		})
+	})
 }
 
 // tick ends a window: it delivers what came during it and starts another, or closes.
@@ -95,7 +107,7 @@ func (t *throttle[T]) tick() {
 		return
 	}
 	t.deliver(v)
-	t.cx.AfterFunc(t.every, t.tick)
+	t.arm()
 }
 
 // flush posts what waits now, ahead of anything posted after it.

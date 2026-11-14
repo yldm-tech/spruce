@@ -27,8 +27,9 @@ type setting[T any] struct {
 	err, note *core.Signal[string]
 
 	pending *T
-	stop    func() bool
-	seq     int
+	// timer holds the debounce's timer while a save waits; it is disposed as the save goes out, since the control's scope would otherwise keep every change's timer until the control goes.
+	timer *core.Scope
+	seq   int
 }
 
 func newSetting[T any](cx *core.Scope, st *store.Settings, field Field[T], debounce time.Duration, equal func(a, b T) bool, adjusted func(T) string) *setting[T] {
@@ -57,19 +58,25 @@ func (s *setting[T]) change(v T) {
 		return
 	}
 	s.pending = &v
-	if s.stop != nil {
-		s.stop()
-	}
+	s.stopTimer()
 	// The timer belongs to the control's scope, whichever branch the handler runs in.
-	s.cx.Run(func() { s.stop = s.cx.AfterFunc(s.debounce, s.flush) })
+	var timer *core.Scope
+	s.cx.Run(func() { timer = s.cx.Child() })
+	timer.Run(func() { timer.AfterFunc(s.debounce, func() { s.cx.Run(s.flush) }) })
+	s.timer = timer
+}
+
+// stopTimer drops the waiting debounce, if any.
+func (s *setting[T]) stopTimer() {
+	if s.timer != nil {
+		s.timer.Dispose()
+		s.timer = nil
+	}
 }
 
 // flush sends a debounced save now, as the control loses the focus or goes.
 func (s *setting[T]) flush() {
-	if s.stop != nil {
-		s.stop()
-		s.stop = nil
-	}
+	s.stopTimer()
 	p := s.pending
 	s.pending = nil
 	if p != nil {
