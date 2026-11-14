@@ -299,8 +299,12 @@ func TestJournalRecoverAfterACrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jf.WriteString(`{"itemId":"abc","path":"/half`)
-	jf.Close()
+	if _, err := jf.WriteString(`{"itemId":"abc","path":"/half`); err != nil {
+		t.Fatal(err)
+	}
+	if err := jf.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if info, err := os.Stat(f.l.journalPath("crashed")); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("journal %v %v", info, err)
 	}

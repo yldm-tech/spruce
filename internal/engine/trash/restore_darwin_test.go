@@ -219,7 +219,7 @@ func TestRestoreReportsAPermissionProblem(t *testing.T) {
 	if err := os.Chmod(locked, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 	_, err := f.r.Restore(t.Context(), req)
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("err %v, want a permission error", err)

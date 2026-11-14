@@ -17,6 +17,9 @@ import (
 
 const canRestore = true
 
+// maxKeepBoth is the highest number KeepBoth tries: "<stem> 2<ext>" to "<stem> 99<ext>".
+const maxKeepBoth = 99
+
 // darwinRestorer renames items out of the Trash folders dirs returns. It never asks Finder (an AppleScript "put back" would raise the Automation permission prompt): reading and renaming a known name inside ~/.Trash needs no Full Disk Access.
 type darwinRestorer struct {
 	dirs func() []string

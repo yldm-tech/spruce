@@ -24,9 +24,6 @@ var (
 	ErrReplaced = errors.New("trash: the item in the Trash is not the one moved there")
 )
 
-// maxKeepBoth is the highest number KeepBoth tries: "<stem> 2<ext>" to "<stem> 99<ext>".
-const maxKeepBoth = 99
-
 // RestoreRequest is one item to put back.
 type RestoreRequest struct {
 	// TrashedPath is where the item is in the Trash; Original is where it was.
