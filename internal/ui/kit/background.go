@@ -23,7 +23,8 @@ func (b PageBackground) Render(*core.Scope) core.Node {
 	fill := core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0)}
 	base := fill
 	base.Gradients = []core.Gradient{Linear(160, Stop(core.RGB(0x8a4a12), 0), Stop(core.RGB(0x4a2238), 45), Stop(ColorBgDeep, 100))}
-	content := core.View{Style: core.Style{Position: core.Relative, FlexGrow: 1, Direction: core.Row, MinHeight: core.Pt(0)}, Children: b.Children}
+	// FlexShrink 1 and MinWidth 0: otherwise the row takes its children's full width, so a page that cannot be narrower than the window (a long file name in 空间透视's list) widens the main area past the window's right edge instead of being clipped by it.
+	content := core.View{Style: core.Style{Position: core.Relative, FlexGrow: 1, FlexShrink: 1, Direction: core.Row, MinWidth: core.Pt(0), MinHeight: core.Pt(0)}, Children: b.Children}
 	return core.View{
 		Style: core.Style{FlexGrow: 1, FlexShrink: 1, Direction: core.Row, Background: ColorBgDeep, Overflow: core.Hidden,
 			FontFamily: FontSans, Color: ColorText},
