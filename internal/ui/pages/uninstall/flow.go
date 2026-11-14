@@ -145,7 +145,10 @@ func leftoversDialog(s *State, open func() bool) core.Node {
 				kit.Button{Text: "保留", Variant: kit.ButtonGhost, Large: true, OnPress: s.Keep, TestID: "keep"},
 				kit.Button{Variant: kit.ButtonLight, Large: true, OnPress: s.RemoveFound, TestID: "remove-found",
 					Disabled: func() bool { n, _ := totals(); return n == 0 },
-					TextFunc: func() string { _, size := totals(); return "移到" + bin + "（" + format.BytesIn(size, windows) + "）" }},
+					TextFunc: func() string {
+						_, size := totals()
+						return "移到" + bin + "（" + format.BytesIn(size, windows) + "）"
+					}},
 			}},
 	}}
 }

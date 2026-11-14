@@ -107,10 +107,17 @@ func (s *Service) CheckRemoved(ctx context.Context, appID string) (app.Uninstall
 }
 
 // SetPlan changes what Leftovers answers from now on.
-func (s *Service) SetPlan(p app.UninstallPlan) {
+func (s *Service) SetPlan(p app.UninstallPlan, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Plan = p
+	s.Plan, s.PlanErr = p, err
+}
+
+// SetList changes what Apps answers from now on.
+func (s *Service) SetList(list []app.UninstallApp, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.List, s.ListErr = list, err
 }
 
 // Calls returns how often Apps, Leftovers, RunUninstaller and CheckRemoved were called.
@@ -132,6 +139,13 @@ type Files struct {
 	mu    sync.Mutex
 	Err   error
 	paths []string
+}
+
+// SetErr changes what Reveal answers from now on.
+func (f *Files) SetErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Err = err
 }
 
 // Reveal records path.

@@ -424,7 +424,9 @@ func (s *State) runUninstaller(target app.UninstallApp) {
 			}
 		})
 	}
-	async.Do(s.cx, ctx, func(ctx context.Context) (app.UninstallerOutcome, error) { return s.svc.RunUninstaller(ctx, target.ID, status) },
+	async.Do(s.cx, ctx, func(ctx context.Context) (app.UninstallerOutcome, error) {
+		return s.svc.RunUninstaller(ctx, target.ID, status)
+	},
 		func(out app.UninstallerOutcome, err error) {
 			cancel()
 			s.changed()

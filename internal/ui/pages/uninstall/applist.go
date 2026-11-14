@@ -167,16 +167,16 @@ func listBox(cx *core.Scope, s *State, listRef *core.Ref, narrow, searchFocused 
 		return core.Group{}
 	}}
 	list := core.List{
-		Count:         func() int { return len(s.Visible()) },
+		Count: func() int { return len(s.Visible()) },
 		Key: func(i int) any {
 			if apps := s.visible.GetUntracked(); i < len(apps) {
 				return apps[i].ID
 			}
 			return i
 		},
-		EstimatedSize: rowHeight,
-		Ref:           scroll,
-		Style:         core.Style{FlexGrow: 1, MinHeight: core.Pt(0), Padding: core.All(6)},
+		EstimatedSize:     rowHeight,
+		Ref:               scroll,
+		Style:             core.Style{FlexGrow: 1, MinHeight: core.Pt(0), Padding: core.All(6)},
 		ViewabilityConfig: core.ViewabilityConfig{ItemVisiblePercentThreshold: 100},
 		OnViewableItemsChange: func(v core.ViewableItems) {
 			first, last = -1, -1
@@ -195,8 +195,8 @@ func listBox(cx *core.Scope, s *State, listRef *core.Ref, narrow, searchFocused 
 		Focusable: func() bool { return true },
 		OnFocus:   func() { focused.Set(true) },
 		OnBlur:    func() { focused.Set(false) },
-		Style: core.Style{Group: listGroup, FlexGrow: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
-		Children: []core.Node{list, keys, searchKeys}}
+		Style:     core.Style{Group: listGroup, FlexGrow: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
+		Children:  []core.Node{list, keys, searchKeys}}
 }
 
 // appRow is one app of the list: its icon, name, version and last use, its badges and its size. A press picks it and gives the list box the keyboard's focus, so the arrow keys go on from it.
