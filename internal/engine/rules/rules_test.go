@@ -177,13 +177,14 @@ func cat(id string, kind cleanup.CategoryKind, items ...cleanup.Item) cleanup.Ca
 
 func planned(t *testing.T, res cleanup.ScanResult, id rules.ID, in rules.Inputs) (rules.Planned, bool) {
 	t.Helper()
-	for _, p := range rules.Plan(res, []rules.Spec{spec(id)}, in) {
-		if p.Rule != id {
-			t.Errorf("planned rule %s for %s", p.Rule, id)
-		}
-		return p, true
+	got := rules.Plan(res, []rules.Spec{spec(id)}, in)
+	switch {
+	case len(got) == 0:
+		return rules.Planned{}, false
+	case len(got) > 1 || got[0].Rule != id:
+		t.Errorf("planned %+v for %s", got, id)
 	}
-	return rules.Planned{}, false
+	return got[0], true
 }
 
 func paths(res cleanup.ScanResult, p rules.Planned) []string {
