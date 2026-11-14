@@ -7,15 +7,18 @@ export interface PlanLine {
   title: string;
   count: number;
   bytes: number;
+  /** The tool command that cleans the category (Category.command), for the commands group. */
+  command?: string;
 }
 
-/** cleanPlan splits the checked items by what happens to them: deleted for good, or moved to the Trash, one line per category in list order. */
+/** cleanPlan splits the checked items by what happens to them: cleaned by the tool's own command, deleted for good, or moved to the Trash, one line per category in list order. */
 export function cleanPlan(
   categories: readonly Category[],
   selection: Selection,
-): { permanent: PlanLine[]; trash: PlanLine[] } {
+): { permanent: PlanLine[]; trash: PlanLine[]; commands: PlanLine[] } {
   const permanent: PlanLine[] = [];
   const trash: PlanLine[] = [];
+  const commands: PlanLine[] = [];
   for (const c of categories) {
     const ids = selection.get(c.id);
     if (!ids) continue;
@@ -27,9 +30,10 @@ export function cleanPlan(
       count: picked.length,
       bytes: picked.reduce((sum, i) => sum + i.size, 0),
     };
-    (c.deletion === "permanent" ? permanent : trash).push(line);
+    if (c.command) commands.push({ ...line, command: c.command });
+    else (c.deletion === "permanent" ? permanent : trash).push(line);
   }
-  return { permanent, trash };
+  return { permanent, trash, commands };
 }
 
 /** setInUseAside takes the items another program held open out of a clean's failures: they are not errors the user must act on but files to try again later, counted on their own. The categories' failure counts drop to match. */

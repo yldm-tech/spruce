@@ -6,7 +6,7 @@ import { systemMonitorName } from "../../platform";
 import { formatAlertTitle } from "./summary";
 
 /** useHealthAlerts returns the current CPU alerts: the list Health.alerts returns when the page opens, then every list the Go side broadcasts. The subscription starts first, and a broadcast always wins over the initial answer, which may be older. */
-function useHealthAlerts(): Alert[] {
+export function useHealthAlerts(): Alert[] {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   useEffect(() => {
     let current = true;

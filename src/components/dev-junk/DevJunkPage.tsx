@@ -10,9 +10,9 @@ import { formatBytes, truncateMiddle } from "../common/format";
 import { Page, PageHeader } from "../common/Page";
 import { PAGES } from "../common/pages";
 import { CleanDoneDialog, CleaningOverlay, ScanIdle, ScanProgress } from "../common/ScanState";
-import type { Selection } from "../common/selection";
+import { withinGroup, type Selection } from "../common/selection";
 import { useSettings } from "../common/settings";
-import { cleanPlan, confirmationLines, splitGroups, withinGroup } from "./devJunk";
+import { cleanPlan, confirmationLines, splitGroups } from "./devJunk";
 
 import "./devJunk.css";
 

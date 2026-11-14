@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Category } from "../../mygo";
-import type { Selection } from "../common/selection";
-import { cleanPlan, confirmationLines, splitGroups, withinGroup } from "./devJunk";
+import { withinGroup, type Selection } from "../common/selection";
+import { cleanPlan, confirmationLines, splitGroups } from "./devJunk";
 
 function category(
   id: string,

@@ -33,7 +33,9 @@ export function cleanSummary(outcome: { result: CleanResult } | { error: string 
     if (c.failed > 0) parts.push(`${c.failed} 项未能处理`);
     if (parts.length > 0) lines.push(`${c.title}：${parts.join("，")}`);
   }
-  for (const f of r.failed.slice(0, MAX_FAILURE_LINES)) lines.push(`${baseName(f.path)}：${f.reason}`);
+  // A failure without a path stands for a whole category (智能扫描 reports a part it could not hand over that way); its reason names it.
+  for (const f of r.failed.slice(0, MAX_FAILURE_LINES))
+    lines.push(f.path ? `${baseName(f.path)}：${f.reason}` : f.reason);
   if (r.failed.length > MAX_FAILURE_LINES)
     lines.push(`另有 ${r.failed.length - MAX_FAILURE_LINES} 项未能处理`);
   if (r.skipped > 0) lines.push(`${r.skipped} 项在扫描后已不存在，已跳过`);

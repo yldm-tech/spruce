@@ -10,15 +10,6 @@ export function splitGroups(categories: readonly Category[]): { tools: Category[
   };
 }
 
-/** withinGroup applies next, a selection a section's CategoryList made, to the section's categories only, keeping the other section's checks: each list's 全选 and 全不选 act on its own section. */
-export function withinGroup(all: Selection, group: readonly Category[], next: Selection): Selection {
-  const ids = new Set(group.map((c) => c.id));
-  const out = new Map<string, ReadonlySet<string>>();
-  for (const [id, items] of all) if (!ids.has(id)) out.set(id, items);
-  for (const [id, items] of next) if (ids.has(id)) out.set(id, items);
-  return out;
-}
-
 /** What a clean of the selection will do, counted the way the confirmation tells it. */
 export interface CleanPlan {
   count: number;

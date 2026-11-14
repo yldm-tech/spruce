@@ -33,6 +33,16 @@ describe("cleanPlan", () => {
     expect(cleanPlan(cats, sel)).toEqual({
       permanent: [{ id: "a", title: "a 标题", count: 1, bytes: 20 }],
       trash: [{ id: "b", title: "b 标题", count: 1, bytes: 5 }],
+      commands: [],
+    });
+  });
+
+  it("puts a category its tool's command cleans apart", () => {
+    const cats = [{ ...category("npm", "permanent", [7]), command: "npm cache clean --force" }];
+    expect(cleanPlan(cats, new Map([["npm", new Set(["npm-0"])]]))).toEqual({
+      permanent: [],
+      trash: [],
+      commands: [{ id: "npm", title: "npm 标题", count: 1, bytes: 7, command: "npm cache clean --force" }],
     });
   });
 });

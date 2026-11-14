@@ -47,6 +47,15 @@ export function selectAll(categories: readonly Category[]): Selection {
   return defaultSelection(categories.map((c) => ({ ...c, selected: true })));
 }
 
+/** withinGroup applies next, a selection a CategoryList over group made, to group's categories only, keeping the checks of every other category: a list that shows part of a scan has 全选 and 全不选 act on its own part. */
+export function withinGroup(all: Selection, group: readonly Category[], next: Selection): Selection {
+  const ids = new Set(group.map((c) => c.id));
+  const out = new Map<string, ReadonlySet<string>>();
+  for (const [id, items] of all) if (!ids.has(id)) out.set(id, items);
+  for (const [id, items] of next) if (ids.has(id)) out.set(id, items);
+  return out;
+}
+
 /** The empty selection. */
 export const NOTHING_SELECTED: Selection = new Map();
 

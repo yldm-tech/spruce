@@ -83,6 +83,20 @@
   padding: 3px 0;
 }
 
+.clean-plan-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.clean-plan-command {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-section);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .clean-plan-figure {
   flex: none;
   color: var(--color-text-secondary);

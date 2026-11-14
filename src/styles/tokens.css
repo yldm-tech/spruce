@@ -186,3 +186,18 @@
   --space-row-icon-dir: #5cf0e6;
   --radius-space-cell: 8px;
 }
+
+/* ---- smart-scan ---- */
+/* 智能扫描: the hero button (the run button, larger), the per-source progress bars, the 「可清理」 figure and the monospace of a clean command in the confirmation. */
+:root {
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-size-hero: 56px;
+  --smart-hero-button-size: 148px;
+  --smart-hero-button-shadow:
+    0 0 0 12px rgba(255, 255, 255, 0.07), 0 0 0 28px rgba(255, 255, 255, 0.035),
+    0 20px 56px var(--shadow-accent);
+  --smart-bar-track: var(--meter-track);
+  --smart-bar-fill: var(--gradient-accent);
+  --smart-bar-busy: linear-gradient(90deg, transparent, rgba(255, 210, 63, 0.7), transparent);
+  --smart-status-low: var(--meter-fill-critical);
+}

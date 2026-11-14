@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# e2e-smoke.sh: launches the e2e build of Spruce on macOS, checks that the 维护 page renders the task catalog, saves a screenshot of the idle page and quits the app. It never presses 运行, so no maintenance task runs.
+# e2e-smoke.sh: launches the e2e build of Spruce on macOS, checks that it opens on the 智能扫描 home page, goes to the 维护 page through the sidebar and checks that it renders the task catalog, saves a screenshot of each page and quits the app. It never presses 扫描 or 运行, so nothing is scanned, cleaned or run.
 #
 #   scripts/e2e-smoke.sh [--build] [screenshot.png]
 #
-# --build runs `bun run build:e2e` first; without it the script builds only when the e2e app is missing. The screenshot defaults to ~/screenshots/spruce/e2e-smoke/idle.png. The app is driven through mygo's automation plugin (e2e_automation.go, linked only with -tags e2e) and the mygo-automation CLI; install the CLI from the module directory with `go install github.com/egoist/mygo/plugins/automation/cmd/mygo-automation`.
+# --build runs `bun run build:e2e` first; without it the script builds only when the e2e app is missing. The 维护 screenshot defaults to ~/screenshots/spruce/e2e-smoke/idle.png; the home page's goes next to it with -home before the extension. The app is driven through mygo's automation plugin (e2e_automation.go, linked only with -tags e2e) and the mygo-automation CLI; install the CLI from the module directory with `go install github.com/egoist/mygo/plugins/automation/cmd/mygo-automation`.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -70,6 +70,43 @@ done
 mygo-automation open --socket "$sock"
 mygo-automation wait --timeout 15s
 
+# The home page: waits until 智能扫描 has rendered its 扫描 button (or 15 s pass) and reports what it shows. 扫描 is not pressed.
+home=$(mygo-automation eval --json "$(cat <<'JS'
+const deadline = Date.now() + 15000;
+while (Date.now() < deadline && !document.querySelector('.app-main button.smart-hero-button')) {
+  await new Promise((r) => setTimeout(r, 100));
+}
+document.getAnimations().forEach((a) => a.finish());
+return {
+  path: location.pathname,
+  heading: document.querySelector('.app-main h1')?.textContent ?? '',
+  scanButton: Boolean(document.querySelector('.app-main button.smart-hero-button')),
+  statusCards: Array.from(document.querySelectorAll('.app-main .smart-status-card')).map((c) => c.getAttribute('aria-label')),
+};
+JS
+)")
+echo "$home"
+HOME_REPORT="$home" bun -e '
+const r = JSON.parse(process.env.HOME_REPORT);
+const fail = (m) => { console.error("e2e-smoke: " + m); process.exit(1); };
+if (r.path !== "/smart-scan") fail("expected the app to open on /smart-scan, got " + r.path);
+if (r.heading !== "智能扫描") fail("expected the 智能扫描 heading, got " + JSON.stringify(r.heading));
+if (!r.scanButton) fail("no 扫描 button on the home page");
+if (r.statusCards.length === 0) fail("the home page shows no status cards");
+console.log("e2e-smoke: home page with " + r.statusCards.join(", "));
+'
+mkdir -p "$(dirname "$shot")"
+mygo-automation screenshot "${shot%.*}-home.${shot##*.}"
+
+# Goes to 维护 the way a user would, through its sidebar entry.
+mygo-automation eval --json "$(cat <<'JS'
+const link = document.querySelector('nav a[href="/maintenance"]');
+if (!link) throw new Error('no 维护 entry in the sidebar');
+link.click();
+return true;
+JS
+)" >/dev/null
+
 # Waits in the page until the catalog has rendered (or 15 s pass), then reports what the page shows. Stalled CSS transitions are finished so the screenshot shows final colours: macOS does not tick animations of a window that is out of sight.
 report=$(mygo-automation eval --json "$(cat <<'JS'
 const deadline = Date.now() + 15000;
@@ -103,6 +140,5 @@ if (r.cards.some((c) => c.on) !== r.runEnabled) fail("运行 is enabled=" + r.ru
 console.log("e2e-smoke: " + r.cards.length + " cards: " + r.cards.map((c) => c.title + (c.on ? " (on)" : "")).join(", "));
 '
 
-mkdir -p "$(dirname "$shot")"
 mygo-automation screenshot "$shot"
 echo "e2e-smoke: ok"

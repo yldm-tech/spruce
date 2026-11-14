@@ -14,7 +14,7 @@ interface CleanPlanDialogProps {
   onCancel: () => void;
 }
 
-/** CleanPlanDialog asks before a clean like CleanConfirmDialog, and lists what is deleted for good and what goes to the Trash, category by category. It is the danger kind when anything is deleted for good. */
+/** CleanPlanDialog asks before a clean like CleanConfirmDialog, and lists what the tools' own commands clean, what is deleted for good and what goes to the Trash, category by category. It is the danger kind when anything is deleted for good. */
 export function CleanPlanDialog({ categories, selection, onConfirm, onCancel }: CleanPlanDialogProps) {
   const { message, danger } = cleanConfirmation(categories, selection);
   const plan = cleanPlan(categories, selection);
@@ -24,6 +24,7 @@ export function CleanPlanDialog({ categories, selection, onConfirm, onCancel }: 
       message={
         <>
           <p className="clean-plan-message">{message}</p>
+          <PlanGroup title="运行清理命令" lines={plan.commands} />
           <PlanGroup title="永久删除" lines={plan.permanent} />
           <PlanGroup title={`移到${trashName()}`} lines={plan.trash} />
         </>
@@ -44,7 +45,10 @@ function PlanGroup({ title, lines }: { title: string; lines: PlanLine[] }) {
       <ul className="clean-plan-list">
         {lines.map((l) => (
           <li key={l.id} className="clean-plan-line">
-            <span className="clean-plan-name">{l.title}</span>
+            <span className="clean-plan-name">
+              {l.title}
+              {l.command && <code className="clean-plan-command">{l.command}</code>}
+            </span>
             <span className="clean-plan-figure">{`${l.count} 项 · ${formatBytes(l.bytes)}`}</span>
           </li>
         ))}
