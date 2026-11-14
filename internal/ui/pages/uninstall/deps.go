@@ -2,6 +2,7 @@ package uninstall
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -24,10 +25,30 @@ type Files interface {
 	Reveal(ctx context.Context, path string) error
 }
 
+// Platform is the system whose uninstall flow the page follows.
+type Platform uint8
+
+// The platforms: the one the app runs on (the zero value), and macOS or Windows whatever it runs on, for tests.
+const (
+	PlatformSystem Platform = iota
+	PlatformMac
+	PlatformWindows
+)
+
+// windows reports whether p follows Windows: its program's own uninstaller, then the leftovers.
+func (p Platform) windows() bool {
+	if p == PlatformSystem {
+		return runtime.GOOS == "windows"
+	}
+	return p == PlatformWindows
+}
+
 // Deps are what the page reads, provided by the shell with DepsKey.
 type Deps struct {
 	Uninstall Service
 	Files     Files
+	// Platform is the flow to follow; the zero value is the running system's.
+	Platform Platform
 }
 
 // DepsKey provides the page's Deps.
