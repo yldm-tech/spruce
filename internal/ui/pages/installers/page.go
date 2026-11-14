@@ -72,15 +72,9 @@ func folderList(roots func() []string) core.Node {
 	return core.View{Role: core.RoleGroup, Label: "查找的文件夹", TestID: "folders", Style: core.Style{MaxWidth: core.Pt(520), AlignItems: core.AlignCenter},
 		Children: []core.Node{
 			core.Each(roots, func(r string) string { return r }, func(_ *core.Scope, root func() string, _ func() int) core.Node {
-				return core.View{Style: core.Style{MaxWidth: core.Pt(520)}, Tooltip: tooltip(root()), Children: []core.Node{
+				return core.View{Style: core.Style{MaxWidth: core.Pt(520)}, Tooltip: kit.Tooltip(root()), Children: []core.Node{
 					detailText(func() string { return format.TruncateMiddle(root(), folderChars) }, ""),
 				}}
 			}),
 		}}
-}
-
-// tooltip is the whole path over a shortened folder line, styled as kit's tooltips.
-func tooltip(s string) core.Node {
-	return core.View{Style: core.Style{Padding: core.Symmetric(4, 8), CornerRadius: 6, Background: core.RGBA(0x1a1030, 0.92)},
-		Children: []core.Node{kit.Text(s, kit.FontSmall, kit.Regular, kit.ColorText)}}
 }

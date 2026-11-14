@@ -82,7 +82,7 @@ func (p projectRoots) Render(*core.Scope) core.Node {
 					}
 				})
 			}),
-			settingsLink{Label: func() string {
+			kit.Link{TestID: "roots-settings", Text: func() string {
 				if none() {
 					return "去设置"
 				}
@@ -103,36 +103,8 @@ func rootsList(roots func() []string) core.Node {
 			t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
 			// The design draws the folders at the normal line height of Inter, tighter than the default of the font list.
 			t.Style.LineHeightEm = 1.21
-			return core.View{TestID: "root-" + strconv.Itoa(i()), Tooltip: tooltip(path), Children: []core.Node{t}}
+			return core.View{TestID: "root-" + strconv.Itoa(i()), Tooltip: kit.Tooltip(path), Children: []core.Node{t}}
 		})}}
-}
-
-// tooltip is the small dark label a folder shows on hover, as kit's controls draw theirs.
-func tooltip(s string) core.Node {
-	return core.View{Style: core.Style{Padding: core.Symmetric(4, 8), CornerRadius: 6, Background: core.RGBA(0x1a1030, 0.92)},
-		Children: []core.Node{kit.Text(s, kit.FontSmall, kit.Regular, kit.ColorText)}}
-}
-
-// settingsLink is the underlined link to 设置 (a .link-button on a router link).
-type settingsLink struct {
-	Label   func() string
-	OnPress func()
-}
-
-// Render implements core.Node.
-func (l settingsLink) Render(*core.Scope) core.Node {
-	text := kit.TextFunc(l.Label, kit.FontBody, kit.Regular, core.CurrentColor)
-	text.Style.TextDecoration = core.TextDecorationUnderline
-	return core.View{Role: core.RoleLink, LabelFunc: l.Label, TestID: "roots-settings",
-		Style: core.Style{Padding: core.Symmetric(2, 4), Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,
-			Hover:        &core.Style{Color: kit.ColorTextLinkHover},
-			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}},
-		OnPress: func(core.PressEvent) {
-			if l.OnPress != nil {
-				l.OnPress()
-			}
-		},
-		Children: []core.Node{text}}
 }
 
 // results is the page after a scan that found something: the unreadable places, the tool caches and the projects' build output as two sections, or a line saying why there was no build output.
@@ -160,9 +132,7 @@ func results(f *cleanflow.Flow, roots func() ([]string, bool), rev reveal) core.
 // section is one group of results under its heading, with its own CategoryList whose 全选 and 全不选 act on the group only.
 func section(f *cleanflow.Flow, title, key string, group []cleanup.Category, rev reveal, disabled func() bool) core.Node {
 	return core.View{TestID: "section-" + key, Style: core.Style{Gap: 10}, Children: []core.Node{
-		core.Text{Content: title, Role: core.RoleHeader, TestID: "heading-" + key,
-			Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontWeight: kit.FaceWeight(kit.Semibold), FontSize: kit.FontSection,
-				LetterSpacingEm: kit.LetterSpacingSection, Color: kit.ColorTextSection}},
+		heading(title, "heading-"+key),
 		cleanflow.CategoryList{Categories: func() []cleanup.Category { return group }, Selection: f.Selection.Get,
 			OnChange: func(next cleanflow.Selection) {
 				f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next))
@@ -185,4 +155,11 @@ func confirmMessage(c Confirmation) core.Node {
 		children = append(children, core.View{TestID: "confirm-lines", Style: core.Style{Gap: 4, TextAlign: core.TextAlignLeft, AlignItems: core.AlignStart}, Children: lines})
 	}
 	return core.View{Style: core.Style{AlignItems: core.AlignCenter}, Children: children}
+}
+
+// heading is a section's title, with its TestID.
+func heading(title, testID string) core.Text {
+	t := kit.SectionTitle(title)
+	t.TestID = testID
+	return t
 }

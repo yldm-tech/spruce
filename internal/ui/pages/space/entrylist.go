@@ -140,7 +140,7 @@ func entryRow(entry func() app.SpaceEntry, l EntryList) core.Node {
 
 	return core.View{Tooltip: core.Dynamic(func(*core.Scope) core.Node {
 		if p := entry().Path; p != "" {
-			return tooltip(p)
+			return kit.Tooltip(p)
 		}
 		return nil
 	}),
@@ -169,7 +169,7 @@ type rowButton struct {
 // Render implements core.Node.
 func (b rowButton) Render(*core.Scope) core.Node {
 	return core.View{Role: core.RoleButton, LabelFunc: b.Label, Ref: b.Ref,
-		Tooltip: core.Dynamic(func(*core.Scope) core.Node { return tooltip(b.Tip()) }),
+		Tooltip: core.Dynamic(func(*core.Scope) core.Node { return kit.Tooltip(b.Tip()) }),
 		StyleFunc: func() core.Style {
 			st := core.Style{Width: core.Pt(30), Height: core.Pt(30), FlexShrink: 0, CornerRadius: 15, AlignItems: core.AlignCenter,
 				JustifyContent: core.JustifyCenter, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,

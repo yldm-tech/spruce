@@ -296,7 +296,7 @@ func deniedBanner(cx *core.Scope, summary func() app.SpaceSummary, rescan func()
 		kit.TextFunc(func() string { return format.Thousands(summary().Denied) + " 个文件夹无权读取" }, kit.FontCardTitle, kit.Semibold, kit.ColorText),
 		kit.TextFunc(sub, kit.FontBody, kit.Regular, kit.ColorTextSecondary),
 		core.Show{When: func() bool { return len(summary().DeniedPaths) > 0 }, Then: func(*core.Scope) core.Node {
-			return core.View{Tooltip: core.Dynamic(func(*core.Scope) core.Node { return tooltip(strings.Join(summary().DeniedPaths, "\n")) }), Children: []core.Node{
+			return core.View{Tooltip: core.Dynamic(func(*core.Scope) core.Node { return kit.Tooltip(strings.Join(summary().DeniedPaths, "\n")) }), Children: []core.Node{
 				core.Text{ContentFunc: func() string { return "例如 " + format.TruncateMiddle(summary().DeniedPaths[0], 60) }, MaxLines: 1,
 					EllipsizeMode: core.EllipsizeTail, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorTextMuted}},
 			}}

@@ -23,6 +23,12 @@ func Tabular(t core.Text) core.Text {
 	return t
 }
 
+// SectionTitle is the small spaced heading over a group of cards or rows (.space-section-title, .smart-section-title, a detail card's section).
+func SectionTitle(s string) core.Text {
+	return core.Text{Content: s, Role: core.RoleHeader, Style: core.Style{FontFamily: FontFace(Semibold), FontSize: FontSection,
+		FontWeight: FaceWeight(Semibold), LetterSpacingEm: LetterSpacingSection, Color: ColorTextSection}}
+}
+
 // Weights, for Text.
 const (
 	Regular  = core.FontWeightNormal

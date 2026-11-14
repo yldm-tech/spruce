@@ -25,12 +25,6 @@ func note(content func() string, warning bool) core.Node {
 	return core.Text{ContentFunc: content, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: color}}
 }
 
-// sectionTitle is the small caps-like title of a section of the detail card.
-func sectionTitle(s string) core.Node {
-	return core.Text{Content: s, Role: core.RoleHeader, Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontSection,
-		FontWeight: kit.FaceWeight(kit.Semibold), LetterSpacingEm: kit.LetterSpacingSection, Color: kit.ColorTextSection}}
-}
-
 // banner is the amber box of a running app or a failed lookup, with its button.
 func banner(message func() string, button core.Node, testID string) core.Node {
 	return core.View{Role: core.RoleAlert, TestID: testID,
@@ -135,7 +129,7 @@ func appDetail(cx *core.Scope, s *State) core.Node {
 	}
 	if windows {
 		children = append(children, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{
-			sectionTitle("卸载方式"),
+			kit.SectionTitle("卸载方式"),
 			note(func() string {
 				return "卸载时会打开「" + current().Name + "」自带的卸载程序，请按它的提示完成。它结束后，Spruce 会查找它在你的用户文件夹里留下的文件，由你决定是否移到回收站。"
 			}, false),
@@ -219,7 +213,7 @@ func macLeftovers(cx *core.Scope, s *State, current func() app.UninstallApp) cor
 			return banner(func() string { return "请先退出「" + current().Name + "」再卸载" },
 				kit.Button{Text: "重新检查", Variant: kit.ButtonGhost, Disabled: s.PlanLoading.Get, OnPress: s.LoadPlan, TestID: "recheck-running"}, "running")
 		}},
-		sectionTitle("相关文件"),
+		kit.SectionTitle("相关文件"),
 		state,
 		core.Show{When: func() bool { return plan().SharedWith != "" }, Then: func(*core.Scope) core.Node {
 			return note(func() string {

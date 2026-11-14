@@ -1,4 +1,4 @@
-package history
+package shared
 
 import (
 	"strconv"
@@ -9,8 +9,8 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// ClearDialog asks before clearing the history, which cannot be undone, and clears on 清空 through the history store. 操作历史 and 设置 both open it. An error keeps it open with the reason; it closes (OnClose) after the history was cleared or on 取消.
-type ClearDialog struct {
+// ClearHistoryDialog asks before clearing the history, which cannot be undone, and clears on 清空 through the history store. 操作历史 and 设置 both open it. An error keeps it open with the reason; it closes (OnClose) after the history was cleared or on 取消.
+type ClearHistoryDialog struct {
 	Open func() bool
 	// Count is how many runs there are, nil when the caller does not know.
 	Count       func() int
@@ -19,7 +19,7 @@ type ClearDialog struct {
 }
 
 // Render implements core.Node.
-func (d ClearDialog) Render(cx *core.Scope) core.Node {
+func (d ClearHistoryDialog) Render(cx *core.Scope) core.Node {
 	hist := store.Use(cx).History
 	busy := core.NewSignal(cx, false)
 	failure := core.NewSignal(cx, "")

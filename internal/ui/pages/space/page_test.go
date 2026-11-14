@@ -108,6 +108,8 @@ func TestChooseFolderScansIt(t *testing.T) {
 	p.WaitFor("id:choose-folder", wait)
 	p.Press("id:choose-folder")
 	p.WaitFor("text:正在分析「Music」…", wait)
+	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) > 0 })
 	if got := svc.Scans(); len(got) != 1 || got[0] != "/Users/me/Music" {
 		t.Errorf("scans %v", got)
 	}
@@ -148,6 +150,8 @@ func TestScanShowsProgressThenResults(t *testing.T) {
 	p.WaitFor("id:target-home", wait)
 	p.Press("id:target-home")
 	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) > 0 })
 	if got := svc.Scans(); len(got) != 1 || got[0] != spacefake.Home {
 		t.Fatalf("scans %v", got)
 	}
@@ -451,6 +455,8 @@ func TestRescanTheSameLocation(t *testing.T) {
 	p.WaitFor(homeList, wait)
 	p.Press("id:rescan")
 	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) > 0 })
 	if got := svc.Scans(); len(got) != 1 || got[0] != spacefake.Home {
 		t.Errorf("scans %v", got)
 	}

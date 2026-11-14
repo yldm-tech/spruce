@@ -31,7 +31,7 @@ func (statusCards) Render(cx *core.Scope) core.Node {
 	}
 	cards = append(cards, maintenanceCard(cx, st))
 	return core.View{Role: core.RoleRegion, Label: "其他检查", TestID: "status", Style: core.Style{Gap: 12}, Children: []core.Node{
-		sectionTitle("其他检查"),
+		kit.SectionTitle("其他检查"),
 		cardGrid("其他检查", "", cards...),
 	}}
 }
@@ -123,7 +123,7 @@ func diskCard(cx *core.Scope, st *store.Stores) core.Node {
 						}},
 				}}
 			}},
-			pageLink{To: to(nav.Space), TestID: "disk-link", Text: func() string {
+			kit.Link{Start: true, To: to(nav.Space), TestID: "disk-link", Text: func() string {
 				if low() {
 					return "看看是什么占用了空间"
 				}
@@ -159,7 +159,7 @@ func cpuCard(st *store.Stores) core.Node {
 			}
 			return "Spruce 只提醒，不会结束进程"
 		},
-		Actions: []core.Node{pageLink{TestID: "cpu-link",
+		Actions: []core.Node{kit.Link{Start: true, TestID: "cpu-link",
 			Text: func() string {
 				if enabled() {
 					return "健康监测"
@@ -264,7 +264,7 @@ func maintenanceCard(cx *core.Scope, st *store.Stores) core.Node {
 			}
 			return MaintenanceNote(v.run, due())
 		},
-		Actions:    []core.Node{pageLink{Text: fixed("去维护"), To: to(nav.Maintenance), TestID: "maintenance-link"}},
+		Actions:    []core.Node{kit.Link{Start: true, Text: fixed("去维护"), To: to(nav.Maintenance), TestID: "maintenance-link"}},
 		HasActions: due,
 	}
 }

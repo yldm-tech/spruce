@@ -23,12 +23,6 @@ var targetGlyphs = map[string]struct {
 	"programFiles": {kit.ToneBlue, "apps"},
 }
 
-// sectionTitle is a heading over a group of cards (.space-section-title).
-func sectionTitle(s string) core.Node {
-	return core.Text{Content: s, Role: core.RoleHeader, Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontSection,
-		FontWeight: kit.FaceWeight(kit.Semibold), LetterSpacingEm: kit.LetterSpacingSection, Color: kit.ColorTextSection}}
-}
-
 // cardGrid lays cards out as the design's grid of 250-point columns.
 func cardGrid(label string, cards []core.Node) core.Node {
 	return core.View{Role: core.RoleGroup, Label: label,
@@ -54,14 +48,14 @@ func startView(cx *core.Scope, s *State) core.Node {
 					for i, vol := range v.Volumes {
 						cards[i] = volumeCard(vol, s)
 					}
-					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{sectionTitle("磁盘"), cardGrid("磁盘", cards)}})
+					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("磁盘"), cardGrid("磁盘", cards)}})
 				}
 				if len(v.Targets) > 0 {
 					cards := make([]core.Node, len(v.Targets))
 					for i, t := range v.Targets {
 						cards[i] = targetCard(t, s)
 					}
-					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{sectionTitle("常用位置"), cardGrid("常用位置", cards)}})
+					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("常用位置"), cardGrid("常用位置", cards)}})
 				}
 				return core.Group(sections)
 			}),
@@ -128,16 +122,10 @@ func targetCard(t app.SpaceTarget, s *State) core.Node {
 		g.tone, g.glyph = kit.ToneSlate, "folder"
 	}
 	return core.View{Role: core.RoleButton, Label: t.Name, Hint: t.Path, TestID: "target-" + t.ID, Style: cardStyle(),
-		Tooltip: tooltip(t.Path),
+		Tooltip: kit.Tooltip(t.Path),
 		OnPress: func(core.PressEvent) { s.Scan(ScanRequest{Path: t.Path, Name: t.Name}) },
 		Children: []core.Node{
 			kit.IconTile{Tone: g.tone, Size: 42, GlyphSize: 22, Glyph: g.glyph, Radius: kit.RadiusCardIcon},
 			cardText(t.Name, format.TruncateMiddle(t.Path, 48)),
 		}}
-}
-
-// tooltip is the small dark label a view shows on hover, as kit's controls draw theirs.
-func tooltip(s string) core.Node {
-	return core.View{Style: core.Style{Padding: core.Symmetric(4, 8), CornerRadius: 6, Background: core.RGBA(0x1a1030, 0.92)},
-		Children: []core.Node{core.Text{Content: s, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorText}}}}
 }

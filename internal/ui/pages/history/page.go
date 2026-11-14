@@ -8,6 +8,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
+	"github.com/yldm-tech/spruce/internal/ui/shared"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
@@ -50,7 +51,7 @@ func Page(cx *core.Scope) core.Node {
 
 	return core.Group{
 		kit.Page{Children: []core.Node{header, loadErr, empty, content}},
-		ClearDialog{Open: clearing.Get, Count: func() int { return len(s.Runs.Get()) }, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef},
+		shared.ClearHistoryDialog{Open: clearing.Get, Count: func() int { return len(s.Runs.Get()) }, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef},
 	}
 }
 

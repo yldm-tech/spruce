@@ -63,7 +63,7 @@ func (l LeftoverList) row(item func() app.UninstallLeftover) core.Node {
 		}
 		return strings.Join(parts, " · ")
 	}
-	return core.View{Tooltip: tooltip(x.Path),
+	return core.View{Tooltip: kit.Tooltip(x.Path),
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(48), Padding: core.Edges{Right: 10, Left: 14},
 			Hover: &core.Style{Background: kit.SurfaceRowHover}},
 		Children: []core.Node{
@@ -85,10 +85,4 @@ func (l LeftoverList) row(item func() app.UninstallLeftover) core.Node {
 			kit.IconButton{Glyph: "reveal", Label: "在" + fileManagerName(l.Windows) + "中显示 " + name, TestID: "reveal-" + x.ID,
 				OnPress: func() { l.OnReveal(item().Path) }},
 		}}
-}
-
-// tooltip is the small dark label a row shows on hover, as kit's controls draw theirs.
-func tooltip(s string) core.Node {
-	return core.View{Style: core.Style{Padding: core.Symmetric(4, 8), CornerRadius: 6, Background: core.RGBA(0x1a1030, 0.92)},
-		Children: []core.Node{kit.Text(s, kit.FontSmall, kit.Regular, kit.ColorText)}}
 }

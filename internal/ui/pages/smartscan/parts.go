@@ -7,7 +7,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 )
 
-// The parts below look shared but only this page uses them so far; the integration step decides whether they move into kit (heroButton as a RunButton option, gradientFigure as gradient text).
+// The parts below are used by this page only, so they stay here rather than in kit.
 
 // heroButton is the 148-point round 扫描 of the hero (.smart-hero-button): kit.RunButton's radial gradient, rings and glow at the hero's size, with the page's glyph over the text in the title size.
 type heroButton struct {
@@ -68,24 +68,6 @@ func gradientFigure(text func() string, testID string) core.Node {
 	}}
 }
 
-// pageLink is a bare text link to another page (.link-button with no left padding, as the cards align it).
-type pageLink struct {
-	Text   func() string
-	To     func() nav.Route
-	TestID string
-}
-
-// Render implements core.Node.
-func (l pageLink) Render(cx *core.Scope) core.Node {
-	return core.View{Role: core.RoleLink, LabelFunc: l.Text, TestID: l.TestID,
-		OnPress: func(core.PressEvent) { nav.Use(cx).Go(l.To()) },
-		Style: core.Style{AlignSelf: core.AlignStart, FlexShrink: 0, Padding: core.Edges{Top: 2, Right: 4, Bottom: 2}, FontFamily: kit.FontSans,
-			FontSize: kit.FontBody, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,
-			Hover:        &core.Style{Color: kit.ColorTextLinkHover},
-			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}},
-		Children: []core.Node{core.Text{ContentFunc: l.Text}}}
-}
-
 // to is a fixed link target.
 func to(r nav.Route) func() nav.Route { return func() nav.Route { return r } }
 
@@ -105,12 +87,6 @@ func cardHead(tone kit.Tone, glyph string, size, glyphSize core.Points, title st
 			kit.IconTile{Tone: tone, Size: size, GlyphSize: glyphSize, Glyph: glyph, Radius: kit.RadiusCardIcon},
 			kit.Text(title, kit.FontCardTitle, kit.Semibold, kit.ColorText),
 		}}
-}
-
-// sectionTitle is a heading over a group of cards (.smart-section-title).
-func sectionTitle(s string) core.Node {
-	return core.Text{Content: s, Role: core.RoleHeader, Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontSection,
-		FontWeight: kit.FaceWeight(kit.Semibold), LetterSpacingEm: kit.LetterSpacingSection, Color: kit.ColorTextSection}}
 }
 
 // cardGrid lays cards out in columns of at least 200 points (.smart-source-grid, .smart-status-grid).

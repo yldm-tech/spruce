@@ -86,7 +86,7 @@ func (b Button) Render(*core.Scope) core.Node {
 	disabled := func() bool { return is(b.Disabled) || is(b.Busy) }
 	var tip core.Node
 	if b.Tooltip != "" {
-		tip = tooltip(b.Tooltip)
+		tip = Tooltip(b.Tooltip)
 	}
 	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Ref: b.Ref, Style: st, Tooltip: tip,
 		Disabled: disabled, Busy: b.Busy,
@@ -98,8 +98,8 @@ func (b Button) Render(*core.Scope) core.Node {
 		Children: children}
 }
 
-// tooltip is the small dark label a control shows on hover.
-func tooltip(s string) core.Node {
+// Tooltip is the small dark label a view shows on hover (a View's Tooltip), such as a shortened path's whole text.
+func Tooltip(s string) core.Node {
 	return core.View{Style: core.Style{Padding: core.Symmetric(4, 8), CornerRadius: 6, Background: core.RGBA(0x1a1030, 0.92)},
 		Children: []core.Node{Text(s, FontSmall, Regular, ColorText)}}
 }
@@ -115,7 +115,7 @@ type IconButton struct {
 
 // Render implements core.Node.
 func (b IconButton) Render(*core.Scope) core.Node {
-	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Tooltip: tooltip(b.Label), Disabled: b.Disabled,
+	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Tooltip: Tooltip(b.Label), Disabled: b.Disabled,
 		Style: core.Style{Width: core.Pt(30), Height: core.Pt(30), FlexShrink: 0, CornerRadius: 15, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
 			Hover:    &core.Style{Background: SurfaceButtonGhost, Color: ColorText},

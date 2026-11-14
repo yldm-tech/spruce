@@ -106,7 +106,7 @@ func treemapCell(cell func() Cell[app.SpaceEntry], index func() int, m Treemap) 
 				Style: core.Style{MaxWidth: core.Pct(100), FontFamily: kit.FontSans, FontSize: 11, FontVariant: core.FontTabularNums, Opacity: core.Alpha(0.85)}},
 		}
 	}}
-	v := core.View{StyleFunc: style, Tooltip: core.Dynamic(func(*core.Scope) core.Node { return tooltip(tip()) }), Children: []core.Node{body}}
+	v := core.View{StyleFunc: style, Tooltip: core.Dynamic(func(*core.Scope) core.Node { return kit.Tooltip(tip()) }), Children: []core.Node{body}}
 	if kind == app.SpaceDir {
 		v.Role, v.NoFocus = core.RoleButton, true
 		v.LabelFunc = func() string { return "打开 " + name() + "，" + size() }

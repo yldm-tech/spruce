@@ -50,7 +50,7 @@ func results(cx *core.Scope, f *cleanflow.Flow, cleanRef *core.Ref, reveal func(
 	}
 	children = append(children, statusCards{})
 	if found {
-		list := []core.Node{sectionTitle("全部项目")}
+		list := []core.Node{kit.SectionTitle("全部项目")}
 		for _, s := range summaries {
 			if s.Items > 0 {
 				list = append(list, sourceSection{Summary: s, Flow: f, Disabled: notResults, Reveal: reveal})
@@ -87,7 +87,7 @@ func sourceCard(s SourceSummary) core.Node {
 			mutedText(fixed(SourceNote(s)), nil, "source-note-"+id))
 	}
 	children = append(children, core.View{Style: core.Style{AutoMargin: core.SideTop, AlignItems: core.AlignStart}, Children: []core.Node{
-		pageLink{Text: fixed("查看详情"), To: to(route), TestID: "source-link-" + id},
+		kit.Link{Start: true, Text: fixed("查看详情"), To: to(route), TestID: "source-link-" + id},
 	}})
 	return core.View{Role: core.RoleRegion, Label: meta.Title, TestID: "source-" + id, Style: cardStyle(), Children: children}
 }

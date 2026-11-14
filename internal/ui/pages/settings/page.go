@@ -13,6 +13,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
+	"github.com/yldm-tech/spruce/internal/ui/shared"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
@@ -23,7 +24,7 @@ func Page(cx *core.Scope) core.Node {
 	ctx := cx.Context()
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
-	clearing, clearBusy, clearErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
+	clearing := core.NewSignal(cx, false)
 
 	// 恢复默认设置 counts a generation, which draws the sections again so every control drops its draft and its notes.
 	sections := core.Show{When: stores.Settings.Loaded, Then: func(*core.Scope) core.Node {
@@ -34,7 +35,7 @@ func Page(cx *core.Scope) core.Node {
 					generalSection(),
 					healthSection(stores.Settings),
 					cleanupSection(stores.Settings),
-					historySection(stores.Settings, clearRef, func() { clearErr.Set(""); clearing.Set(true) }),
+					historySection(stores.Settings, clearRef, func() { clearing.Set(true) }),
 					permissionsSection(stores.Permission),
 					aboutSection(cx, ctx, stores.Settings, deps.Files),
 					core.View{Style: core.Style{Direction: core.Row, JustifyContent: core.JustifyCenter, Padding: core.Edges{Top: 6, Bottom: 4}},
@@ -63,23 +64,7 @@ func Page(cx *core.Scope) core.Node {
 		OnCancel: func() { resetting.Set(false) },
 	}
 
-	clear := kit.ConfirmDialog{Open: clearing.Get, Title: "清空操作历史？", ConfirmLabel: "清空", Danger: true, Busy: clearBusy.Get,
-		ReturnFocus: clearRef, TestID: "clear-dialog",
-		Message: confirmMessage("将删除全部操作记录，无法恢复。只删除记录，不会撤销或改动已经做过的清理和维护。", clearErr.Get, "clear-error"),
-		OnConfirm: func() {
-			clearBusy.Set(true)
-			clearErr.Set("")
-			stores.History.Clear(func(err error) {
-				clearBusy.Set(false)
-				if err != nil {
-					clearErr.Set(err.Error())
-					return
-				}
-				clearing.Set(false)
-			})
-		},
-		OnCancel: func() { clearing.Set(false) },
-	}
+	clear := shared.ClearHistoryDialog{Open: clearing.Get, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef}
 
 	return core.Group{
 		kit.Page{TestID: "settings-page", Children: []core.Node{kit.PageHeader{Route: nav.Settings}, sections}},
