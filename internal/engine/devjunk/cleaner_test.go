@@ -221,27 +221,30 @@ func TestScanAndCleanDarwin(t *testing.T) {
 		t.Errorf("old project's time = %v, want its last activity", oldItem.ModTime)
 	}
 
-	d := f.cleaner.Details()
-	defaults := map[string]bool{}
-	for _, id := range d.DefaultItems {
-		defaults[id] = true
-	}
-	if !defaults[oldItem.ID] || defaults[newItem.ID] {
+	if !oldItem.Selected || newItem.Selected {
 		t.Error("only the inactive project's node_modules should start checked")
 	}
-	if old, newest := itemByName(support, "16.0 (20A362)"), itemByName(support, "17.0 (21A329)"); !defaults[old.ID] || defaults[newest.ID] {
-		t.Error("device support: the old version should be checked, the newest kept")
+	if old, newest := itemByName(support, "16.0 (20A362)"), itemByName(support, "17.0 (21A329)"); !old.Selected || newest.Selected || support.Selected {
+		t.Error("device support: the old version should be checked, the newest kept, the category checked in part")
 	}
 	jb := categoryByID(res, "tool-jetbrains")
-	if jb == nil || !defaults[itemByName(jb, "GoLand2023.3").ID] || defaults[itemByName(jb, "GoLand2024.2").ID] {
+	if jb == nil || !itemByName(jb, "GoLand2023.3").Selected || itemByName(jb, "GoLand2024.2").Selected {
 		t.Errorf("jetbrains = %+v", jb)
 	}
-	if defaults[categoryByID(res, "tool-xcode-archives").Items[0].ID] {
+	if arch := categoryByID(res, "tool-xcode-archives"); arch.Selected || arch.Items[0].Selected {
 		t.Error("archives start checked")
 	}
-	wantCmds := []Command{{CategoryID: "tool-xcode-simulators", Command: "xcrun simctl delete unavailable"}, {CategoryID: "tool-npm", Command: "npm cache clean --force"}}
-	if !slices.Equal(d.Commands, wantCmds) {
-		t.Errorf("commands = %+v, want %+v", d.Commands, wantCmds)
+	if !derived.Selected || !derived.Items[0].Selected {
+		t.Errorf("derived data = %+v, want it checked as a whole", derived)
+	}
+	var cmds [][2]string
+	for _, c := range res.Categories {
+		if c.Command != "" {
+			cmds = append(cmds, [2]string{c.ID, c.Command})
+		}
+	}
+	if want := [][2]string{{"tool-xcode-simulators", "xcrun simctl delete unavailable"}, {"tool-npm", "npm cache clean --force"}}; !slices.Equal(cmds, want) {
+		t.Errorf("commands = %v, want %v", cmds, want)
 	}
 
 	req := cleanup.CleanRequest{
@@ -319,8 +322,8 @@ func TestCommandSkippedWhenExclusionInside(t *testing.T) {
 	if categoryByID(res, "tool-pnpm") != nil {
 		t.Error("pnpm store prune offered although an exclusion lies inside the store")
 	}
-	if d := f.cleaner.Details(); len(d.Commands) != 0 {
-		t.Errorf("commands = %+v", d.Commands)
+	if npm.Command != "" {
+		t.Errorf("npm falls back to its entries but names the command %q", npm.Command)
 	}
 }
 

@@ -45,6 +45,13 @@ describe("selection", () => {
     expect(selectedTotals(cats, sel)).toEqual({ count: 2, bytes: 150 });
   });
 
+  it("checks the items the scan marked on their own, a category in part", () => {
+    const part = category("support", false, [{ ...item("old", 30), selected: true }, item("newest", 40)]);
+    const sel = defaultSelection([part]);
+    expect(categoryState(part, sel)).toBe("some");
+    expect([...(sel.get("support") ?? [])]).toEqual(["old"]);
+  });
+
   it("toggles items and categories", () => {
     let sel = setItem(defaultSelection(cats), cats[0]!, "b", false);
     expect(categoryState(cats[0]!, sel)).toBe("some");

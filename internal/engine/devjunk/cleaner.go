@@ -73,8 +73,6 @@ type snapshot struct {
 	items map[string]string
 	// commands are the categories cleaned by a command, by category ID.
 	commands map[string]*commandJob
-	// defaults are the IDs of the items that start checked.
-	defaults []string
 }
 
 // commandJob is a category cleaned by running its tool's command.
@@ -170,7 +168,7 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	rep := &reporter{fn: progress, total: len(tools) + len(cfg.DevProjectRoots)}
 	rep.at("")
 
-	b := &builder{seen: map[string]bool{}, defaults: map[string]bool{}, commands: map[string]*commandJob{}, projects: map[string]string{}}
+	b := &builder{seen: map[string]bool{}, commands: map[string]*commandJob{}, projects: map[string]string{}}
 	for _, t := range tools {
 		if err := c.scanTool(ctx, t, cfg.Exclusions, rep, b); err != nil {
 			return cleanup.ScanResult{}, err
@@ -197,9 +195,6 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		snap.order = append(snap.order, cat.ID)
 		for _, it := range cat.Items {
 			snap.items[it.ID] = cat.ID
-			if b.defaults[it.ID] {
-				snap.defaults = append(snap.defaults, it.ID)
-			}
 		}
 	}
 	c.del.set(b.projects)
@@ -214,14 +209,13 @@ type builder struct {
 	mu       sync.Mutex
 	cats     []cleanup.Category
 	seen     map[string]bool
-	defaults map[string]bool
 	commands map[string]*commandJob
 	// projects maps an artifact's path to its project folder, its only allowed root.
 	projects map[string]string
 	denied   int64
 }
 
-// add appends cat with the items whose IDs no earlier category has, and records which start checked. A category left empty is dropped.
+// add appends cat with the items whose IDs no earlier category has, each starting checked (Item.Selected) when checked says so; cleanup.NewResult then checks the category as a whole when all of them are. A category left empty is dropped.
 func (b *builder) add(cat cleanup.Category, checked map[string]bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -229,13 +223,12 @@ func (b *builder) add(cat cleanup.Category, checked map[string]bool) {
 	if len(cat.Items) == 0 {
 		return
 	}
-	all := true
-	for _, it := range cat.Items {
+	for i := range cat.Items {
+		it := &cat.Items[i]
 		b.seen[it.ID] = true
-		b.defaults[it.ID] = checked[it.ID]
-		all = all && checked[it.ID]
+		it.Selected = checked[it.ID]
 	}
-	cat.Selected = all
+	cat.Selected = false
 	b.cats = append(b.cats, cat)
 }
 
@@ -382,6 +375,7 @@ func (c *Cleaner) scanCommandTool(ctx context.Context, t *tool, exclusions []str
 		return false, nil
 	}
 	cat := c.category("tool-"+t.id, t.title, t.commandDescription, t.icon, t.warning, cleanup.KindDevCache, cleanup.DeletePermanent)
+	cat.Command = commandLabel(*t.command)
 	it := cleanup.NewItem(dir, info, total)
 	it.Note = note
 	cat.Items = []cleanup.Item{it}

@@ -124,7 +124,6 @@ func main() {
 		Log:      logger,
 	})
 	services.RegisterCleaner(cleanups, services.CleanerDevJunk, devJunk)
-	mygo.Bind(services.NewDevJunk(devJunk))
 
 	// page: installers
 	services.RegisterCleaner(cleanups, services.CleanerInstallers, installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))

@@ -16,8 +16,6 @@ import type {
   Category,
   CleanResult,
   Cleanup,
-  DevJunk,
-  DevJunkDetails,
   Files,
   Progress,
   ScanResult,
@@ -49,7 +47,6 @@ const fakes = vi.hoisted(() => {
       clean: vi.fn<typeof Cleanup.clean>(),
       available: vi.fn<typeof Cleanup.available>(),
     },
-    DevJunk: { details: vi.fn<typeof DevJunk.details>() },
     Settings: { get: vi.fn<typeof Settings.get>() },
     Files: { reveal: vi.fn<typeof Files.reveal>() },
   };
@@ -57,7 +54,6 @@ const fakes = vi.hoisted(() => {
 
 vi.mock("../../mygo", () => ({
   Cleanup: fakes.Cleanup,
-  DevJunk: fakes.DevJunk,
   Settings: fakes.Settings,
   Files: fakes.Files,
   events: { settingsChanged: { on: () => () => {} } },
@@ -75,7 +71,7 @@ function category(
   title: string,
   kind: Category["kind"],
   deletion: Category["deletion"],
-  items: [string, number, string?][],
+  items: [string, number, string?, boolean?][],
   extra: Partial<Category> = {},
 ): Category {
   return {
@@ -87,12 +83,13 @@ function category(
     deletion,
     selected: false,
     size: items.reduce((sum, [, size]) => sum + size, 0),
-    items: items.map(([name, size, note]) => ({
+    items: items.map(([name, size, note, selected]) => ({
       id: name,
       path: `/Users/u/x/${name}`,
       size,
       modTime: "2026-01-01T00:00:00Z",
       note,
+      selected,
     })),
     ...extra,
   };
@@ -103,17 +100,18 @@ const SCAN: ScanResult = {
     category("tool-npm", "npm 缓存", "devCache", "permanent", [["npm", 1000]], {
       selected: true,
       description: "运行 npm cache clean --force，清空 npm 下载的包",
+      command: "npm cache clean --force",
     }),
     category("tool-xcode-device-support", "设备支持文件", "devCache", "permanent", [
       ["ios17", 3000, "这个平台最新的版本，默认保留"],
-      ["ios16", 2000],
+      ["ios16", 2000, undefined, true],
     ]),
     category("tool-xcode-archives", "Xcode 归档", "devCache", "trash", [["arch", 500]], {
       warning: "包含已发布版本的符号文件",
     }),
     category("artifact-node-modules", "node_modules", "projectArtifact", "permanent", [
       ["nm-new", 5000, "new · 最近 30 天内有改动"],
-      ["nm-old", 4000, "old"],
+      ["nm-old", 4000, "old", true],
     ]),
   ],
   size: 15500,
@@ -121,11 +119,6 @@ const SCAN: ScanResult = {
   denied: 0,
   scannedAt: "2026-11-14T01:00:00Z",
   duration: 2e9,
-};
-
-const DETAILS: DevJunkDetails = {
-  defaultItems: ["npm", "ios16", "nm-old"],
-  commands: [{ categoryId: "tool-npm", command: "npm cache clean --force" }],
 };
 
 const RESULT: CleanResult = {
@@ -212,7 +205,7 @@ function stat(label: string) {
 async function scanToResults(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("button", { name: "扫描" }));
   await screen.findByRole("region", { name: "工具缓存" });
-  // The default selection arrives with DevJunk.details: some categories are checked in part.
+  // The scan marks the items that start checked: some categories are checked in part.
   await waitFor(() => expect(stat("已选择")).toBe("3 项"));
 }
 
@@ -220,7 +213,6 @@ beforeEach(() => {
   fakes.Settings.get.mockResolvedValue(settings(["/Users/u/Workspace", "/Users/u/Projects"]));
   fakes.Cleanup.scan.mockResolvedValue(SCAN);
   fakes.Cleanup.clean.mockResolvedValue(RESULT);
-  fakes.DevJunk.details.mockResolvedValue(DETAILS);
   fakes.Files.reveal.mockResolvedValue(undefined);
 });
 
@@ -336,7 +328,6 @@ describe("DevJunkPage", () => {
   it("says when nothing was found", async () => {
     const user = userEvent.setup();
     fakes.Cleanup.scan.mockResolvedValue({ ...SCAN, categories: [], size: 0, items: 0 });
-    fakes.DevJunk.details.mockResolvedValue({ defaultItems: [], commands: [] });
     renderPage();
     await user.click(await screen.findByRole("button", { name: "扫描" }));
     expect(await screen.findByText("没有找到开发者垃圾")).toBeTruthy();

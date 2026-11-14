@@ -192,35 +192,3 @@ func commandLabel(cmd execx.Command) string {
 	}
 	return strings.Join(append([]string{name}, cmd.Args...), " ")
 }
-
-// Command is a category of the last scan that is cleaned by running a command.
-type Command struct {
-	CategoryID string
-	// Command is what runs, as typed in a terminal, e.g. "brew cleanup -s --prune=all".
-	Command string
-}
-
-// Details is what the page needs about the last scan beyond the cleanup model.
-type Details struct {
-	// DefaultItems are the IDs of the items that start checked.
-	DefaultItems []string
-	// Commands are the categories cleaned by running a command, in scan order.
-	Commands []Command
-}
-
-// Details reports the last scan's default selection and command categories; empty before any scan.
-func (c *Cleaner) Details() Details {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	d := Details{DefaultItems: []string{}, Commands: []Command{}}
-	if c.last == nil {
-		return d
-	}
-	d.DefaultItems = append(d.DefaultItems, c.last.defaults...)
-	for _, id := range c.last.order {
-		if job := c.last.commands[id]; job != nil {
-			d.Commands = append(d.Commands, Command{CategoryID: id, Command: commandLabel(job.cmd)})
-		}
-	}
-	return d
-}

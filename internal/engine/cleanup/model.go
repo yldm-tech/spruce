@@ -54,6 +54,8 @@ type Item struct {
 	Dir bool `json:"dir,omitempty"`
 	// Note is an optional short line in Simplified Chinese, e.g. "3 个月未修改" or the project a build folder belongs to.
 	Note string `json:"note,omitempty"`
+	// Selected is whether the item starts checked. A scanner sets it per item when a category starts checked in part (every Xcode device support version but the newest); NewResult sets it on every item of a category that starts checked, so the page reads the default selection from the items alone.
+	Selected bool `json:"selected,omitempty"`
 
 	// symlink records that the scan saw a symlink, which is the only case in which the item may be one when it is deleted.
 	symlink bool
@@ -91,8 +93,10 @@ type Category struct {
 	Items []Item `json:"items"`
 	// Size is the sum of the items' sizes.
 	Size int64 `json:"size"`
-	// Selected is whether the category starts checked.
+	// Selected is whether the category starts checked as a whole. NewResult sets it when every item is Selected, and marks every item Selected when it is set.
 	Selected bool `json:"selected"`
+	// Command, when set, is the tool's own clean command that cleans the category instead of deleting its items, as typed in a terminal, e.g. "brew cleanup -s --prune=all"; the page names it in the confirmation.
+	Command string `json:"command,omitempty"`
 	// Warning is an optional caution in Simplified Chinese shown in the warning colour, e.g. "删除后 Xcode 需要重新建立索引".
 	Warning string `json:"warning,omitempty"`
 	// Roots are the folders the items may be deleted from; they stay in Go.
@@ -111,7 +115,7 @@ type ScanResult struct {
 	Duration  time.Duration `json:"duration"`
 }
 
-// NewResult sorts each category's items largest first, fills in the sizes and totals, and stamps the scan as started at started and finished now.
+// NewResult sorts each category's items largest first, fills in the sizes and totals, settles the default selection (a Selected category checks all its items; a category whose items are all Selected is Selected), and stamps the scan as started at started and finished now.
 func NewResult(categories []Category, started time.Time) ScanResult {
 	res := ScanResult{Categories: categories, ScannedAt: time.Now(), Duration: time.Since(started)}
 	for i := range res.Categories {
@@ -121,8 +125,17 @@ func NewResult(categories []Category, started time.Time) ScanResult {
 		}
 		slices.SortStableFunc(c.Items, func(a, b Item) int { return cmp.Compare(b.Size, a.Size) })
 		c.Size = 0
-		for _, it := range c.Items {
+		all := len(c.Items) > 0
+		for j := range c.Items {
+			it := &c.Items[j]
+			if c.Selected {
+				it.Selected = true
+			}
+			all = all && it.Selected
 			c.Size += it.Size
+		}
+		if len(c.Items) > 0 {
+			c.Selected = all
 		}
 		res.Size += c.Size
 		res.Items += len(c.Items)

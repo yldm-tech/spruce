@@ -6,11 +6,12 @@ export type Selection = ReadonlyMap<string, ReadonlySet<string>>;
 /** How much of a category is checked, for its tri-state checkbox. */
 export type CheckState = "none" | "some" | "all";
 
-/** defaultSelection checks every item of the categories the scan marked Selected. */
+/** defaultSelection checks what the scan says starts checked: every item of a category marked selected, and each item marked selected on its own (a category may start checked in part). */
 export function defaultSelection(categories: readonly Category[]): Selection {
   const sel = new Map<string, ReadonlySet<string>>();
   for (const c of categories) {
-    if (c.selected && c.items.length > 0) sel.set(c.id, new Set(c.items.map((i) => i.id)));
+    const picked = c.items.filter((i) => c.selected || i.selected).map((i) => i.id);
+    if (picked.length > 0) sel.set(c.id, new Set(picked));
   }
   return sel;
 }

@@ -120,6 +120,29 @@ func TestNewResultSortsAndTotals(t *testing.T) {
 	}
 }
 
+func TestNewResultSettlesDefaultSelection(t *testing.T) {
+	item := func(id string, selected bool) Item { return Item{ID: id, Path: "/x/" + id, Selected: selected} }
+	res := NewResult([]Category{
+		{ID: "whole", Selected: true, Items: []Item{item("a", false), item("b", false)}},
+		{ID: "part", Items: []Item{item("c", true), item("d", false)}},
+		{ID: "every", Items: []Item{item("e", true)}},
+		{ID: "none", Items: []Item{item("f", false)}},
+		{ID: "empty", Selected: true},
+	}, time.Now())
+	want := map[string]bool{"whole": true, "part": false, "every": true, "none": false, "empty": true}
+	wantItems := map[string]bool{"a": true, "b": true, "c": true, "d": false, "e": true, "f": false}
+	for _, c := range res.Categories {
+		if c.Selected != want[c.ID] {
+			t.Errorf("%s selected = %v", c.ID, c.Selected)
+		}
+		for _, it := range c.Items {
+			if it.Selected != wantItems[it.ID] {
+				t.Errorf("%s/%s selected = %v", c.ID, it.ID, it.Selected)
+			}
+		}
+	}
+}
+
 func TestRememberValidates(t *testing.T) {
 	e := NewExecutor(&fakeDeleter{})
 	bad := []ScanResult{

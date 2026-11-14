@@ -1,4 +1,4 @@
-import type { Category, DevJunkCommand } from "../../mygo";
+import type { Category } from "../../mygo";
 import { formatBytes, trashName } from "../common/format";
 import { selectedTotals, type Selection } from "../common/selection";
 
@@ -8,17 +8,6 @@ export function splitGroups(categories: readonly Category[]): { tools: Category[
     tools: categories.filter((c) => c.kind !== "projectArtifact"),
     projects: categories.filter((c) => c.kind === "projectArtifact"),
   };
-}
-
-/** selectionFromIds checks exactly the items whose IDs are in ids (DevJunk.details().defaultItems), which may check a category in part. */
-export function selectionFromIds(categories: readonly Category[], ids: readonly string[]): Selection {
-  const wanted = new Set(ids);
-  const sel = new Map<string, ReadonlySet<string>>();
-  for (const c of categories) {
-    const picked = c.items.filter((i) => wanted.has(i.id)).map((i) => i.id);
-    if (picked.length > 0) sel.set(c.id, new Set(picked));
-  }
-  return sel;
 }
 
 /** withinGroup applies next, a selection a section's CategoryList made, to the section's categories only, keeping the other section's checks: each list's 全选 and 全不选 act on its own section. */
@@ -42,13 +31,8 @@ export interface CleanPlan {
   trashed: number;
 }
 
-/** cleanPlan splits the selection into commands to run, items deleted for good and items moved to the Trash. */
-export function cleanPlan(
-  categories: readonly Category[],
-  selection: Selection,
-  commands: readonly DevJunkCommand[],
-): CleanPlan {
-  const commandOf = new Map(commands.map((c) => [c.categoryId, c.command]));
+/** cleanPlan splits the selection into commands to run (categories with a command), items deleted for good and items moved to the Trash. */
+export function cleanPlan(categories: readonly Category[], selection: Selection): CleanPlan {
   const plan: CleanPlan = {
     ...selectedTotals(categories, selection),
     commands: [],
@@ -60,8 +44,7 @@ export function cleanPlan(
     if (!ids) continue;
     const n = c.items.filter((i) => ids.has(i.id)).length;
     if (n === 0) continue;
-    const command = commandOf.get(c.id);
-    if (command !== undefined) plan.commands.push(command);
+    if (c.command) plan.commands.push(c.command);
     else if (c.deletion === "trash") plan.trashed += n;
     else plan.permanent += n;
   }

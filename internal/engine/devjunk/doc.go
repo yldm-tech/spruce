@@ -12,5 +12,5 @@
 //
 // # Cleaning
 //
-// File categories go through a cleanup.Executor (which deletes only what the last scan returned and re-checks each item); command categories are run by the Cleaner itself, one after the other, each with a timeout and never cut off half way when the user stops the clean: stopping takes effect before the next command. Details reports, for the last scan, which items start checked (the cleanup model has a checkbox per category only) and which categories run a command, for the page's confirmation.
+// File categories go through a cleanup.Executor (which deletes only what the last scan returned and re-checks each item); command categories are run by the Cleaner itself, one after the other, each with a timeout and never cut off half way when the user stops the clean: stopping takes effect before the next command. Items that start checked carry cleanup.Item.Selected (a category may start checked in part, such as every Xcode device support version but the newest), and a category cleaned by a command names it in cleanup.Category.Command for the page's confirmation.
 package devjunk

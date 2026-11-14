@@ -1,11 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
 
-import { DevJunk, type Category, type DevJunkCommand } from "../../mygo";
+import type { Category } from "../../mygo";
 import { ActionBar } from "../common/ActionBar";
 import { CategoryList } from "../common/CategoryList";
-import { useCleaner, type CleanerFlow } from "../common/cleaner";
+import { useCleaner } from "../common/cleaner";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { EmptyState } from "../common/EmptyState";
 import { formatBytes, truncateMiddle } from "../common/format";
@@ -14,33 +12,11 @@ import { PAGES } from "../common/pages";
 import { CleanDoneDialog, CleaningOverlay, ScanIdle, ScanProgress } from "../common/ScanState";
 import type { Selection } from "../common/selection";
 import { useSettings } from "../common/settings";
-import { cleanPlan, confirmationLines, selectionFromIds, splitGroups, withinGroup } from "./devJunk";
+import { cleanPlan, confirmationLines, splitGroups, withinGroup } from "./devJunk";
 
 import "./devJunk.css";
 
 const PAGE = PAGES["dev-junk"];
-
-const NO_COMMANDS: DevJunkCommand[] = [];
-
-/** useDetails fetches DevJunk.details for the scan on screen and, once per scan, checks the items the scan says start checked (a category may start checked in part). */
-function useDetails(flow: CleanerFlow) {
-  const scannedAt = flow.scan?.scannedAt ?? null;
-  const details = useQuery({
-    queryKey: ["dev-junk", "details", scannedAt],
-    queryFn: () => DevJunk.details(),
-    enabled: scannedAt !== null,
-    staleTime: Infinity,
-    retry: false,
-  });
-  const applied = useRef<string | null>(null);
-  const { scan, setSelection } = flow;
-  useEffect(() => {
-    if (!scan || !details.data || applied.current === scan.scannedAt) return;
-    applied.current = scan.scannedAt;
-    setSelection(selectionFromIds(scan.categories, details.data.defaultItems));
-  }, [scan, details.data, setSelection]);
-  return details.data?.commands ?? NO_COMMANDS;
-}
 
 /** ProjectRoots lists the folders the scan searches for projects, with a link to 设置 to change them. */
 function ProjectRoots({ roots }: { roots: readonly string[] | undefined }) {
@@ -98,12 +74,11 @@ function Section({ title, categories, selection, setSelection }: SectionProps) {
 export function DevJunkPage() {
   const flow = useCleaner("dev-junk");
   const settings = useSettings();
-  const commands = useDetails(flow);
   const roots = settings.data?.cleanup.devProjectRoots;
 
   const categories = flow.scan?.categories ?? [];
   const { tools, projects } = splitGroups(categories);
-  const plan = cleanPlan(categories, flow.selection, commands);
+  const plan = cleanPlan(categories, flow.selection);
   const confirm = confirmationLines(plan);
 
   return (
