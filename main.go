@@ -21,6 +21,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
 	"github.com/yldm-tech/spruce/internal/services"
 )
@@ -119,6 +120,12 @@ func main() {
 	// page: space
 
 	// page: health
+	// The dashboard's sampler runs only while the page watches it; health alerts come from monitor, as on the 维护 page.
+	vitals, err := sysinfo.New(sysinfo.DefaultConfig(), sysinfo.NewSource(runner), logger)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mygo.Bind(services.NewSysinfo(vitals))
 
 	// page: history
 
