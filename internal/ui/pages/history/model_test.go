@@ -12,7 +12,9 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/format"
 )
 
-func at(y int, m time.Month, d, h, minute int) time.Time { return time.Date(y, m, d, h, minute, 0, 0, time.Local) }
+func at(y int, m time.Month, d, h, minute int) time.Time {
+	return time.Date(y, m, d, h, minute, 0, 0, time.Local)
+}
 
 func run(id string, kind enginehist.Kind, started time.Time) enginehist.Run {
 	return enginehist.Run{ID: id, Kind: kind, StartedAt: started, EndedAt: started}

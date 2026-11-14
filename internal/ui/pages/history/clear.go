@@ -36,7 +36,9 @@ func (d ClearDialog) Render(cx *core.Scope) core.Node {
 		return "全部 " + strconv.Itoa(d.Count()) + " 条操作记录"
 	}
 	message := core.View{Children: []core.Node{
-		core.Text{ContentFunc: func() string { return "将删除" + what() + "，无法恢复。只删除记录，不会撤销或改动已经做过的清理和维护。" }, TestID: "clear-message"},
+		core.Text{ContentFunc: func() string {
+			return "将删除" + what() + "，无法恢复。只删除记录，不会撤销或改动已经做过的清理和维护。"
+		}, TestID: "clear-message"},
 		core.Show{When: func() bool { return failure.Get() != "" }, Then: func(*core.Scope) core.Node {
 			return core.Text{ContentFunc: failure.Get, Role: core.RoleAlert, LiveRegion: core.LiveRegionPolite, TestID: "clear-error",
 				Style: core.Style{Margin: core.Edges{Top: 8}, Color: kit.ColorWarning}}
