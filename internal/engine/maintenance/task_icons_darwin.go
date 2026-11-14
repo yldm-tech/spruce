@@ -21,7 +21,7 @@ const (
 	// dockIconCacheName is the Dock's own icon cache file in the same directory.
 	dockIconCacheName = "com.apple.dock.iconcache"
 
-	// The processes restarted after the caches are cleared. Both are per-user launchd agents that launchd starts again when they exit; `launchctl kickstart -k` on their labels is refused with "Operation not permitted while System Integrity Protection is engaged" (exit 150), so they are ended with killall, which only signals the current user's own processes.
+	// The processes restarted after the caches are cleared. Both are per-user launchd agents that launchd starts again; `launchctl kickstart -k` on their labels is refused with "Operation not permitted while System Integrity Protection is engaged" (exit 150), so they are ended with killall, which only signals the current user's own processes. iconservicesagent ignores SIGTERM (checked on macOS 27: the process survives it), so it gets SIGKILL and launchd starts it again on the next icon request; the Dock quits cleanly on the default SIGTERM and launchd relaunches it at once.
 	iconServicesAgentProcess = "iconservicesagent"
 	dockProcess              = "Dock"
 
@@ -71,8 +71,9 @@ func runIcons(ctx context.Context, env Env) taskresult.Result {
 
 	detail := fmt.Sprintf("removed %d cache entries in %s", removed, dir)
 	var restartErrs []string
-	for _, name := range []string{iconServicesAgentProcess, dockProcess} {
-		cmd := execx.Command{Name: pathKillall, Args: []string{name}, Timeout: iconsCommandTimeout}
+	for _, args := range [][]string{{"-KILL", iconServicesAgentProcess}, {dockProcess}} {
+		name := args[len(args)-1]
+		cmd := execx.Command{Name: pathKillall, Args: args, Timeout: iconsCommandTimeout}
 		if _, err := env.Runner.Run(ctx, cmd); err != nil {
 			// killall exits 1 when the user has no such process: an agent that is not running has nothing in memory to refresh and starts from the cleared cache on demand.
 			var exitErr *execx.ExitError

@@ -46,7 +46,15 @@ func mustWrite(t *testing.T, path string) {
 }
 
 func onKillall(f *execxtest.Fake, name string) *execxtest.Expectation {
-	return f.On(pathKillall, name)
+	return f.On(pathKillall, killallArgs(name)...)
+}
+
+// killallArgs is how runIcons ends each process: iconservicesagent ignores SIGTERM, so it gets SIGKILL.
+func killallArgs(name string) []string {
+	if name == iconServicesAgentProcess {
+		return []string{"-KILL", name}
+	}
+	return []string{name}
 }
 
 func TestIconsClearsUserCachesAndRestartsAgents(t *testing.T) {
@@ -74,8 +82,8 @@ func TestIconsClearsUserCachesAndRestartsAgents(t *testing.T) {
 			t.Errorf("%s was removed: %v", keep, err)
 		}
 	}
-	f.AssertCalled(t, pathKillall, iconServicesAgentProcess)
-	f.AssertCalled(t, pathKillall, dockProcess)
+	f.AssertCalled(t, pathKillall, killallArgs(iconServicesAgentProcess)...)
+	f.AssertCalled(t, pathKillall, killallArgs(dockProcess)...)
 	f.AssertNotCalled(t, pathLaunchctl)
 }
 
@@ -133,7 +141,7 @@ func TestIconsCancelledAfterClearingReportsTheChange(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(cacheDir, iconServicesCacheName)); len(entries) != 0 {
 		t.Errorf("cache entries left: %v", entries)
 	}
-	if f.Called(pathKillall, dockProcess) {
+	if f.Called(pathKillall, killallArgs(dockProcess)...) {
 		t.Error("restarted the Dock after the cancel")
 	}
 }
