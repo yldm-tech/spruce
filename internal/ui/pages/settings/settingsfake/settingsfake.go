@@ -89,6 +89,15 @@ func (s *Settings) SetClamp(fn func(settings.AppSettings) settings.AppSettings) 
 	s.Clamp = fn
 }
 
+// Change changes the stored settings as another source would (System Settings turning off the login item, another window) and announces them.
+func (s *Settings) Change(fn func(*settings.AppSettings)) {
+	s.mu.Lock()
+	fn(&s.Stored)
+	v := clone(s.Stored)
+	s.mu.Unlock()
+	s.announce(v)
+}
+
 // Updates returns what Update received, oldest first.
 func (s *Settings) Updates() []settings.AppSettings {
 	s.mu.Lock()

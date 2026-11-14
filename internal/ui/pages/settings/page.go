@@ -82,7 +82,7 @@ func Page(cx *core.Scope) core.Node {
 	}
 
 	return core.Group{
-		kit.Page{Children: []core.Node{kit.PageHeader{Route: nav.Settings}, sections}},
+		kit.Page{TestID: "settings-page", Children: []core.Node{kit.PageHeader{Route: nav.Settings}, sections}},
 		reset, clear,
 	}
 }

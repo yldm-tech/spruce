@@ -126,6 +126,35 @@ func TestSwitchesSaveTheirOwnFieldAtOnce(t *testing.T) {
 	}
 }
 
+func TestFollowsChangesFromElsewhereAndShowsWhatGoStored(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	p := start(t, options{svc: svc})
+	gets := svc.Gets()
+	svc.Change(func(s *enginesettings.AppSettings) {
+		s.Health.CPUThreshold = 75
+		s.General.LaunchAtLogin = true
+	})
+	p.WaitUntil(wait, func() bool { return p.valueText("提醒阈值") == "75%" && p.checked("登录时启动 Spruce") })
+	if svc.Gets() != gets+1 {
+		t.Errorf("read the settings %d times for one change", svc.Gets()-gets)
+	}
+
+	// Go clamps the 25 sent to 20, the minimum: the slider shows what Go stored.
+	svc.SetClamp(func(next enginesettings.AppSettings) enginesettings.AppSettings {
+		next.Health.CPUThreshold = max(next.Health.CPUThreshold-55, 20)
+		return next
+	})
+	p.AccessibilityAction(p.slider("提醒阈值"), core.ActionIncrement)
+	p.Advance(debounce)
+	if got := p.updates(1).Health.CPUThreshold; got != 80 {
+		t.Fatalf("sent %d", got)
+	}
+	p.WaitUntil(wait, func() bool { return p.valueText("提醒阈值") == "25%" })
+	if got := p.text("cpu-threshold-note"); got != "已调整为 25%" {
+		t.Errorf("note %q", got)
+	}
+}
+
 func TestRefusedSaveShowsTheReasonAndTheStoredValue(t *testing.T) {
 	svc := settingsfake.New(dataDir)
 	svc.UpdateErr = errors.New("无法更改「登录时启动」，其他设置没有保存")
