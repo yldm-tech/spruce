@@ -147,11 +147,15 @@ func TestCheckFailuresAreUnknown(t *testing.T) {
 		t.Fatalf("RepoOf = %q %v", r, ok)
 	}
 	failures := map[string]func(e *execxtest.Expectation){
-		"exit 128":          func(e *execxtest.Expectation) { e.ReturnOutput(execx.Output{ExitCode: 128, Stderr: []byte("fatal: not a git repository: /moved/away/.git/worktrees/web")}) },
-		"dubious ownership": func(e *execxtest.Expectation) { e.ReturnOutput(execx.Output{ExitCode: 128, Stderr: []byte("fatal: detected dubious ownership in repository")}) },
-		"other exit":        func(e *execxtest.Expectation) { e.Return("", 1) },
-		"timeout":           func(e *execxtest.Expectation) { e.Fail(fmt.Errorf("git: %w", context.DeadlineExceeded)) },
-		"not installed":     func(e *execxtest.Expectation) { e.Fail(os.ErrNotExist) },
+		"exit 128": func(e *execxtest.Expectation) {
+			e.ReturnOutput(execx.Output{ExitCode: 128, Stderr: []byte("fatal: not a git repository: /moved/away/.git/worktrees/web")})
+		},
+		"dubious ownership": func(e *execxtest.Expectation) {
+			e.ReturnOutput(execx.Output{ExitCode: 128, Stderr: []byte("fatal: detected dubious ownership in repository")})
+		},
+		"other exit":    func(e *execxtest.Expectation) { e.Return("", 1) },
+		"timeout":       func(e *execxtest.Expectation) { e.Fail(fmt.Errorf("git: %w", context.DeadlineExceeded)) },
+		"not installed": func(e *execxtest.Expectation) { e.Fail(os.ErrNotExist) },
 	}
 	for name, fail := range failures {
 		f := execxtest.New()
