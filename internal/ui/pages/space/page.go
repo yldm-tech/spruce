@@ -46,9 +46,7 @@ func Page(cx *core.Scope) core.Node {
 		return core.Group{}
 	})
 
-	// The page fills the main area from an absolutely placed box, so a column taller than the window scrolls inside it: kit.PageBackground's row neither shrinks nor drops its content-based minimum height, so a page in normal flow that outgrows the window makes the whole window content taller instead.
-	return core.View{Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0)},
-		Children: []core.Node{kit.Page{TestID: "space-page", Children: []core.Node{kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, body}}}}
+	return kit.Page{TestID: "space-page", Children: []core.Node{kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, body}}
 }
 
 // scanningView takes the page's place while a scan runs: the spinning ring (a walk cannot know its length in advance), the files and space counted so far, the folder being read and 停止.
