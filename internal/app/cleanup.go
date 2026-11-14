@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"cmp"
@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 )
@@ -59,7 +58,7 @@ const progressEvery = 80 * time.Millisecond
 // maxDetailFailures is how many failed items a history record lists by path.
 const maxDetailFailures = 20
 
-// Cleanup is the bound service every cleaner page scans and cleans through, by CleanerID. It records each clean in the history.
+// Cleanup is the controller every cleaner page scans and cleans through, by CleanerID. It records each clean in the history.
 type Cleanup struct {
 	history history.Store
 	home    string
@@ -112,35 +111,34 @@ func (c *Cleanup) scanner(id CleanerID) (cleanup.Scanner, error) {
 	return s, nil
 }
 
-// sender returns a throttled progress function that streams to ch (nil sends nothing).
-func sender(ch *mygo.Channel[cleanup.Progress]) func(cleanup.Progress) {
-	if ch == nil {
+// throttled returns fn throttled to one call per progressEvery, keeping the last (nil reports nothing).
+func throttled(fn func(cleanup.Progress)) func(cleanup.Progress) {
+	if fn == nil {
 		return func(cleanup.Progress) {}
 	}
-	// A page that stopped listening also cancels ctx, which ends the work; the send error adds nothing.
-	return cleanup.Throttle(func(p cleanup.Progress) { _ = ch.Send(p) }, progressEvery)
+	return cleanup.Throttle(fn, progressEvery)
 }
 
-// Scan runs the scan of cleaner, streams its progress and returns what it found; the cleaner remembers the result for Clean. Closing the channel cancels the scan. Errors are sentences in Simplified Chinese.
-func (c *Cleanup) Scan(ctx context.Context, cleaner CleanerID, progress *mygo.Channel[cleanup.Progress]) (cleanup.ScanResult, error) {
+// Scan runs the scan of cleaner, reports its progress (throttled; nil reports nothing) and returns what it found; the cleaner remembers the result for Clean. Cancelling ctx cancels the scan. Errors are sentences in Simplified Chinese.
+func (c *Cleanup) Scan(ctx context.Context, cleaner CleanerID, progress func(cleanup.Progress)) (cleanup.ScanResult, error) {
 	s, err := c.scanner(cleaner)
 	if err != nil {
 		return cleanup.ScanResult{}, err
 	}
-	res, err := s.Scan(ctx, sender(progress))
+	res, err := s.Scan(ctx, throttled(progress))
 	if err != nil {
 		return cleanup.ScanResult{}, c.userError(ctx, cleaner, "scan", err)
 	}
 	return res, nil
 }
 
-// Clean deletes what req names from cleaner's last scan, streams progress, records the clean in the history and returns what it did. It fails without deleting anything when the request does not match the last scan (the page then scans again). Closing the channel stops the clean after the current item; the result says it was interrupted.
-func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, progress *mygo.Channel[cleanup.Progress]) (cleanup.CleanResult, error) {
+// Clean deletes what req names from cleaner's last scan, reports progress (throttled; nil reports nothing), records the clean in the history and returns what it did. It fails without deleting anything when the request does not match the last scan (the page then scans again). Cancelling ctx stops the clean after the current item; the result says it was interrupted.
+func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
 	s, err := c.scanner(cleaner)
 	if err != nil {
 		return cleanup.CleanResult{}, err
 	}
-	res, err := s.Clean(ctx, req, sender(progress))
+	res, err := s.Clean(ctx, req, throttled(progress))
 	if err != nil {
 		return cleanup.CleanResult{}, c.userError(ctx, cleaner, "clean", err)
 	}

@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
@@ -149,7 +148,7 @@ type UninstallerStatus struct {
 	Running bool `json:"running"`
 }
 
-// Uninstall is the bound service of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history.
+// Uninstall is the controller of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history.
 type Uninstall struct {
 	eng     UninstallEngine
 	history history.Store
@@ -178,14 +177,12 @@ func (u *Uninstall) Apps(ctx context.Context) ([]UninstallApp, error) {
 	return out, nil
 }
 
-// Measure streams the size, icon and last use of every app of the last Apps call as each becomes known, and returns when all are measured. Closing the channel stops it.
-func (u *Uninstall) Measure(ctx context.Context, details *mygo.Channel[UninstallAppDetails]) error {
+// Measure reports the size, icon and last use of every app of the last Apps call to details (nil reports nothing) as each becomes known, one call per app, and returns when all are measured. Cancelling ctx stops it.
+func (u *Uninstall) Measure(ctx context.Context, details func(UninstallAppDetails)) error {
 	err := u.eng.Details(ctx, func(d uninstall.Details) {
-		if details == nil {
-			return
+		if details != nil {
+			details(detailsView(d))
 		}
-		// A page that stopped listening also cancels ctx, which ends the measuring; the send error adds nothing.
-		_ = details.Send(detailsView(d))
 	})
 	if err != nil {
 		return u.userError(ctx, "measure apps", err, "无法读取应用的大小，详情已记录到日志")
@@ -223,9 +220,9 @@ func leftoverView(l uninstall.Leftover) UninstallLeftover {
 	return UninstallLeftover{ID: l.ID, Path: l.Path, Kind: UninstallLeftoverKind(l.Kind), Size: l.Size, Dir: l.Dir, Selected: l.Selected, Note: l.Note}
 }
 
-// Remove moves the planned app (macOS) and the chosen leftovers to the Trash, streams progress and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Closing the channel stops after the current item.
-func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress *mygo.Channel[cleanup.Progress]) (UninstallOutcome, error) {
-	res, err := u.eng.Remove(ctx, uninstall.Request{AppID: req.AppID, LeftoverIDs: req.LeftoverIDs}, sender(progress))
+// Remove moves the planned app (macOS) and the chosen leftovers to the Trash, reports progress (throttled; nil reports nothing) and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Cancelling ctx stops after the current item.
+func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress func(cleanup.Progress)) (UninstallOutcome, error) {
+	res, err := u.eng.Remove(ctx, uninstall.Request{AppID: req.AppID, LeftoverIDs: req.LeftoverIDs}, throttled(progress))
 	if err != nil {
 		return UninstallOutcome{}, u.userError(ctx, "remove", err, "卸载没能开始，详情已记录到日志")
 	}
@@ -255,12 +252,12 @@ func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress *
 	return out, nil
 }
 
-// RunUninstaller runs a Windows program's own uninstaller, so its UI and the UAC prompt appear, sends one status once it runs, waits for it to exit and checks whether the program is gone; closing the channel stops the wait (never the uninstaller). The run is recorded in the history.
-func (u *Uninstall) RunUninstaller(ctx context.Context, appID string, status *mygo.Channel[UninstallerStatus]) (UninstallerOutcome, error) {
+// RunUninstaller runs a Windows program's own uninstaller, so its UI and the UAC prompt appear, reports one status once it runs (nil reports nothing), waits for it to exit and checks whether the program is gone; cancelling ctx stops the wait (never the uninstaller). The run is recorded in the history.
+func (u *Uninstall) RunUninstaller(ctx context.Context, appID string, status func(UninstallerStatus)) (UninstallerOutcome, error) {
 	started := time.Now()
 	res, err := u.eng.RunUninstaller(ctx, appID, func() {
 		if status != nil {
-			_ = status.Send(UninstallerStatus{Running: true})
+			status(UninstallerStatus{Running: true})
 		}
 	})
 	if err != nil {

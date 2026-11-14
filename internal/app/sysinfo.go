@@ -1,18 +1,12 @@
-package services
+package app
 
 import (
 	"context"
 
-	"github.com/egoist/mygo"
 	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 )
 
-// Sysinfo is the bound service behind the 健康监测 dashboard. The CPU alert on the same page comes from Health.
-//
-// Bound API (TypeScript view):
-//
-//	Sysinfo.info(): Promise<SystemInfo>
-//	Sysinfo.watch(samples: Channel<Vitals>): Promise<void>
+// Sysinfo is the controller behind the 健康监测 dashboard. The CPU alert on the same page comes from Health.
 type Sysinfo struct {
 	sampler *sysinfo.Sampler
 }
@@ -27,12 +21,12 @@ func (s *Sysinfo) Info(ctx context.Context) sysinfo.SystemInfo {
 	return s.sampler.Info(ctx)
 }
 
-// Watch streams the machine's vitals to the page: first the samples kept from the last two minutes (oldest first), then a new one every two seconds, until the page closes the channel or goes away. Sampling runs only while at least one page watches.
-func (s *Sysinfo) Watch(ctx context.Context, samples *mygo.Channel[sysinfo.Vitals]) {
-	watch(ctx, s.sampler, samples.Send)
+// Watch sends the machine's vitals through send: first the samples kept from the last two minutes (oldest first), then a new one every two seconds, until ctx is done or send returns an error. Sampling runs only while at least one page watches. send runs on Watch's goroutine.
+func (s *Sysinfo) Watch(ctx context.Context, send func(sysinfo.Vitals) error) {
+	watch(ctx, s.sampler, send)
 }
 
-// watch sends the history and then every new sample through send until ctx is done or send fails (the page closed the channel).
+// watch sends the history and then every new sample through send until ctx is done or send fails.
 func watch(ctx context.Context, sampler *sysinfo.Sampler, send func(sysinfo.Vitals) error) {
 	history, ch, unsubscribe := sampler.Subscribe()
 	defer unsubscribe()

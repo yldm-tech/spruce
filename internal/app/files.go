@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/trash"
 )
 
-// Files is the bound service for single files and the Trash, shared by every page.
+// Files is the controller for single files and the Trash, shared by every page.
 type Files struct {
 	runner execx.Runner
 	bin    trash.Bin

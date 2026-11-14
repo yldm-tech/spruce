@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
@@ -37,7 +36,7 @@ const (
 	ProgressFinished ProgressKind = "finished"
 )
 
-// ProgressEvent is streamed to the page while a run goes on. Each selected task gets one started and then one finished event.
+// ProgressEvent is reported to the page while a run goes on. Each selected task gets one started and then one finished event.
 type ProgressEvent struct {
 	Kind   ProgressKind `json:"kind"`
 	TaskID string       `json:"taskId"`
@@ -60,11 +59,11 @@ type RunSummary struct {
 	Skipped     int `json:"skipped"`
 	Unavailable int `json:"unavailable"`
 	Failed      int `json:"failed"`
-	// Interrupted is true when the run stopped early because the page went away.
+	// Interrupted is true when the run stopped early because its context ended (the page went away).
 	Interrupted bool `json:"interrupted"`
 }
 
-// Maintenance is the bound service of the 维护 page.
+// Maintenance is the controller of the 维护 page.
 type Maintenance struct {
 	svc     *maintenance.Service
 	history history.Store
@@ -95,15 +94,13 @@ func (m *Maintenance) Catalog() []TaskView {
 	return out
 }
 
-// Run runs the tasks named by ids, streams progress, records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress; the error's text is a sentence in Simplified Chinese for the page to show, and the engine's own error goes to the log. Admin tasks run together behind one system prompt.
-func (m *Maintenance) Run(ctx context.Context, ids []string, progress *mygo.Channel[ProgressEvent]) (RunSummary, error) {
+// Run runs the tasks named by ids, reports progress (nil reports nothing), records the run in the history and returns its summary. It fails without running anything when ids is empty, names an unknown task, or another run is in progress; the error's text is a sentence in Simplified Chinese for the page to show, and the engine's own error goes to the log. Admin tasks run together behind one system prompt. Cancelling ctx stops the run after the current task; the summary then says it was interrupted.
+func (m *Maintenance) Run(ctx context.Context, ids []string, progress func(ProgressEvent)) (RunSummary, error) {
 	started := time.Now()
 	results, err := m.svc.Run(ctx, ids, func(ev maintenance.Event) {
-		if progress == nil {
-			return
+		if progress != nil {
+			progress(ProgressEvent{Kind: ProgressKind(ev.Kind), TaskID: ev.TaskID, Result: ev.Result, Done: ev.Done, Total: ev.Total})
 		}
-		// A page that stopped listening also cancels ctx, which ends the run; the send error adds nothing.
-		_ = progress.Send(ProgressEvent{Kind: ProgressKind(ev.Kind), TaskID: ev.TaskID, Result: ev.Result, Done: ev.Done, Total: ev.Total})
 	})
 	interrupted := err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err())
 	if err != nil && !interrupted {
@@ -118,7 +115,7 @@ func (m *Maintenance) Run(ctx context.Context, ids []string, progress *mygo.Chan
 	return summary, nil
 }
 
-// userError turns an error of maintenance.Service.Run into the sentence the done card shows: MyGo hands the page only the error's text.
+// userError turns an error of maintenance.Service.Run into the sentence the done card shows.
 func (m *Maintenance) userError(err error) error {
 	m.log.Warn("maintenance run rejected", "err", err)
 	switch {

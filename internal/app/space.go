@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/space"
@@ -38,7 +37,7 @@ const (
 
 // SpaceVolume is a disk on the start screen of 空间透视.
 type SpaceVolume struct {
-	// Path is what Space.scan takes to scan the whole disk.
+	// Path is what Space.Scan takes to scan the whole disk.
 	Path string `json:"path"`
 	Name string `json:"name"`
 	// Total and Free are in bytes.
@@ -62,7 +61,7 @@ type SpaceLocations struct {
 	Targets []SpaceTarget `json:"targets"`
 }
 
-// SpaceProgress is streamed while a scan runs, at most every 80 ms.
+// SpaceProgress is reported while a scan runs, at most every 80 ms.
 type SpaceProgress struct {
 	Files int64 `json:"files"`
 	Dirs  int64 `json:"dirs"`
@@ -73,7 +72,7 @@ type SpaceProgress struct {
 
 // SpaceEntry is one folder, file or folded group of the last scan.
 type SpaceEntry struct {
-	// ID names the entry in Space.children; -1 for a large file the scan folded into a group.
+	// ID names the entry in Space.Children; -1 for a large file the scan folded into a group.
 	ID   int       `json:"id"`
 	Kind SpaceKind `json:"kind"`
 	// Name and Path are empty for the folded groups.
@@ -95,7 +94,7 @@ type SpaceEntry struct {
 
 // SpaceSummary is the last scan as a whole.
 type SpaceSummary struct {
-	// ScanID names the scan; Space.children, largeFiles and trash take it and refuse an older one.
+	// ScanID names the scan; Space.Children, LargeFiles and Trash take it and refuse an older one.
 	ScanID string `json:"scanId"`
 	// Name is what the page calls the scanned location, e.g. "Macintosh HD" or "个人文件夹".
 	Name string     `json:"name"`
@@ -121,13 +120,13 @@ type SpaceListing struct {
 	Children  []SpaceEntry `json:"children"`
 }
 
-// SpaceFailure is an entry Space.trash left in place, with why (a sentence to show).
+// SpaceFailure is an entry Space.Trash left in place, with why (a sentence to show).
 type SpaceFailure struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
 }
 
-// SpaceTrashResult is what Space.trash did.
+// SpaceTrashResult is what Space.Trash did.
 type SpaceTrashResult struct {
 	// Trashed is the size moved to the Trash, in bytes; it is freed once the Trash is emptied.
 	Trashed int64 `json:"trashed"`
@@ -138,7 +137,7 @@ type SpaceTrashResult struct {
 	Root SpaceEntry `json:"root"`
 }
 
-// Space is the bound service of the 空间透视 page. It keeps the last scan's tree, so the page opens one folder at a time without scanning again; moving an entry to the Trash corrects the sizes above it in place.
+// Space is the controller of the 空间透视 page. It keeps the last scan's tree, so the page opens one folder at a time without scanning again; moving an entry to the Trash corrects the sizes above it in place.
 type Space struct {
 	home     string
 	settings func() settings.AppSettings
@@ -149,7 +148,6 @@ type Space struct {
 	// Replaced in tests.
 	volumes func(ctx context.Context) ([]space.Volume, error)
 	targets func(home string) []space.Target
-	choose  func(ctx context.Context, home string) (string, error)
 
 	scanning atomic.Bool
 
@@ -170,7 +168,6 @@ func NewSpace(home string, current func() settings.AppSettings, bin trash.Bin, s
 		log:      log,
 		volumes:  space.Volumes,
 		targets:  space.Targets,
-		choose:   spaceChooseFolder,
 	}
 }
 
@@ -214,33 +211,8 @@ func (s *Space) listVolumes(ctx context.Context) ([]space.Volume, error) {
 	}
 }
 
-// ChooseFolder shows the system's folder picker over the calling window and returns the chosen folder, or "" when the user cancelled.
-func (s *Space) ChooseFolder(ctx context.Context) (string, error) {
-	p, err := s.choose(ctx, s.home)
-	if err != nil {
-		s.log.Warn("choose folder", "err", err)
-		return "", errors.New("无法打开选择文件夹的窗口")
-	}
-	return p, nil
-}
-
-func spaceChooseFolder(ctx context.Context, home string) (string, error) {
-	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent:      mygo.CallerWindow(ctx),
-		Title:       "选择要分析的文件夹",
-		Message:     "选择一个文件夹，看看它的空间都被什么占用了",
-		ButtonLabel: "分析",
-		DefaultPath: home,
-		Directory:   true,
-	})
-	if err != nil || len(paths) == 0 {
-		return "", err
-	}
-	return paths[0], nil
-}
-
-// Scan walks the folder at path (a disk's path from Locations scans the whole disk), streams progress and keeps the result for children, largeFiles and trash, replacing the previous scan. Closing the channel cancels the scan; the previous result then stays. Errors are sentences in Simplified Chinese.
-func (s *Space) Scan(ctx context.Context, path string, progress *mygo.Channel[SpaceProgress]) (SpaceSummary, error) {
+// Scan walks the folder at path (a disk's path from Locations scans the whole disk), reports progress at most every 80 ms (nil reports nothing) and keeps the result for Children, LargeFiles and Trash, replacing the previous scan. Cancelling ctx cancels the scan; the previous result then stays. Errors are sentences in Simplified Chinese.
+func (s *Space) Scan(ctx context.Context, path string, progress func(SpaceProgress)) (SpaceSummary, error) {
 	if !filepath.IsAbs(path) {
 		return SpaceSummary{}, errors.New("请选择一个文件夹")
 	}
@@ -253,8 +225,7 @@ func (s *Space) Scan(ctx context.Context, path string, progress *mygo.Channel[Sp
 	opts := space.Options{LargeFileMin: largeMin, ProgressEvery: progressEvery}
 	if progress != nil {
 		opts.Progress = func(p space.Progress) {
-			// A page that stopped listening also cancels ctx, which ends the scan; the send error adds nothing.
-			_ = progress.Send(SpaceProgress{Files: p.Files, Dirs: p.Dirs, Bytes: p.Bytes, Path: p.Path})
+			progress(SpaceProgress{Files: p.Files, Dirs: p.Dirs, Bytes: p.Bytes, Path: p.Path})
 		}
 	}
 	started := time.Now()

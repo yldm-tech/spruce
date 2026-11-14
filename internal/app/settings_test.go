@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -12,45 +12,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
-	"github.com/yldm-tech/spruce/internal/engine/trash"
 )
-
-type fakeBin struct {
-	usage trash.TrashUsage
-	err   error
-	empty int
-}
-
-func (b *fakeBin) MoveToTrash(context.Context, []string) ([]trash.Outcome, error) {
-	return nil, errors.New("not used")
-}
-func (b *fakeBin) Size(context.Context) (trash.TrashUsage, error) { return b.usage, b.err }
-func (b *fakeBin) Empty(context.Context) (trash.TrashUsage, error) {
-	b.empty++
-	return b.usage, b.err
-}
-
-func TestFilesTrash(t *testing.T) {
-	bin := &fakeBin{usage: trash.TrashUsage{Bytes: 1 << 20, Items: 3}}
-	f := NewFiles(nil, bin, slog.New(slog.DiscardHandler))
-	if u, err := f.TrashSize(t.Context()); err != nil || u.Items != 3 {
-		t.Errorf("TrashSize = %+v, %v", u, err)
-	}
-	if u, err := f.EmptyTrash(t.Context()); err != nil || u.Bytes != 1<<20 || bin.empty != 1 {
-		t.Errorf("EmptyTrash = %+v, %v", u, err)
-	}
-	bin.err = trash.ErrNoAccess
-	if _, err := f.TrashSize(t.Context()); err == nil || err.Error() != "需要为 Spruce 开启「完全磁盘访问权限」才能读取"+binName() {
-		t.Errorf("no access: %v", err)
-	}
-	bin.err = errors.New("io")
-	if _, err := f.EmptyTrash(t.Context()); err == nil || err.Error() != "无法读取"+binName()+"，详情已记录到日志" {
-		t.Errorf("other error: %v", err)
-	}
-	if err := f.Reveal(t.Context(), filepath.Join(t.TempDir(), "gone")); err == nil || err.Error() != "这个项目已经不存在了" {
-		t.Errorf("reveal missing: %v", err)
-	}
-}
 
 type fakeLogin struct {
 	mu   sync.Mutex
@@ -89,7 +51,7 @@ func newSettingsStore(t *testing.T) *settings.Store {
 func TestSettingsService(t *testing.T) {
 	st := newSettingsStore(t)
 	login := &fakeLogin{}
-	s := NewSettings(st, login, slog.New(slog.DiscardHandler))
+	s := NewSettings(st, login, slog.New(slog.DiscardHandler), "", t.TempDir())
 	v := s.Get()
 	v.Health.CPUThreshold = 1
 	v.General.LaunchAtLogin = true
@@ -179,5 +141,40 @@ func TestFollowSettings(t *testing.T) {
 	}
 	if d := hist.cutoffs[1].Sub(history.RetentionCutoff(time.Now(), 30)); d > time.Minute || d < -time.Minute {
 		t.Errorf("cutoff %v", hist.cutoffs[1])
+	}
+}
+
+func TestSettingsLimitsAreThePackageRanges(t *testing.T) {
+	s := NewSettings(newSettingsStore(t), &fakeLogin{}, slog.New(slog.DiscardHandler), "", t.TempDir())
+	l := s.Limits()
+	if l.CPUThreshold != (SettingRange{settings.MinCPUThreshold, settings.MaxCPUThreshold}) ||
+		l.SustainMinutes != (SettingRange{settings.MinSustainMinutes, settings.MaxSustainMinutes}) ||
+		l.DevArtifactMinAgeDays != (SettingRange{settings.MinDevArtifactMinAge, settings.MaxDevArtifactMinAge}) ||
+		l.LargeFileMinMB != (SettingRange{settings.MinLargeFileMB, settings.MaxLargeFileMB}) ||
+		l.RetentionDays != (SettingRange{settings.MinRetentionDays, settings.MaxRetentionDays}) ||
+		l.MaxPaths != settings.MaxPaths {
+		t.Errorf("Limits = %+v", l)
+	}
+	// Every range is what Update clamps to: values outside come back at its ends.
+	v := s.Get()
+	v.Health.CPUThreshold, v.Health.SustainMinutes = l.CPUThreshold.Max+1, l.SustainMinutes.Min-1
+	v.Cleanup.DevArtifactMinAgeDays, v.Cleanup.LargeFileMinMB = l.DevArtifactMinAgeDays.Min-1, l.LargeFileMinMB.Max+1
+	v.History.RetentionDays = l.RetentionDays.Min - 1
+	got, err := s.Update(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health.CPUThreshold != l.CPUThreshold.Max || got.Health.SustainMinutes != l.SustainMinutes.Min ||
+		got.Cleanup.DevArtifactMinAgeDays != l.DevArtifactMinAgeDays.Min || got.Cleanup.LargeFileMinMB != l.LargeFileMinMB.Max ||
+		got.History.RetentionDays != l.RetentionDays.Min {
+		t.Errorf("clamped to %+v, limits %+v", got, l)
+	}
+}
+
+func TestSettingsAbout(t *testing.T) {
+	dir := t.TempDir()
+	s := NewSettings(newSettingsStore(t), &fakeLogin{}, slog.New(slog.DiscardHandler), "1.2.3", dir)
+	if a, err := s.About(); err != nil || a != (AppAbout{Version: "1.2.3", DataDir: dir}) {
+		t.Errorf("About = %+v, %v", a, err)
 	}
 }

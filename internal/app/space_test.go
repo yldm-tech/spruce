@@ -1,4 +1,4 @@
-package services
+package app
 
 import (
 	"context"
@@ -313,7 +313,7 @@ func TestSpaceScanErrors(t *testing.T) {
 	f.svc.scanning.Store(false)
 }
 
-func TestSpaceLocationsAndChooser(t *testing.T) {
+func TestSpaceLocations(t *testing.T) {
 	f := newSpaceFixture(t)
 	f.svc.volumes = func(context.Context) ([]space.Volume, error) {
 		return []space.Volume{{Path: "/", Name: "Macintosh HD", Total: 10, Free: 4, Startup: true}}, nil
@@ -338,12 +338,4 @@ func TestSpaceLocationsAndChooser(t *testing.T) {
 		t.Errorf("locations with a stuck disk list %+v", loc)
 	}
 
-	f.svc.choose = func(context.Context, string) (string, error) { return f.data, nil }
-	if p, err := f.svc.ChooseFolder(t.Context()); err != nil || p != f.data {
-		t.Errorf("ChooseFolder = %q, %v", p, err)
-	}
-	f.svc.choose = func(context.Context, string) (string, error) { return "", errors.New("no window") }
-	if _, err := f.svc.ChooseFolder(t.Context()); err == nil || err.Error() != "无法打开选择文件夹的窗口" {
-		t.Errorf("chooser failure: %v", err)
-	}
 }

@@ -1,13 +1,11 @@
-package services
+package app
 
 import (
-	"context"
-	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 )
 
@@ -70,30 +68,29 @@ func TestHistoryListLimit(t *testing.T) {
 	}
 }
 
-type fakeMonitor struct{ alerts []health.Alert }
-
-func (f fakeMonitor) Tune(float64, time.Duration, bool) error { return nil }
-
-func (f fakeMonitor) Run(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
-func (f fakeMonitor) Alerts() []health.Alert        { return f.alerts }
-func (f fakeMonitor) Subscribe() (<-chan []health.Alert, func()) {
-	ch := make(chan []health.Alert, 1)
-	ch <- f.alerts
-	return ch, func() {}
-}
-
-func TestHealthService(t *testing.T) {
-	alert := health.Alert{PID: 1, Name: "Xcode", CPUPercent: 48, Duration: 12 * time.Minute, Threshold: 40}
-	opened := 0
-	boom := errors.New("boom")
-	h := NewHealth(fakeMonitor{alerts: []health.Alert{alert}}, func(context.Context) error {
-		opened++
-		return boom
-	})
-	if got := h.Alerts(); len(got) != 1 || got[0] != alert {
-		t.Errorf("Alerts = %+v", got)
+func TestHistorySubscribe(t *testing.T) {
+	if _, _, ok := NewHistory(&fakeStore{}).Subscribe(); ok {
+		t.Error("a store that announces nothing offered a subscription")
 	}
-	if err := h.OpenSystemMonitor(context.Background()); !errors.Is(err, boom) || opened != 1 {
-		t.Errorf("OpenSystemMonitor = %v after %d calls", err, opened)
+	store, err := history.Open(filepath.Join(t.TempDir(), "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, unsubscribe, ok := NewHistory(store).Subscribe()
+	if !ok {
+		t.Fatal("the store history.Open returns offered no subscription")
+	}
+	defer unsubscribe()
+	start := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	if err := store.Append(history.Run{ID: "run-1", Kind: history.KindSystemJunk, StartedAt: start, EndedAt: start.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-runs:
+		if r.ID != "run-1" {
+			t.Errorf("got %+v", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the appended run did not arrive")
 	}
 }

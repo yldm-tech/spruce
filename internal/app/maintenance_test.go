@@ -1,40 +1,15 @@
-package services
+package app
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"regexp"
 	"testing"
 	"time"
 
-	"github.com/egoist/mygo/plugins/permissionflow"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
-
-func TestPermissionState(t *testing.T) {
-	boom := errors.New("boom")
-	cases := []struct {
-		st   permissionflow.Status
-		err  error
-		want maintenance.PermissionState
-		fail bool
-	}{
-		{permissionflow.Granted, nil, maintenance.PermissionGranted, false},
-		{permissionflow.Denied, nil, maintenance.PermissionDenied, false},
-		{permissionflow.NotDetermined, nil, maintenance.PermissionDenied, false},
-		{permissionflow.Unknown, nil, maintenance.PermissionUnknown, false},
-		{permissionflow.Unknown, errors.ErrUnsupported, maintenance.PermissionNotRequired, false},
-		{permissionflow.Unknown, boom, maintenance.PermissionUnknown, true},
-	}
-	for _, c := range cases {
-		got, err := permissionState(c.st, c.err)
-		if got != c.want || (err != nil) != c.fail {
-			t.Errorf("permissionState(%v, %v) = %q, %v; want %q", c.st, c.err, got, err, c.want)
-		}
-	}
-}
 
 func TestSummarize(t *testing.T) {
 	start := time.Date(2026, 11, 14, 1, 0, 0, 0, time.UTC)
@@ -58,7 +33,6 @@ func TestNewRunID(t *testing.T) {
 	}
 }
 
-// TestRunErrorsAreChinese checks that a run the engine rejects reaches the page as a Chinese sentence, not the engine's English error text.
 func TestRunErrorsAreChinese(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{})
