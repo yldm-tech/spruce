@@ -107,7 +107,9 @@ func start(t *testing.T, c *cleanflowfake.Cleaner, fakes *storefake.Services) *p
 
 func scanning(r cleanup.ScanResult) *cleanflowfake.Cleaner {
 	return &cleanflowfake.Cleaner{
-		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) { return r, nil },
+		OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
+			return r, nil
+		},
 		OnClean: func(context.Context, app.CleanerID, cleanup.CleanRequest, func(cleanup.Progress)) (cleanup.CleanResult, error) {
 			return cleanResult(), nil
 		}}
