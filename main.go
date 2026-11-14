@@ -19,8 +19,10 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/execx"
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/installers"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/systemjunk"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
 	"github.com/yldm-tech/spruce/internal/services"
 )
@@ -109,10 +111,12 @@ func main() {
 	// page: smart-scan
 
 	// page: system-junk
+	services.RegisterCleaner(cleanups, services.CleanerSystemJunk, systemjunk.New(systemjunk.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
 
 	// page: dev-junk
 
 	// page: installers
+	services.RegisterCleaner(cleanups, services.CleanerInstallers, installers.New(installers.Env{Home: home, Runner: runner, Settings: settingsStore.Get, Log: logger}))
 
 	// page: uninstall
 
