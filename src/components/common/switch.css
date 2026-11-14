@@ -1,0 +1,55 @@
+/* The switch of Switch.tsx, drawn as the 维护 task cards' switch (maintenance.css), with its own class names so either can change without the other. */
+
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 26px;
+  flex: none;
+}
+
+.toggle-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input:disabled {
+  cursor: default;
+}
+
+.toggle-switch-track {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  padding: 3px;
+  display: flex;
+  justify-content: flex-start;
+  background: var(--switch-off);
+  transition: background-color 0.15s ease;
+}
+
+.toggle-switch input:checked + .toggle-switch-track {
+  justify-content: flex-end;
+  background: var(--switch-on);
+}
+
+.toggle-switch input:disabled + .toggle-switch-track {
+  opacity: 0.45;
+}
+
+.toggle-switch input:focus-visible + .toggle-switch-track {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+.toggle-switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--switch-thumb);
+}

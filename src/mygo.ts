@@ -19,6 +19,14 @@ export interface Alert {
   threshold: number;
 }
 
+/** AppAbout is what the 关于 section shows. */
+export interface AppAbout {
+  /** Version is the app's version from mygo.config.ts, or "" in a build that does not carry one (go run). */
+  version: string;
+  /** DataDir is the folder holding the settings and the history. */
+  dataDir: string;
+}
+
 /** AppSettings is every user preference. */
 export interface AppSettings {
   /** Version is the schema version of the file; the Store sets it. */
@@ -268,6 +276,23 @@ export interface ScanResult {
   duration: number;
 }
 
+/** SettingRange is the inclusive range Settings.Update clamps one number to. */
+export interface SettingRange {
+  min: number;
+  max: number;
+}
+
+/** SettingsLimits are the ranges of the settings package, for the page's sliders, fields and validation messages. */
+export interface SettingsLimits {
+  cpuThreshold: SettingRange;
+  sustainMinutes: SettingRange;
+  devArtifactMinAgeDays: SettingRange;
+  largeFileMinMB: SettingRange;
+  retentionDays: SettingRange;
+  /** MaxPaths is how many entries each folder list keeps. */
+  maxPaths: number;
+}
+
 /** TaskView is one card of the 维护 page. */
 export interface TaskView {
   id: string;
@@ -352,9 +377,21 @@ export const Permissions = {
 
 /** Settings is the bound service of the 设置 page. */
 export const Settings = {
+  /** About returns the app's version and its data folder. */
+  about(): Promise<AppAbout> {
+    return call("Settings.About");
+  },
+  /** ChooseFolder shows the system's folder picker titled title and returns the folder the user chose, or "" when they cancelled. It does not change the settings: the page adds the folder to a list and calls Update. */
+  chooseFolder(title: string): Promise<string> {
+    return call("Settings.ChooseFolder", title);
+  },
   /** Get returns the current settings. General.LaunchAtLogin reports the system's state, which the user can also change in System Settings or Task Manager. */
   get(): Promise<AppSettings> {
     return call("Settings.Get");
+  },
+  /** Limits returns the ranges Update clamps to. */
+  limits(): Promise<SettingsLimits> {
+    return call("Settings.Limits");
   },
   /** Reset restores every default, including turning off 登录时启动. */
   reset(): Promise<AppSettings> {
@@ -404,6 +441,8 @@ export const Cleanup = {
 export const events = {
   /** HealthAlerts carries the complete current alert list to every window whenever it changes; an empty list clears the banner. */
   healthAlerts: event<Alert[]>("health:alerts"),
+  /** HistoryAppended carries each run the history records, from any page or from Go, to every window, so 操作历史 shows it without being reopened. */
+  historyAppended: event<Run>("history:appended"),
   /** SettingsChanged carries the complete settings to every window whenever they change, from any window or from Go. */
   settingsChanged: event<AppSettings>("settings:changed"),
 } as const;

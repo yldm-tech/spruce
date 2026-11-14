@@ -1,0 +1,260 @@
+/* The 设置 page: one glass card per area, after the 维护 task cards, with a row per setting. Values come from tokens.css. */
+
+.settings-load-error {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 22px 6px;
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+  border: 1px solid var(--border-card);
+}
+
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 6px;
+}
+
+.settings-card-head h2 {
+  margin: 0;
+  font-size: var(--font-size-card-title);
+  font-weight: 700;
+}
+
+/* ---- Rows ---- */
+
+.setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+  padding: 14px 0;
+}
+
+.setting-row + .setting-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.setting-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.setting-text {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.setting-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.setting-description {
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.setting-error,
+.setting-note {
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+  color: var(--color-warning);
+}
+
+.setting-note {
+  color: var(--color-text-secondary);
+}
+
+.setting-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-row--stacked .setting-control {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* ---- Slider and number field ---- */
+
+.setting-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.setting-slider input {
+  width: 220px;
+  margin: 0;
+  accent-color: var(--switch-on);
+  cursor: pointer;
+}
+
+.setting-slider input:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 4px;
+}
+
+.setting-slider-value {
+  min-width: 64px;
+  text-align: right;
+  font-size: var(--font-size-card-title);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-number input {
+  width: 96px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  background: var(--surface-list);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.setting-number input:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.setting-number input[aria-invalid="true"] {
+  border-color: var(--color-warning);
+}
+
+.setting-unit {
+  min-width: 24px;
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+}
+
+/* ---- Folder lists ---- */
+
+.folder-list {
+  width: 100%;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 12px;
+  background: var(--surface-list);
+  border: 1px solid var(--border-subtle);
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 6px 0 14px;
+}
+
+.folder-row:hover {
+  background: var(--surface-row-hover);
+}
+
+.folder-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-body);
+}
+
+.folder-empty {
+  padding: 8px 14px;
+  font-size: var(--font-size-body);
+  color: var(--color-text-muted);
+}
+
+.folder-add {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+}
+
+/* ---- Permissions and about ---- */
+
+.permission-state {
+  font-size: var(--font-size-body);
+  color: var(--color-warning);
+}
+
+.permission-state--ok {
+  color: var(--color-text-secondary);
+}
+
+.about-value {
+  font-size: var(--font-size-body);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.license-list {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 24px;
+  font-size: var(--font-size-body);
+}
+
+.license-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.license-name {
+  color: var(--color-text-muted);
+}
+
+/* ---- Reset ---- */
+
+.settings-reset {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 4px;
+}
+
+.settings-confirm-error {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-warning);
+}
