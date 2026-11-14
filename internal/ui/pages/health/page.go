@@ -41,7 +41,7 @@ func Page(cx *core.Scope) core.Node {
 			}}
 	}}
 
-	return kit.Page{Children: []core.Node{
+	return kit.Page{TestID: "health-page", Children: []core.Node{
 		kit.PageHeader{Route: nav.Health},
 		shared.AlertBanner{},
 		alertSettings{settings: stores.Settings},
