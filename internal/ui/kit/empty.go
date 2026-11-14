@@ -45,8 +45,9 @@ func (e ErrorLine) Render(*core.Scope) core.Node {
 
 // Notice is a line of information under a list or a figure, in the secondary color, or the warning color when Tone is above LevelNormal.
 type Notice struct {
-	Text func() string
-	Tone Level
+	Text   func() string
+	Tone   Level
+	TestID string
 }
 
 // Render implements core.Node.
@@ -56,6 +57,6 @@ func (n Notice) Render(*core.Scope) core.Node {
 		c = ColorWarning
 	}
 	return core.Show{When: func() bool { return n.Text != nil && n.Text() != "" }, Then: func(*core.Scope) core.Node {
-		return core.Text{ContentFunc: n.Text, Style: core.Style{FontFamily: FontSans, FontSize: FontBody, LineHeightMultiple: 1.5, Color: c}}
+		return core.Text{ContentFunc: n.Text, TestID: n.TestID, Style: core.Style{FontFamily: FontSans, FontSize: FontBody, LineHeightMultiple: 1.5, Color: c}}
 	}}
 }

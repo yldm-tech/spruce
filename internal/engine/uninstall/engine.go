@@ -662,12 +662,12 @@ type recordingDeleter struct {
 	errs map[string]error
 }
 
-func (d *recordingDeleter) Trash(ctx context.Context, path string, roots []string) error {
-	err := d.Deleter.Trash(ctx, path, roots)
+func (d *recordingDeleter) Trash(ctx context.Context, path string, roots []string) (cleanup.Trashed, error) {
+	to, err := d.Deleter.Trash(ctx, path, roots)
 	d.mu.Lock()
 	d.errs[path] = err
 	d.mu.Unlock()
-	return err
+	return to, err
 }
 
 func (d *recordingDeleter) err(path string) error {

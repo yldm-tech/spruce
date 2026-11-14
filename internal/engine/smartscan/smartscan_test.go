@@ -250,8 +250,8 @@ func TestCleanDispatchesToTheSources(t *testing.T) {
 			t.Errorf("progress %+v", e)
 		}
 	}
-	// A merged scan serves one clean.
-	if _, err := s.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: []string{"a:caches"}}, nil); !errors.Is(err, cleanup.ErrNoScan) {
+	// The cleaned items are gone from the merged scan: naming their category again selects nothing.
+	if _, err := s.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: []string{"a:caches"}}, nil); !errors.Is(err, cleanup.ErrNothingSelected) {
 		t.Errorf("second clean: %v", err)
 	}
 }

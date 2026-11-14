@@ -18,6 +18,7 @@ var Limits = app.SettingsLimits{
 	DevArtifactMinAgeDays: app.SettingRange{Min: settings.MinDevArtifactMinAge, Max: settings.MaxDevArtifactMinAge},
 	LargeFileMinMB:        app.SettingRange{Min: settings.MinLargeFileMB, Max: settings.MaxLargeFileMB},
 	RetentionDays:         app.SettingRange{Min: settings.MinRetentionDays, Max: settings.MaxRetentionDays},
+	LowDiskGB:             app.SettingRange{Min: settings.MinLowDiskGB, Max: settings.MaxLowDiskGB},
 	MaxPaths:              3,
 }
 
@@ -33,8 +34,10 @@ func Defaults() settings.AppSettings {
 			InstallerRoots:        []string{"/Users/me/Downloads", "/Users/me/Desktop"},
 			LargeFileMinMB:        500,
 		},
-		History: settings.HistorySettings{RetentionDays: 180},
-		General: settings.GeneralSettings{LaunchAtLogin: false, ConfirmBeforeClean: true},
+		History:    settings.HistorySettings{RetentionDays: 180},
+		General:    settings.GeneralSettings{LaunchAtLogin: false, ConfirmBeforeClean: true, KeepInTray: true, LowDiskGB: 20},
+		Background: settings.BackgroundSettings{Enabled: true},
+		Automation: settings.AutomationSettings{WeeklySummary: true},
 	}
 }
 

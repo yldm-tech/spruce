@@ -68,12 +68,12 @@ func (d fakeDeleter) Remove(ctx context.Context, path string, roots []string) (f
 	return fsx.SafeRemove(ctx, path, roots)
 }
 
-func (d fakeDeleter) Trash(_ context.Context, path string, roots []string) error {
+func (d fakeDeleter) Trash(_ context.Context, path string, roots []string) (cleanup.Trashed, error) {
 	if err := fsx.CheckTrashable(path, roots); err != nil {
-		return err
+		return cleanup.Trashed{}, err
 	}
 	d.rec.add("trash:" + filepath.Base(path))
-	return os.RemoveAll(path)
+	return cleanup.Trashed{}, os.RemoveAll(path)
 }
 
 // now is the clock of every test; files are dated relative to it.

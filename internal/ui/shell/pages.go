@@ -18,7 +18,7 @@ import (
 
 // pages are the page components by route.
 var pages = map[nav.Route]func(cx *core.Scope) core.Node{
-	nav.SmartScan:   smartscan.Page,
+	nav.Overview:    smartscan.Page,
 	nav.SystemJunk:  systemjunk.Page,
 	nav.DevJunk:     devjunk.Page,
 	nav.Installers:  installers.Page,

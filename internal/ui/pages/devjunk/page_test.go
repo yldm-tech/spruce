@@ -160,8 +160,8 @@ func texts(v *nsgotest.View) []string {
 // Ported from DevJunkPage.test.tsx: lists the project folders it will search before a scan, with a link to 设置.
 func TestIdleListsProjectFolders(t *testing.T) {
 	p := start(t, &cleanflowfake.Cleaner{}, newFakes(t, "/Users/u/Workspace", "/Users/u/Projects"))
-	p.Find("role:header 开发者垃圾")
-	p.Find("text:清理开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成")
+	p.Find("role:header 开发者")
+	p.Find("text:开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成")
 	p.Find("text:查找开发者垃圾")
 	p.Find("text:会在这些文件夹里查找项目：")
 	if got := texts(p.Find("role:group 项目文件夹")); !reflect.DeepEqual(got, []string{"/Users/u/Workspace", "/Users/u/Projects"}) {

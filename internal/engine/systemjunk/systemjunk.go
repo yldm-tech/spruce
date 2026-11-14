@@ -111,7 +111,9 @@ func newCleaner(env Env, specs func(Env) []spec) *Cleaner {
 	if env.Running == nil {
 		env.Running = func(context.Context) (Running, error) { return Running{}, nil }
 	}
-	return &Cleaner{env: env, specs: specs, exec: cleanup.NewExecutor(env.Deleter)}
+	c := &Cleaner{env: env, specs: specs}
+	c.exec = cleanup.NewExecutorWith(env.Deleter, cleanup.ExecutorOptions{Exclusions: c.exclusions})
+	return c
 }
 
 func (c *Cleaner) exclusions() []string {
@@ -228,6 +230,9 @@ func assemble(s spec, found []candidate, log *slog.Logger) []cleanup.Category {
 		}
 		it := cleanup.NewItem(cand.path, cand.info, cand.size)
 		it.Note = cand.note
+		if it.Dir {
+			it.Newest = cand.newest
+		}
 		cat.Items = append(cat.Items, it)
 	}
 	var out []cleanup.Category
@@ -289,6 +294,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 
 // Clean deletes what req names from the last scan. The Trash, when named, is emptied first, then the other items are handled by the cleanup.Executor; a request that does not match the last scan is rejected before anything is deleted.
 func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	// Checked first: an unknown mode must not empty the Trash, which the Executor's own check does not cover when only the Trash is named.
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !c.busy.TryLock() {
 		return cleanup.CleanResult{}, ErrBusy
 	}
@@ -307,6 +316,12 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	if !emptyTrash && len(rest.CategoryIDs) == 0 {
 		return cleanup.CleanResult{}, cleanup.ErrNothingSelected
 	}
+	rest.Mode = req.Mode
+	// An automatic clean never empties the Trash: the Trash is refused as one failure and the rest goes on.
+	refuseTrash := emptyTrash && req.Mode == cleanup.ModeTrashOnly
+	if refuseTrash {
+		emptyTrash = false
+	}
 	if len(rest.CategoryIDs) > 0 {
 		// The Executor plans the whole request before it deletes anything and checks ctx before every item, so a cancelled context validates the request without touching a file. Doing that first keeps a stale request from emptying the Trash.
 		probe, cancel := context.WithCancel(ctx)
@@ -319,6 +334,10 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	res := cleanup.CleanResult{StartedAt: c.env.Now(), Failed: []cleanup.Failure{}, Categories: []cleanup.CategoryOutcome{}}
 	var trashOut *cleanup.CategoryOutcome
 	steps := 0
+	if refuseTrash {
+		res.Failed = append(res.Failed, cleanup.Failure{ItemID: trashItem.ID, CategoryID: catTrash, Path: trashItem.Path, Reason: cleanup.ReasonNoEmptyTrash()})
+		trashOut = &cleanup.CategoryOutcome{CategoryID: catTrash, Title: binName(), Failed: 1}
+	}
 	if emptyTrash {
 		steps = 1
 		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, CategoryID: catTrash, Path: trashItem.Path})
@@ -342,6 +361,8 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		res.Removed += r.Removed
 		res.Skipped += r.Skipped
 		res.Failed = append(res.Failed, r.Failed...)
+		res.Moved = append(res.Moved, r.Moved...)
+		res.Handled = append(res.Handled, r.Handled...)
 		res.Categories = append(res.Categories, r.Categories...)
 		res.Interrupted = r.Interrupted
 	} else {
@@ -366,6 +387,8 @@ func (c *Cleaner) empty(ctx context.Context, it cleanup.Item, res *cleanup.Clean
 	c.mu.Lock()
 	c.trash = nil
 	c.mu.Unlock()
+	// The Trash item is dropped from the scan whether or not emptying worked, so the caller drops it too.
+	res.Handled = append(res.Handled, it.ID)
 	if err == nil {
 		res.Removed++
 		out.Removed = 1

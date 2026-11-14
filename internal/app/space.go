@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/space"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
@@ -144,6 +145,7 @@ type Space struct {
 	bin      trash.Bin
 	history  history.Store
 	log      *slog.Logger
+	activity *schedule.Activity
 
 	// Replaced in tests.
 	volumes func(ctx context.Context) ([]space.Volume, error)
@@ -158,14 +160,15 @@ type Space struct {
 	largeMin int64
 }
 
-// NewSpace returns the service for the user whose home folder is home, reading the exclusions and the large-file size from current, moving entries to bin (trash.System() in the app) and recording each move in store.
-func NewSpace(home string, current func() settings.AppSettings, bin trash.Bin, store history.Store, log *slog.Logger) *Space {
+// NewSpace returns the service for the user whose home folder is home, reading the exclusions and the large-file size from current, moving entries to bin (trash.System() in the app) inside activity's gate and recording each move in store.
+func NewSpace(home string, current func() settings.AppSettings, bin trash.Bin, store history.Store, log *slog.Logger, activity *schedule.Activity) *Space {
 	return &Space{
 		home:     home,
 		settings: current,
 		bin:      bin,
 		history:  store,
 		log:      log,
+		activity: activity,
 		volumes:  space.Volumes,
 		targets:  space.Targets,
 	}
@@ -387,13 +390,19 @@ func (s *Space) Trash(ctx context.Context, scanID string, paths []string) (Space
 	if s.scanning.Load() {
 		return SpaceTrashResult{}, errors.New("正在扫描，请等扫描结束后再试")
 	}
+	if len(paths) == 0 {
+		return SpaceTrashResult{}, errors.New("没有选择任何项目")
+	}
+	clean, end, err := s.activity.BeginClean(ctx)
+	if err != nil {
+		return SpaceTrashResult{}, gateError(ctx, s.log, err)
+	}
+	defer end()
+	ctx = clean
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkScanLocked(scanID); err != nil {
 		return SpaceTrashResult{}, err
-	}
-	if len(paths) == 0 {
-		return SpaceTrashResult{}, errors.New("没有选择任何项目")
 	}
 	started := time.Now()
 	g := s.guardLocked()

@@ -33,3 +33,6 @@ func allowForeground() {
 		_, _, _ = allowSetForegroundWindow.Call(asfwAny)
 	}
 }
+
+// Owner is unknown on Windows, where files have no user ID.
+func Owner(string) (uid int, ok bool) { return 0, false }

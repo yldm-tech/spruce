@@ -11,6 +11,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 )
 
 type fakeScanner struct {
@@ -35,7 +36,7 @@ func newTestCleanup(t *testing.T) (*Cleanup, *fakeStore, string) {
 	t.Helper()
 	store := &fakeStore{}
 	home := filepath.Join(t.TempDir(), "home")
-	return NewCleanup(store, home, slog.New(slog.DiscardHandler)), store, home
+	return NewCleanup(store, home, slog.New(slog.DiscardHandler), schedule.NewActivity(nil)), store, home
 }
 
 func TestRegisterCleaner(t *testing.T) {
@@ -98,7 +99,7 @@ func TestCleanRecordsHistory(t *testing.T) {
 	}
 	r := store.appended[0]
 	if r.Kind != history.KindSystemJunk || !r.StartedAt.Equal(started) || !r.EndedAt.Equal(started.Add(time.Minute)) ||
-		*r.Summary != (history.Totals{Freed: 1 << 30, Trashed: 4096, Items: 35, Failed: 26}) || !strings.HasPrefix(r.ID, "20261114T020000Z-") {
+		*r.Summary != (history.Totals{Freed: 1 << 30, Trashed: 4096, Items: 35, Failed: 26}) || len(r.ID) != len("20261114T020000Z-3f9a0c1d") {
 		t.Errorf("run %+v", r)
 	}
 	bin := binName()

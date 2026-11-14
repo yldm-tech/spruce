@@ -47,17 +47,17 @@ func (f *fakeDeleter) Remove(_ context.Context, path string, roots []string) (fs
 	return fsx.Removal{Freed: 100, Removed: 1}, os.RemoveAll(path)
 }
 
-func (f *fakeDeleter) Trash(_ context.Context, path string, _ []string) error {
+func (f *fakeDeleter) Trash(_ context.Context, path string, _ []string) (Trashed, error) {
 	if f.hook != nil {
 		f.hook(path)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.fail[path]; err != nil {
-		return err
+		return Trashed{}, err
 	}
 	f.trashed = append(f.trashed, path)
-	return os.RemoveAll(path)
+	return Trashed{Path: path + ".trashed", Dev: 7, Ino: uint64(len(f.trashed))}, os.RemoveAll(path)
 }
 
 type fixture struct {

@@ -22,8 +22,12 @@ const (
 	KindUninstall Kind = "uninstall"
 	// KindSpace is a deletion from the 空间透视 page.
 	KindSpace Kind = "space"
-	// KindSmartScan is a clean of the 智能扫描 page.
+	// KindSmartScan is a clean of a recommendation of 概览 (formerly the 智能扫描 page) or of the command line.
 	KindSmartScan Kind = "smartScan"
+	// KindAuto is an automatic rule run: one Run per rule that moved or failed anything, Rule naming it.
+	KindAuto Kind = "auto"
+	// KindRestore is a 放回原处: RestoreOf names the run it put back.
+	KindRestore Kind = "restore"
 )
 
 // MaxRuns is how many runs the store keeps; older ones are dropped.
@@ -42,6 +46,18 @@ type Run struct {
 	Summary *Totals `json:"summary,omitempty"`
 	// Details are human-readable lines in Simplified Chinese, e.g. "系统缓存：已清理 34 项" or "无法删除 ~/Library/Caches/x：文件正在使用，已跳过".
 	Details []string `json:"details,omitempty"`
+	// Rule is the automatic rule of a KindAuto run (rules.ID as a string).
+	Rule string `json:"rule,omitempty"`
+	// Undo is what the undo ledger holds for this run when it was recorded; nil when nothing can be put back. The store has no update, so it is settled before Append.
+	Undo *UndoInfo `json:"undo,omitempty"`
+	// RestoreOf is the run a KindRestore run put back.
+	RestoreOf string `json:"restoreOf,omitempty"`
+}
+
+// UndoInfo is what a run moved to the Trash that the undo ledger can put back.
+type UndoInfo struct {
+	Items int   `json:"items"`
+	Bytes int64 `json:"bytes"`
 }
 
 // Totals is what a clean-up achieved.

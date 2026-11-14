@@ -50,6 +50,8 @@ type SizeResult struct {
 	Errors int64
 	// Mounts counts folders left out because they are on another volume.
 	Mounts int64
+	// Newest is the latest modification time of root and every file and folder measured under it; zero when nothing was read.
+	Newest time.Time
 }
 
 // DirSize walks root concurrently and returns its size; see the package documentation for what it counts.
@@ -67,6 +69,7 @@ func DirSize(ctx context.Context, root string, opts SizeOptions) (SizeResult, er
 	case 0:
 		w.addFile(info)
 	case fs.ModeDir:
+		w.seenTime(info.ModTime())
 		if dev, ok := deviceOf(info); ok && !opts.CrossDevices {
 			w.rootDev, w.checkDev = dev, true
 		}
@@ -91,6 +94,8 @@ type walker struct {
 	wg       sync.WaitGroup
 
 	bytes, logical, files, dirs, denied, errs, mounts atomic.Int64
+	// newest is the latest modification time seen, in Unix nanoseconds; 0 until one is seen.
+	newest atomic.Int64
 
 	seenMu sync.Mutex
 	seen   map[fileID]struct{}
@@ -111,7 +116,7 @@ func newWalker(ctx context.Context, opts SizeOptions) *walker {
 }
 
 func (w *walker) result() SizeResult {
-	return SizeResult{
+	r := SizeResult{
 		Bytes:   w.bytes.Load(),
 		Logical: w.logical.Load(),
 		Files:   w.files.Load(),
@@ -119,6 +124,21 @@ func (w *walker) result() SizeResult {
 		Denied:  w.denied.Load(),
 		Errors:  w.errs.Load(),
 		Mounts:  w.mounts.Load(),
+	}
+	if n := w.newest.Load(); n != 0 {
+		r.Newest = time.Unix(0, n)
+	}
+	return r
+}
+
+// seenTime keeps t when it is later than every time seen so far.
+func (w *walker) seenTime(t time.Time) {
+	n := t.UnixNano()
+	for {
+		cur := w.newest.Load()
+		if n <= cur || w.newest.CompareAndSwap(cur, n) {
+			return
+		}
 	}
 }
 
@@ -131,6 +151,7 @@ func (w *walker) fail(err error) {
 }
 
 func (w *walker) addFile(info fs.FileInfo) {
+	w.seenTime(info.ModTime())
 	alloc, id, linked := usage(info)
 	w.files.Add(1)
 	w.logical.Add(info.Size())
@@ -167,16 +188,18 @@ func (w *walker) walkDir(dir string) error {
 			// Only plain folders are descended and only regular files counted: symlinks, Windows junctions and other reparse points (ModeIrregular), devices and sockets are neither.
 			switch e.Type() {
 			case fs.ModeDir:
-				if w.checkDev {
-					info, err := e.Info()
-					if err != nil {
+				info, err := e.Info()
+				if err != nil {
+					if w.checkDev {
 						w.fail(err)
 						continue
 					}
-					if dev, ok := deviceOf(info); ok && dev != w.rootDev {
+				} else {
+					if dev, ok := deviceOf(info); ok && w.checkDev && dev != w.rootDev {
 						w.mounts.Add(1)
 						continue
 					}
+					w.seenTime(info.ModTime())
 				}
 				subdirs = append(subdirs, p)
 			case 0:

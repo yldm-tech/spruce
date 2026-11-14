@@ -204,6 +204,7 @@ func clone(s AppSettings) AppSettings {
 
 func equal(a, b AppSettings) bool {
 	return a.Version == b.Version && a.Health == b.Health && a.History == b.History && a.General == b.General &&
+		a.Background == b.Background && a.Automation == b.Automation &&
 		a.Cleanup.DevArtifactMinAgeDays == b.Cleanup.DevArtifactMinAgeDays && a.Cleanup.LargeFileMinMB == b.Cleanup.LargeFileMinMB &&
 		slices.Equal(a.Cleanup.Exclusions, b.Cleanup.Exclusions) && slices.Equal(a.Cleanup.DevProjectRoots, b.Cleanup.DevProjectRoots) &&
 		slices.Equal(a.Cleanup.InstallerRoots, b.Cleanup.InstallerRoots)

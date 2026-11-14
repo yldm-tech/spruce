@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// SchemaVersion is the version of the file format this build writes.
-const SchemaVersion = 1
+// SchemaVersion is the version of the file format this build writes. Version 2 added Background, Automation and General's KeepInTray, LowDiskAlert and LowDiskGB; a version 1 file reads with their defaults.
+const SchemaVersion = 2
 
 // AppSettings is every user preference.
 type AppSettings struct {
@@ -18,6 +18,10 @@ type AppSettings struct {
 	Cleanup CleanupSettings `json:"cleanup"`
 	History HistorySettings `json:"history"`
 	General GeneralSettings `json:"general"`
+	// Background is the scheduled read-only checks.
+	Background BackgroundSettings `json:"background"`
+	// Automation is the automatic rules and their weekly summary.
+	Automation AutomationSettings `json:"automation"`
 }
 
 // HealthSettings tunes the CPU monitor of 健康监测 and the alert banner.
@@ -54,8 +58,29 @@ type HistorySettings struct {
 type GeneralSettings struct {
 	// LaunchAtLogin starts Spruce when the user logs in.
 	LaunchAtLogin bool `json:"launchAtLogin"`
-	// ConfirmBeforeClean asks before every clean.
+	// ConfirmBeforeClean is kept in the file for older builds and no longer read: trash moves have undo and irreversible actions always confirm.
 	ConfirmBeforeClean bool `json:"confirmBeforeClean"`
+	// KeepInTray keeps Spruce in the menu bar when its window closes (macOS; default true).
+	KeepInTray bool `json:"keepInTray"`
+	// LowDiskAlert posts a notification when the system volume's free space drops below LowDiskGB (default false).
+	LowDiskAlert bool `json:"lowDiskAlert"`
+	// LowDiskGB is the low-disk threshold in GB, MinLowDiskGB to MaxLowDiskGB (default 20).
+	LowDiskGB int `json:"lowDiskGB"`
+}
+
+// BackgroundSettings tune the scheduled checks.
+type BackgroundSettings struct {
+	// Enabled turns scheduled checks on (default true).
+	Enabled bool `json:"enabled"`
+}
+
+// AutomationSettings are the automatic rules (macOS; all default false) and the weekly summary (default true).
+type AutomationSettings struct {
+	AppCaches           bool `json:"appCaches"`
+	Installers          bool `json:"installers"`
+	BuildOutput         bool `json:"buildOutput"`
+	IncompleteDownloads bool `json:"incompleteDownloads"`
+	WeeklySummary       bool `json:"weeklySummary"`
 }
 
 // Ranges Normalize clamps to.
@@ -71,6 +96,8 @@ const (
 	MinRetentionDays     = 7
 	MaxRetentionDays     = 3650
 	MaxPaths             = 200
+	MinLowDiskGB         = 1
+	MaxLowDiskGB         = 500
 )
 
 // Defaults returns this platform's defaults for the user whose home folder is home. It checks which developer folders exist, so it reads the disk.
@@ -92,8 +119,10 @@ func Defaults(home string) AppSettings {
 			InstallerRoots:        installerRoots(home),
 			LargeFileMinMB:        500,
 		},
-		History: HistorySettings{RetentionDays: 180},
-		General: GeneralSettings{LaunchAtLogin: false, ConfirmBeforeClean: true},
+		History:    HistorySettings{RetentionDays: 180},
+		General:    GeneralSettings{LaunchAtLogin: false, ConfirmBeforeClean: true, KeepInTray: true, LowDiskAlert: false, LowDiskGB: 20},
+		Background: BackgroundSettings{Enabled: true},
+		Automation: AutomationSettings{WeeklySummary: true},
 	}
 }
 
@@ -108,6 +137,7 @@ func Normalize(s AppSettings, home string) AppSettings {
 	s.Cleanup.DevArtifactMinAgeDays = clamp(s.Cleanup.DevArtifactMinAgeDays, MinDevArtifactMinAge, MaxDevArtifactMinAge)
 	s.Cleanup.LargeFileMinMB = clamp(s.Cleanup.LargeFileMinMB, MinLargeFileMB, MaxLargeFileMB)
 	s.History.RetentionDays = clamp(s.History.RetentionDays, MinRetentionDays, MaxRetentionDays)
+	s.General.LowDiskGB = clamp(s.General.LowDiskGB, MinLowDiskGB, MaxLowDiskGB)
 	return s
 }
 

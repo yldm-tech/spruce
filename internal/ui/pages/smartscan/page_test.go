@@ -97,7 +97,7 @@ func start(t *testing.T, c *cleanflowfake.Cleaner, fakes *storefake.Services) *p
 	p := &page{c: c, fakes: fakes, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
-		p.nav = nav.NewNavigator(cx, nav.SmartScan)
+		p.nav = nav.NewNavigator(cx, nav.Overview)
 		nav.Key.Provide(cx, p.nav)
 		smartscan.DepsKey.Provide(cx, smartscan.Deps{Cleanup: c, Files: &cleanflowfake.Files{}})
 		// The page sits behind a switch (shown), so a test can leave it and open it again.
@@ -160,8 +160,8 @@ func (p *page) stat(label string) string {
 // Ported from SmartScanPage.test.tsx: offers the scan and the status cards.
 func TestIdle(t *testing.T) {
 	p := start(t, &cleanflowfake.Cleaner{}, newFakes(t))
-	p.Find("role:header 智能扫描")
-	p.Find("text:一次扫描系统垃圾、开发者垃圾和安装包，按推荐勾选可以放心清理的")
+	p.Find("role:header 概览")
+	p.Find("text:Spruce 会在后台定期检查，告诉你哪些空间可以放心释放")
 	if got := p.Find("id:scan").Props.Role; got != core.RoleButton {
 		t.Errorf("扫描 role %v", got)
 	}
@@ -402,7 +402,7 @@ func TestResultsAndClean(t *testing.T) {
 	}
 	p.Find("id:source-link-system-junk >> text:查看详情")
 
-	p.Find("role:region 开发者垃圾的项目")
+	p.Find("role:region 开发者的项目")
 	p.Find("id:list-dev-junk >> text:已选 1/2 项")
 	if got := p.stat("已选择"); got != "4 项" {
 		t.Errorf("已选择 %q", got)
@@ -519,7 +519,7 @@ func TestLeavingStopsTheScan(t *testing.T) {
 	show := (*core.Signal[bool])(nil)
 	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		storefake.Provide(cx, fakes.Deps())
-		nav.Key.Provide(cx, nav.NewNavigator(cx, nav.SmartScan))
+		nav.Key.Provide(cx, nav.NewNavigator(cx, nav.Overview))
 		smartscan.DepsKey.Provide(cx, smartscan.Deps{Cleanup: c})
 		show = core.NewSignal(cx, true)
 		return core.Show{When: show.Get, Then: smartscan.Page}

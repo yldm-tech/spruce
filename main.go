@@ -24,8 +24,11 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/shell"
 )
 
-// backgroundGrace is how long main waits for the background work to stop after the app quits.
-const backgroundGrace = 2 * time.Second
+// backgroundGrace is how long main waits for the background work to stop after the app quits; cleanGrace is how long it gives a running clean to finish its current item and record what it did.
+const (
+	backgroundGrace = 2 * time.Second
+	cleanGrace      = 30 * time.Second
+)
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -89,6 +92,11 @@ func main() {
 	}
 	nsgo.Run(shell.App(deps), opts...)
 
+	// NSGo cannot keep the app running for a clean: every clean stops after its current item and still writes its history.
+	deps.Activity.Shutdown()
+	if !deps.Activity.Wait(cleanGrace) {
+		logger.Warn("a clean did not stop in time")
+	}
 	// The app's OnQuit cancelled the background work; give it a moment to stop before the lock goes.
 	done := make(chan struct{})
 	go func() {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -15,14 +16,17 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 )
 
 // CleanerID names a cleaner that the Cleanup service runs. Each cleaner page has one; its engine registers a cleanup.Scanner under it in main.go with RegisterCleaner.
 type CleanerID string
 
 const (
-	// CleanerSmartScan is the 智能扫描 page.
+	// CleanerSmartScan is the merged scan of 概览's foreground checks (formerly the 智能扫描 page) and of the command line.
 	CleanerSmartScan CleanerID = "smart-scan"
+	// CleanerSmartScanBackground is the merged scan of 概览's scheduled checks, an instance of its own, which automatic rules clean from.
+	CleanerSmartScanBackground CleanerID = "smart-scan-background"
 	// CleanerSystemJunk is the 系统垃圾 page.
 	CleanerSystemJunk CleanerID = "system-junk"
 	// CleanerDevJunk is the 开发者垃圾 page.
@@ -37,12 +41,13 @@ const (
 
 // cleanerKinds is the history kind each cleaner records its cleans as.
 var cleanerKinds = map[CleanerID]history.Kind{
-	CleanerSmartScan:  history.KindSmartScan,
-	CleanerSystemJunk: history.KindSystemJunk,
-	CleanerDevJunk:    history.KindDevJunk,
-	CleanerInstallers: history.KindInstallers,
-	CleanerUninstall:  history.KindUninstall,
-	CleanerSpace:      history.KindSpace,
+	CleanerSmartScan:           history.KindSmartScan,
+	CleanerSmartScanBackground: history.KindSmartScan,
+	CleanerSystemJunk:          history.KindSystemJunk,
+	CleanerDevJunk:             history.KindDevJunk,
+	CleanerInstallers:          history.KindInstallers,
+	CleanerUninstall:           history.KindUninstall,
+	CleanerSpace:               history.KindSpace,
 }
 
 // cleanerTitles are the page names the history uses for the cleaners a combined clean (智能扫描) reports by source.
@@ -60,17 +65,36 @@ const maxDetailFailures = 20
 
 // Cleanup is the controller every cleaner page scans and cleans through, by CleanerID. It records each clean in the history.
 type Cleanup struct {
-	history history.Store
-	home    string
-	log     *slog.Logger
+	history  history.Store
+	home     string
+	log      *slog.Logger
+	activity *schedule.Activity
+	// goos is runtime.GOOS; tests replace it.
+	goos string
 
 	mu       sync.RWMutex
 	cleaners map[CleanerID]cleanup.Scanner
 }
 
-// NewCleanup returns the service with no cleaners; main.go adds them with RegisterCleaner. home shortens paths in the history to "~/…".
-func NewCleanup(store history.Store, home string, log *slog.Logger) *Cleanup {
-	return &Cleanup{history: store, home: home, log: log, cleaners: make(map[CleanerID]cleanup.Scanner)}
+// NewCleanup returns the service with no cleaners; main.go adds them with RegisterCleaner. home shortens paths in the history to "~/…"; every clean runs inside activity (BeginClean), automatic ones inside its background slot.
+func NewCleanup(store history.Store, home string, log *slog.Logger, activity *schedule.Activity) *Cleanup {
+	return &Cleanup{history: store, home: home, log: log, activity: activity, goos: runtime.GOOS, cleaners: make(map[CleanerID]cleanup.Scanner)}
+}
+
+// CleanOptions change how a clean is recorded.
+type CleanOptions struct {
+	// Kind is the history kind; "" means the cleaner's.
+	Kind history.Kind
+	// Rule is the automatic rule of a KindAuto clean.
+	Rule string
+	// Detail is a first Details line, e.g. 「Xcode 编译缓存：已清理 1 项，释放 17.2 GB」 or 「命令行」.
+	Detail string
+}
+
+// CleanRun is a clean and the history run that records it ("" when nothing was recorded).
+type CleanRun struct {
+	Result cleanup.CleanResult
+	RunID  string
 }
 
 // RegisterCleaner makes s the cleaner for id. It is a function rather than a method so the page cannot call it. It panics on an unknown or repeated id, so a wiring mistake shows at startup.
@@ -132,34 +156,115 @@ func (c *Cleanup) Scan(ctx context.Context, cleaner CleanerID, progress func(cle
 	return res, nil
 }
 
-// Clean deletes what req names from cleaner's last scan, reports progress (throttled; nil reports nothing), records the clean in the history and returns what it did. It fails without deleting anything when the request does not match the last scan (the page then scans again). Cancelling ctx stops the clean after the current item; the result says it was interrupted.
+// Clean deletes what req names from cleaner's last scan, reports progress (throttled; nil reports nothing), records the clean in the history and returns what it did. It fails without deleting anything when the request does not match the last scan (the page then scans again). Cancelling ctx stops the clean after the current item; the result says it was interrupted. It is CleanWith with the cleaner's own kind.
 func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	run, err := c.CleanWith(ctx, cleaner, req, CleanOptions{}, progress)
+	return run.Result, err
+}
+
+// CleanWith is Clean recorded as opts says. Every clean runs inside the activity gate (Activity.BeginClean), which stops background work first and refuses while another Spruce process cleans; the run ID is made before the clean, and the history run is appended after it even when ctx has ended (quitting, 停止), so what was done is never lost.
+//
+// An automatic clean (opts.Kind KindAuto) must come from an automatic rule inside the background slot, and only ever moves to the Trash: ctx must come from schedule.Activity.BeginAutoClean, the platform macOS, the cleaner CleanerSmartScanBackground and every item named; req.Mode is forced to cleanup.ModeTrashOnly whatever the caller passed. A clean that breaks any of these is refused (schedule.ErrNotAuto) before anything is deleted, and so is an automatic context with another kind.
+func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, opts CleanOptions, progress func(cleanup.Progress)) (CleanRun, error) {
+	auto := opts.Kind == history.KindAuto
+	if auto || schedule.IsAuto(ctx) {
+		if why := c.autoRefusal(ctx, cleaner, req, opts); why != "" {
+			c.log.Error("automatic clean refused", "cleaner", cleaner, "rule", opts.Rule, "why", why)
+			return CleanRun{}, &appError{msg: "自动清理没能开始，详情已记录到日志", err: fmt.Errorf("%w: %s", schedule.ErrNotAuto, why)}
+		}
+		req.Mode = cleanup.ModeTrashOnly
+	}
 	s, err := c.scanner(cleaner)
 	if err != nil {
-		return cleanup.CleanResult{}, err
+		return CleanRun{}, err
 	}
+	if !auto {
+		clean, end, err := c.activity.BeginClean(ctx)
+		if err != nil {
+			return CleanRun{}, c.activityError(ctx, err)
+		}
+		defer end()
+		ctx = clean
+	}
+	runID := newRunID(time.Now())
 	res, err := s.Clean(ctx, req, throttled(progress))
 	if err != nil {
-		return cleanup.CleanResult{}, c.userError(ctx, cleaner, "clean", err)
+		return CleanRun{}, c.userError(ctx, cleaner, "clean", err)
 	}
+	out := CleanRun{Result: res}
 	if res.Removed+len(res.Failed) > 0 {
+		kind := cmp.Or(opts.Kind, cleanerKinds[cleaner])
+		details := c.details(res)
+		if opts.Detail != "" {
+			details = append([]string{opts.Detail}, details...)
+		}
 		run := history.Run{
-			ID:        newRunID(res.StartedAt),
-			Kind:      cleanerKinds[cleaner],
+			ID:        runID,
+			Kind:      kind,
 			StartedAt: res.StartedAt,
 			EndedAt:   res.StartedAt.Add(res.Duration),
 			Summary:   &history.Totals{Freed: res.Freed, Trashed: res.Trashed, Items: res.Removed, Failed: len(res.Failed)},
-			Details:   c.details(res),
+			Details:   details,
+			Rule:      opts.Rule,
 		}
 		if err := c.history.Append(run); err != nil {
 			// The items are already gone; failing the call would tell the user they were not.
 			c.log.Error("record clean in history", "cleaner", cleaner, "err", err)
+		} else {
+			out.RunID = runID
 		}
 	}
 	for _, f := range res.Failed {
 		c.log.Info("clean left an item", "cleaner", cleaner, "path", f.Path, "reason", f.Reason, "detail", f.Detail)
 	}
-	return res, nil
+	return out, nil
+}
+
+// autoRefusal says why an automatic clean must not run, or "" when it may.
+func (c *Cleanup) autoRefusal(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, opts CleanOptions) string {
+	switch {
+	case opts.Kind != history.KindAuto:
+		return fmt.Sprintf("an automatic context with kind %q", opts.Kind)
+	case !schedule.IsAuto(ctx):
+		return "the context did not come from BeginAutoClean"
+	case c.goos != "darwin":
+		return "automatic rules run only on macOS, not " + c.goos
+	case cleaner != CleanerSmartScanBackground:
+		return fmt.Sprintf("cleaner %q is not the background instance", cleaner)
+	case len(req.ItemIDs) == 0:
+		return "the request names no items"
+	}
+	return ""
+}
+
+// appError is an error whose text is a sentence for the page that keeps the error it stands for, so the command line can tell a busy refusal apart with errors.Is.
+type appError struct {
+	msg string
+	err error
+}
+
+func (e *appError) Error() string { return e.msg }
+
+func (e *appError) Unwrap() error { return e.err }
+
+// activityError turns a refusal of the activity gate into the sentence the page shows.
+func (c *Cleanup) activityError(ctx context.Context, err error) error {
+	return gateError(ctx, c.log, err)
+}
+
+// gateError turns a refusal of Activity.BeginClean into the sentence the page shows, keeping the sentinel; Space, Uninstall and Maintenance use it too.
+func gateError(ctx context.Context, log *slog.Logger, err error) error {
+	switch {
+	case ctx.Err() != nil && errors.Is(err, ctx.Err()):
+		return errors.New("已取消")
+	case errors.Is(err, schedule.ErrBusyElsewhere):
+		return &appError{msg: "另一个 Spruce 正在清理，请稍后再试", err: err}
+	case errors.Is(err, schedule.ErrLock):
+		log.Error("clean lock unusable", "err", err)
+		return &appError{msg: "无法确认是否有另一个 Spruce 正在清理，请稍后再试", err: err}
+	}
+	log.Warn("clean refused", "err", err)
+	return &appError{msg: "Spruce 正在退出，没有开始清理", err: err}
 }
 
 // details are the history lines of a clean: one per category (one per source for a combined clean, whose outcomes carry their source), then the items left in place.
@@ -265,7 +370,7 @@ func (c *Cleanup) userError(ctx context.Context, cleaner CleanerID, op string, e
 	case errors.As(err, &ue):
 		return errors.New(ue.Message)
 	case errors.Is(err, cleanup.ErrBusy):
-		return errors.New("已有清理正在进行，请等它结束后再试")
+		return &appError{msg: "已有清理正在进行，请等它结束后再试", err: cleanup.ErrBusy}
 	case errors.Is(err, cleanup.ErrNoScan), errors.Is(err, cleanup.ErrStale):
 		return errors.New("扫描结果已过期，请重新扫描")
 	case errors.Is(err, cleanup.ErrNothingSelected):

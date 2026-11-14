@@ -15,8 +15,11 @@ import (
 // maxOutputInReason bounds how much of a failed command's output the page shows.
 const maxOutputInReason = 160
 
-// Clean deletes what req names from the last scan: the file categories through the Executor, then the command categories by running their commands. It deletes nothing and returns an error when the request does not match the last scan (cleanup.ErrStale), names nothing (cleanup.ErrNothingSelected) or another clean runs (cleanup.ErrBusy).
+// Clean deletes what req names from the last scan: the file categories through the Executor, then the command categories by running their commands. It deletes nothing and returns an error when the request has an unknown mode (cleanup.ErrBadMode), does not match the last scan (cleanup.ErrStale), names nothing (cleanup.ErrNothingSelected) or another clean runs (cleanup.ErrBusy).
 func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !c.cleaning.TryLock() {
 		return cleanup.CleanResult{}, cleanup.ErrBusy
 	}
@@ -47,8 +50,8 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		itemSet[id] = true
 	}
 
-	var jobs []*commandJob
-	fileReq := cleanup.CleanRequest{}
+	var jobs, refused []*commandJob
+	fileReq := cleanup.CleanRequest{Mode: req.Mode}
 	fileItems := 0
 	for _, id := range snap.order {
 		if !picked[id] {
@@ -56,7 +59,12 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		}
 		if job := snap.commands[id]; job != nil {
 			if len(itemSet) == 0 || itemSet[job.itemID] {
-				jobs = append(jobs, job)
+				// An automatic clean never runs a command: the category is refused as one failure.
+				if req.Mode == cleanup.ModeTrashOnly {
+					refused = append(refused, job)
+				} else {
+					jobs = append(jobs, job)
+				}
 			}
 			continue
 		}
@@ -75,7 +83,7 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		}
 	}
 	total := fileItems + len(jobs)
-	if total == 0 {
+	if total+len(refused) == 0 {
 		return cleanup.CleanResult{}, cleanup.ErrNothingSelected
 	}
 
@@ -113,6 +121,7 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 			out.Freed = freed
 			res.Removed++
 			res.Freed += freed
+			res.Handled = append(res.Handled, job.itemID)
 			c.forget(job.categoryID)
 		}
 		done++
@@ -123,6 +132,10 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		if !ran[job.categoryID] {
 			res.Categories = append(res.Categories, cleanup.CategoryOutcome{CategoryID: job.categoryID, Title: job.title})
 		}
+	}
+	for _, job := range refused {
+		res.Failed = append(res.Failed, cleanup.Failure{ItemID: job.itemID, CategoryID: job.categoryID, Path: job.path, Reason: cleanup.ReasonNoCommand})
+		res.Categories = append(res.Categories, cleanup.CategoryOutcome{CategoryID: job.categoryID, Title: job.title, Failed: 1})
 	}
 	if len(jobs) > 0 {
 		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: done, Total: total, Bytes: res.Freed + res.Trashed})

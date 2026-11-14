@@ -140,3 +140,30 @@ func (in *Instance) Close() error {
 	})
 	return err
 }
+
+// LockFile takes an exclusive lock on the file at path without waiting, creating the file (0600) and its folder (0700) when missing. held is false when another open file holds the lock, in this process or another (flock and LockFileEx lock per open file); release unlocks and closes it. An error means the lock could not be taken or tested at all. schedule.Activity holds <data>/clean.lock this way, shared by the app and the command line.
+func LockFile(path string) (release func() error, held bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, fmt.Errorf("instance: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("instance: %w", err)
+	}
+	ok, err := tryLock(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, false, fmt.Errorf("instance: lock %s: %w", path, err)
+	}
+	if !ok {
+		_ = f.Close()
+		return nil, false, nil
+	}
+	var once sync.Once
+	release = func() error {
+		var err error
+		once.Do(func() { err = errors.Join(unlock(f), f.Close()) })
+		return err
+	}
+	return release, true, nil
+}

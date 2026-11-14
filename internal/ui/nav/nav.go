@@ -1,9 +1,12 @@
 // Package nav names the app's pages and moves between them: the routes, what the sidebar and each page's header show for a page (the one port of src/components/common/pages.tsx), and the Navigator the shell provides.
+//
+// The sidebar has seven pages (Pages). 系统垃圾, 开发者 and 安装包 are drill-down views of 概览: routes with a Parent, outside the sidebar, which light their parent's entry and draw a link back.
 package nav
 
 import (
 	"github.com/nsgo-dev/nsgo/core"
 
+	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/ui/kit/tone"
 )
 
@@ -12,7 +15,7 @@ type Route string
 
 // The pages.
 const (
-	SmartScan   Route = "smart-scan"
+	Overview    Route = "overview"
 	SystemJunk  Route = "system-junk"
 	DevJunk     Route = "dev-junk"
 	Installers  Route = "installers"
@@ -24,11 +27,11 @@ const (
 	Settings    Route = "settings"
 )
 
-// Pages lists every page in the sidebar's order.
-var Pages = []Route{SmartScan, SystemJunk, DevJunk, Installers, Uninstall, Space, Maintenance, Health, History, Settings}
+// Pages lists the sidebar's pages in its order; the drill-down views (SystemJunk, DevJunk, Installers) are not among them.
+var Pages = []Route{Overview, Uninstall, Space, Maintenance, Health, History, Settings}
 
 // Start is the page the app opens on.
-const Start = SmartScan
+const Start = Overview
 
 // Meta is what the sidebar and a page's header show for a page.
 type Meta struct {
@@ -39,13 +42,15 @@ type Meta struct {
 	// Section is the sidebar group the page is under ("" for none); Footer puts it in the sidebar's footer, drawn as a bare glyph.
 	Section string
 	Footer  bool
+	// Parent is the page a drill-down view belongs to: its header links back there and the sidebar lights it.
+	Parent Route
 }
 
 var metas = map[Route]Meta{
-	SmartScan:   {Title: "智能扫描", Subtitle: "一次扫描系统垃圾、开发者垃圾和安装包，按推荐勾选可以放心清理的", Tone: tone.Violet},
-	SystemJunk:  {Title: "系统垃圾", Subtitle: "清理应用缓存、日志和临时文件，不会动你的文档和照片", Tone: tone.Green, Section: "清理"},
-	DevJunk:     {Title: "开发者垃圾", Subtitle: "清理开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成", Tone: tone.Orange, Section: "清理"},
-	Installers:  {Title: "安装包", Subtitle: "找出装完就没再用的安装包和磁盘映像", Tone: tone.Pink, Section: "清理"},
+	Overview:    {Title: "概览", Subtitle: "Spruce 会在后台定期检查，告诉你哪些空间可以放心释放", Tone: tone.Violet},
+	SystemJunk:  {Title: "系统垃圾", Subtitle: "清理应用缓存、日志和临时文件，不会动你的文档和照片", Tone: tone.Green, Parent: Overview},
+	DevJunk:     {Title: "开发者", Subtitle: "开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成", Tone: tone.Orange, Parent: Overview},
+	Installers:  {Title: "安装包", Subtitle: "找出装完就没再用的安装包和磁盘映像", Tone: tone.Pink, Parent: Overview},
 	Uninstall:   {Title: "应用卸载", Subtitle: "连同应用留下的缓存和设置一起移除", Tone: tone.Blue, Section: "应用与空间"},
 	Space:       {Title: "空间透视", Subtitle: "看看磁盘空间都被什么占用了", Tone: tone.Cyan, Section: "应用与空间"},
 	Maintenance: {Title: "维护", Subtitle: "给系统做一次轻量保养，不会动你的文档和照片", Tone: tone.Amber, Section: "性能"},
@@ -67,16 +72,33 @@ type SettingsTab string
 // The 设置 page's tabs, in their order.
 const (
 	SettingsGeneral SettingsTab = "general"
+	SettingsAuto    SettingsTab = "auto"
 	SettingsCleanup SettingsTab = "cleanup"
 	SettingsHealth  SettingsTab = "health"
 	SettingsHistory SettingsTab = "history"
 	SettingsAbout   SettingsTab = "about"
 )
 
-// Navigator holds the current page, and the tab a link asked 设置 to open on.
+// DevTab is a tab of the 开发者 view.
+type DevTab string
+
+// The 开发者 view's tabs.
+const (
+	DevProjects DevTab = "projects"
+	DevTools    DevTab = "tools"
+)
+
+// Navigator holds the current page, where a drill-down view was entered from, and what a link asked the page it opens to show first (a 设置 tab, a category to reveal, a history filter, a 开发者 tab, an 概览 card, a 空间透视 folder). Each of those is read once by the page it is for (Take…), so the next visit opens plainly.
 type Navigator struct {
 	current     *core.Signal[Route]
+	from        Route
 	settingsTab SettingsTab
+	reveal      string
+	histKind    history.Kind
+	histRun     string
+	devTab      DevTab
+	card        string
+	spacePath   string
 }
 
 // NewNavigator returns a navigator on start.
@@ -87,8 +109,104 @@ func NewNavigator(cx *core.Scope, start Route) *Navigator {
 // Current returns the page shown; reading it subscribes.
 func (n *Navigator) Current() Route { return n.current.Get() }
 
-// Go shows page r.
-func (n *Navigator) Go(r Route) { n.current.Set(r) }
+// Go shows page r. Entering a drill-down view remembers the page it was entered from, for Back.
+func (n *Navigator) Go(r Route) {
+	if r.Meta().Parent != "" {
+		if cur := n.current.GetUntracked(); cur != r {
+			n.from = cur
+		}
+	}
+	n.current.Set(r)
+}
+
+// Back leaves a drill-down view: to the sidebar page it was entered from, else to its parent.
+func (n *Navigator) Back() {
+	cur := n.current.GetUntracked()
+	to := cur.Meta().Parent
+	if to == "" {
+		return
+	}
+	if n.from != "" && n.from.InSidebar() {
+		to = n.from
+	}
+	n.from = ""
+	n.current.Set(to)
+}
+
+// InSidebar reports whether r is one of the sidebar's pages.
+func (r Route) InSidebar() bool {
+	for _, p := range Pages {
+		if p == r {
+			return true
+		}
+	}
+	return false
+}
+
+// GoDrill opens the drill-down view r with categoryID expanded and scrolled to ("" for none).
+func (n *Navigator) GoDrill(r Route, categoryID string) {
+	n.reveal = categoryID
+	n.Go(r)
+}
+
+// TakeReveal returns the category GoDrill asked to reveal, or "", and forgets it.
+func (n *Navigator) TakeReveal() string {
+	c := n.reveal
+	n.reveal = ""
+	return c
+}
+
+// GoHistory opens 操作历史 with the filter of kind selected ("" for all) and the run runID expanded ("" for none).
+func (n *Navigator) GoHistory(kind history.Kind, runID string) {
+	n.histKind, n.histRun = kind, runID
+	n.Go(History)
+}
+
+// TakeHistoryFilter returns what GoHistory asked for, or zero values, and forgets it.
+func (n *Navigator) TakeHistoryFilter() (history.Kind, string) {
+	k, r := n.histKind, n.histRun
+	n.histKind, n.histRun = "", ""
+	return k, r
+}
+
+// GoDevTab opens the 开发者 view on tab.
+func (n *Navigator) GoDevTab(tab DevTab) {
+	n.devTab = tab
+	n.Go(DevJunk)
+}
+
+// TakeDevTab returns the tab GoDevTab asked for, or "", and forgets it.
+func (n *Navigator) TakeDevTab() DevTab {
+	t := n.devTab
+	n.devTab = ""
+	return t
+}
+
+// GoOverviewCard opens 概览 scrolled to the card recID, expanded (空间变化's 去清理).
+func (n *Navigator) GoOverviewCard(recID string) {
+	n.card = recID
+	n.Go(Overview)
+}
+
+// TakeOverviewCard returns the card GoOverviewCard asked for, or "", and forgets it.
+func (n *Navigator) TakeOverviewCard() string {
+	c := n.card
+	n.card = ""
+	return c
+}
+
+// GoSpace opens 空间透视 and starts its scan of path (空间变化's 在空间透视中查看).
+func (n *Navigator) GoSpace(path string) {
+	n.spacePath = path
+	n.Go(Space)
+}
+
+// TakeSpacePath returns the folder GoSpace asked for, or "", and forgets it; 空间透视 reads it once as it opens.
+func (n *Navigator) TakeSpacePath() string {
+	p := n.spacePath
+	n.spacePath = ""
+	return p
+}
 
 // GoSettings shows 设置 on tab, as a link that names the setting it is about does (开发者垃圾's 更改文件夹 opens 清理).
 func (n *Navigator) GoSettings(tab SettingsTab) {

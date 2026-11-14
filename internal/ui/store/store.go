@@ -1,4 +1,4 @@
-// Package store holds the app-wide state the pages share, as signals in the app's own scope, which lives until the app quits: the settings, the history's generation, the CPU alerts, the Full Disk Access state, the Trash's and the disks' generations, and whether an overlay blocks the shell. The shell makes it once (New) and provides it with Key; pages read it with Use. Every method runs on the engine goroutine; the work behind it goes to goroutines (package async).
+// Package store holds the app-wide state the pages share, as signals in the app's own scope, which lives until the app quits: the settings, the history's generation, the CPU alerts, the Full Disk Access state, the Trash's and the disks' generations, 概览's state, the toast, and whether an overlay blocks the shell. The shell makes it once (New) and provides it with Key; pages read it with Use. Every method runs on the engine goroutine; the work behind it goes to goroutines (package async).
 package store
 
 import (
@@ -62,6 +62,8 @@ type Deps struct {
 	Alerts       AlertService
 	Permissions  PermissionService
 	Locations    LocationService
+	// Overview is 概览's controller; nil until it is wired (see Overview).
+	Overview OverviewService
 }
 
 // Stores are the app-wide stores.
@@ -72,6 +74,8 @@ type Stores struct {
 	Permission *Permission
 	Trash      *Trash
 	Locations  *Locations
+	Overview   *Overview
+	Toasts     *Toasts
 	Block      *Block
 }
 
@@ -90,6 +94,8 @@ func New(cx *core.Scope, ctx context.Context, d Deps) *Stores {
 		Permission: newPermission(cx, ctx, d.Permissions),
 		Trash:      &Trash{gen: core.NewSignal(cx, 0)},
 		Locations:  newLocations(cx, ctx, d.Locations),
+		Overview:   newOverview(cx, ctx, d.Overview),
+		Toasts:     newToasts(cx),
 		Block:      &Block{holders: core.NewSignal(cx, 0)},
 	}
 	return s

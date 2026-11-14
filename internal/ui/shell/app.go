@@ -62,7 +62,7 @@ func App(d Deps) func(app *core.Scope) {
 		}
 		set(app, func(cx *core.Scope) core.Node {
 			root = cx
-			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f })
+			return Root(cx, stores.Block, d.Start, func(f core.WindowFrame) { frame = f })
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 )
 
@@ -48,7 +49,7 @@ func TestRunErrorsAreChinese(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewMaintenance(svc, &fakeStore{}, slog.New(slog.DiscardHandler))
+	m := NewMaintenance(svc, &fakeStore{}, slog.New(slog.DiscardHandler), schedule.NewActivity(nil))
 
 	done := make(chan error)
 	go func() {

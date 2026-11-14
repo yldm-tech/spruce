@@ -17,12 +17,14 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/installers"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/smartscan"
 	"github.com/yldm-tech/spruce/internal/engine/sysinfo"
 	"github.com/yldm-tech/spruce/internal/engine/systemjunk"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
+	"github.com/yldm-tech/spruce/internal/host/instance"
 	"github.com/yldm-tech/spruce/internal/host/loginitem"
 	uidevjunk "github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
 	uihealth "github.com/yldm-tech/spruce/internal/ui/pages/health"
@@ -48,6 +50,8 @@ const (
 	historyFile  = "history.jsonl"
 	settingsFile = "settings.json"
 	iconCache    = "app-icons"
+	// cleanLock is the lock every clean and the background work hold, shared with the command line.
+	cleanLock = "clean.lock"
 )
 
 // appID is nsgo.yaml's id: the login item's name.
@@ -97,7 +101,8 @@ func wire(e env) (shell.Deps, error) {
 	newInstallers := func() cleanup.Scanner {
 		return installers.New(installers.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log})
 	}
-	cleanups := app.NewCleanup(historyStore, e.home, e.log)
+	activity := schedule.NewActivity(cleanLockFunc(filepath.Join(e.dataDir, cleanLock), e.log))
+	cleanups := app.NewCleanup(historyStore, e.home, e.log, activity)
 	app.RegisterCleaner(cleanups, app.CleanerSmartScan, smartscan.New([]smartscan.Source{
 		{ID: string(app.CleanerSystemJunk), New: newSystemJunk},
 		{ID: string(app.CleanerDevJunk), New: newDevJunk},
@@ -108,7 +113,7 @@ func wire(e env) (shell.Deps, error) {
 	app.RegisterCleaner(cleanups, app.CleanerInstallers, newInstallers())
 
 	files := app.NewFiles(e.runner, trash.System(), e.log)
-	maint := app.NewMaintenance(svc, historyStore, e.log)
+	maint := app.NewMaintenance(svc, historyStore, e.log, activity)
 	healthSvc := app.NewHealth(monitor, func(ctx context.Context) error { return health.OpenSystemMonitor(ctx, e.runner) })
 	uninstaller := app.NewUninstall(uninstall.New(uninstall.Config{
 		Home:       e.home,
@@ -116,8 +121,8 @@ func wire(e env) (shell.Deps, error) {
 		Runner:     e.runner,
 		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
 		Self:       e.exe,
-	}), historyStore, e.home, e.log)
-	spaceSvc := app.NewSpace(e.home, settingsStore.Get, trash.System(), historyStore, e.log)
+	}), historyStore, e.home, e.log, activity)
+	spaceSvc := app.NewSpace(e.home, settingsStore.Get, trash.System(), historyStore, e.log, activity)
 	version := ""
 	if info := core.App(); !info.Development {
 		version = info.Version
@@ -145,7 +150,20 @@ func wire(e env) (shell.Deps, error) {
 			},
 			func(ctx context.Context) { app.FollowSettings(ctx, settingsStore, monitor, historyStore, e.log) },
 		},
-		DataDir: e.dataDir,
-		Log:     e.log,
+		DataDir:  e.dataDir,
+		Log:      e.log,
+		Activity: activity,
 	}, nil
+}
+
+// cleanLockFunc takes the clean lock at path for schedule.Activity, logging where it is, why it failed and who owns the file when it cannot be used; Activity then refuses the clean rather than run without it.
+func cleanLockFunc(path string, log *slog.Logger) schedule.LockFunc {
+	return func() (func() error, bool, error) {
+		release, held, err := instance.LockFile(path)
+		if err != nil {
+			uid, known := instance.Owner(path)
+			log.Error("clean lock unusable", "path", path, "err", err, "owner", uid, "ownerKnown", known)
+		}
+		return release, held, err
+	}
 }
