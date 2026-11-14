@@ -3,11 +3,13 @@ package devjunk
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +69,16 @@ func gitProjects(t *testing.T, ws string, names ...string) {
 	}
 }
 
+// realPath is path with its symlinks resolved.
+func realPath(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
 func itemOf(t *testing.T, res cleanup.ScanResult, catID, project string) cleanup.Item {
 	t.Helper()
 	cat := categoryByID(res, catID)
@@ -86,7 +98,7 @@ func itemOf(t *testing.T, res cleanup.ScanResult, catID, project string) cleanup
 func TestScanMarksGitStates(t *testing.T) {
 	f := newFixture(t, "darwin", nil)
 	ws := filepath.Join(f.home, "Workspace")
-	gitProjects(t, ws, "clean", "dirty", "unknown", "plain", "tracked", "failing")
+	gitProjects(t, ws, "clean", "dirty", "unknown", "plain", "tracked", "failing", "cleanerr", "dirtyerr")
 	writeFile(t, ws, "dotnet/App.csproj", 10)
 	writeFile(t, ws, "dotnet/bin/App.dll", 3000)
 	writeFile(t, ws, "dotnet/obj/x", 3000)
@@ -100,6 +112,9 @@ func TestScanMarksGitStates(t *testing.T) {
 	g.set("unknown", gitstate.Result{State: cleanup.GitUnknown}, nil)
 	g.set("tracked", gitstate.Result{State: cleanup.GitClean, Tracked: true}, nil)
 	g.set("failing", gitstate.Result{}, errors.New("exit status 128"))
+	// An answer that comes with an error is never clean, but a known reason to hold still holds.
+	g.set("cleanerr", gitstate.Result{State: cleanup.GitClean}, errors.New("killed"))
+	g.set("dirtyerr", gitstate.Result{State: cleanup.GitDirty}, errors.New("ls-files failed"))
 	g.set("dotnet", gitstate.Result{State: cleanup.GitClean}, nil)
 	f.opts.Git = g.check
 	f.cfg.DevProjectRoots = []string{ws}
@@ -118,6 +133,8 @@ func TestScanMarksGitStates(t *testing.T) {
 		{"tracked", cleanup.GitClean, false, "构建产物文件夹里有纳入版本控制的文件", "tracked"},
 		{"unknown", cleanup.GitUnknown, false, "", "unknown · 无法确定 Git 状态"},
 		{"failing", cleanup.GitUnknown, false, "", "failing · 无法确定 Git 状态"},
+		{"cleanerr", cleanup.GitUnknown, false, "", "cleanerr · 无法确定 Git 状态"},
+		{"dirtyerr", cleanup.GitDirty, false, "项目有未提交的改动", "dirtyerr · 有未提交的改动"},
 	}
 	for _, c := range cases {
 		it := itemOf(t, res, "artifact-node-modules", c.name)
@@ -131,10 +148,12 @@ func TestScanMarksGitStates(t *testing.T) {
 	if g.count("plain") != 0 {
 		t.Error("git was asked about a project in no repository")
 	}
-	if g.repos["clean"] != filepath.Join(ws, "clean") {
+	// git is asked about real paths (the temporary folder itself lies behind a symlink on macOS).
+	realWS := realPath(t, ws)
+	if g.repos["clean"] != filepath.Join(realWS, "clean") {
 		t.Errorf("repo of clean = %q", g.repos["clean"])
 	}
-	if arts := g.arts["clean"]; len(arts) != 1 || !arts[0].Generated || arts[0].Path != filepath.Join(ws, "clean", "node_modules") {
+	if arts := g.arts["clean"]; len(arts) != 1 || !arts[0].Generated || arts[0].Path != filepath.Join(realWS, "clean", "node_modules") {
 		t.Errorf("artifacts of clean = %+v", arts)
 	}
 	arts := g.arts["dotnet"]
@@ -278,7 +297,7 @@ func TestScanAsksTheLocatedGit(t *testing.T) {
 	gitBin := writeFile(t, devDir, "usr/bin/git", 1)
 	f.opts.LookPath = lookPathOf(map[string]string{"git": "/usr/bin/git"})
 	f.runner.On(xcodeSelectPath, "-p").Return(devDir+"\n", 0)
-	project := filepath.Join(ws, "web")
+	project := filepath.Join(realPath(t, ws), "web")
 	f.runner.On(gitBin, "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-C", project,
 		"status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=dirty", "--", ".").Return(" M src/index.js\x00", 0)
 	f.runner.On(gitBin, "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-C", project, "ls-files", "-z", "--", "node_modules").Return("", 0)
@@ -480,5 +499,80 @@ func TestGroupProjectsOfAScan(t *testing.T) {
 	got := GroupProjects(f.scan(t))
 	if len(got) != 2 || got[0].Label != filepath.Join("group", "sub") || got[1].Label != "plain" || got[1].Git != cleanup.GitNone {
 		t.Errorf("projects %+v", got)
+	}
+}
+
+// TestSymlinkedRootFindsTheRepository: a project root that is a symlink into the middle of a repository still finds that repository's .git, so a dirty project behind the link is held instead of being taken as in no repository, and git is asked about the real paths.
+func TestSymlinkedRootFindsTheRepository(t *testing.T) {
+	f := newFixture(t, "darwin", nil)
+	mono := filepath.Join(f.home, "repos", "mono")
+	if err := os.MkdirAll(filepath.Join(mono, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mono, "packages/app/package.json", 10)
+	writeFile(t, mono, "packages/app/node_modules/dep/index.js", 4000)
+	age(t, filepath.Join(mono, "packages", "app"), 90*24*time.Hour)
+	link := filepath.Join(f.home, "pkgs")
+	if err := os.Symlink(filepath.Join(mono, "packages"), link); err != nil {
+		t.Fatal(err)
+	}
+	g := newFakeGit()
+	g.set("app", gitstate.Result{State: cleanup.GitDirty}, nil)
+	f.opts.Git = g.check
+	f.cfg.DevProjectRoots = []string{link}
+	res := f.scan(t)
+	it := itemOf(t, res, "artifact-node-modules", "app")
+	if it.Git != cleanup.GitDirty || it.Hold != "项目有未提交的改动" || it.Selected {
+		t.Errorf("project behind a symlinked root: git %q hold %q selected %v", it.Git, it.Hold, it.Selected)
+	}
+	if it.Project != filepath.Join(link, "app") {
+		t.Errorf("project %q, want the path as configured", it.Project)
+	}
+	realMono := realPath(t, mono)
+	if g.repos["app"] != realMono {
+		t.Errorf("repo %q, want %q", g.repos["app"], realMono)
+	}
+	if arts := g.arts["app"]; len(arts) != 1 || arts[0].Path != filepath.Join(realMono, "packages", "app", "node_modules") {
+		t.Errorf("artifacts %+v", arts)
+	}
+	// A project folder that cannot be resolved is in doubt, never "not a repository".
+	if got := askGit(context.Background(), g.check, filepath.Join(link, "gone"), nil, slog.New(slog.DiscardHandler)); got.State != cleanup.GitUnknown {
+		t.Errorf("unresolvable project: %+v", got)
+	}
+}
+
+// TestCleanRechecksAfterARescan: a scan that finishes during a clean and no longer lists a build output folder (here refused by the read gate) does not make the clean skip that folder's git re-check.
+func TestCleanRechecksAfterARescan(t *testing.T) {
+	f := newFixture(t, "darwin", nil)
+	ws := filepath.Join(f.home, "Workspace")
+	gitProjects(t, ws, "web")
+	var hide atomic.Bool
+	f.opts.MayRead = func(p string) bool { return !hide.Load() || p != filepath.Join(ws, "web") }
+	g := newFakeGit()
+	g.set("web", gitstate.Result{State: cleanup.GitClean}, nil)
+	f.opts.Git = g.check
+	f.cfg.DevProjectRoots = []string{ws}
+	res := f.scan(t)
+	it := itemOf(t, res, "artifact-node-modules", "web")
+	c := f.cleaner
+	var once sync.Once
+	out, err := c.Clean(context.Background(), cleanup.CleanRequest{CategoryIDs: []string{"artifact-node-modules"}, ItemIDs: []string{it.ID}}, func(cleanup.Progress) {
+		once.Do(func() {
+			hide.Store(true)
+			again, err := c.Scan(context.Background(), nil)
+			if err != nil {
+				t.Errorf("scan during the clean: %v", err)
+			}
+			if categoryByID(again, "artifact-node-modules") != nil {
+				t.Errorf("the second scan still lists the build output")
+			}
+			g.set("web", gitstate.Result{State: cleanup.GitDirty}, nil)
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Failed) != 1 || out.Failed[0].Reason != "项目有未提交的改动，已跳过" || !exists(it.Path) {
+		t.Errorf("clean after a rescan: %+v, exists %v", out, exists(it.Path))
 	}
 }

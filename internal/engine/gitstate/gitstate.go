@@ -48,7 +48,7 @@ type Result struct {
 	Tracked bool
 }
 
-// RepoOf walks up from project to the root of its volume (the first ancestor whose device number differs, or "/") looking for a ".git" folder or file, with os.Lstat only; found false means not a repository, and git is not run. It does not stop at the configured project root, which may itself be inside a repository. A .git that cannot be looked at (anything but "does not exist") counts as found, so a doubt never makes a project "not a repository".
+// RepoOf walks up from project to the root of its volume (the first ancestor whose device number differs, or "/") looking for a ".git" folder or file, with os.Lstat only; found false means not a repository, and git is not run. It does not stop at the configured project root, which may itself be inside a repository. A .git that cannot be looked at (anything but "does not exist") counts as found, so a doubt never makes a project "not a repository". The walk goes up the path as written, so project must have its symlinks resolved (filepath.EvalSymlinks): through a link into the middle of a repository the walk would never reach its .git.
 func RepoOf(project string) (repo string, found bool) {
 	p := filepath.Clean(project)
 	var dev uint64
@@ -75,7 +75,7 @@ func RepoOf(project string) (repo string, found bool) {
 	}
 }
 
-// Check runs git for project inside repo: once status limited to the project folder, and once ls-files over the artifacts. Once a .git was found, every failure is GitUnknown, never GitNone; the error says why, for the log.
+// Check runs git for project inside repo: once status limited to the project folder, and once ls-files over the artifacts. Once a .git was found, every failure is GitUnknown, never GitNone; the error says why, for the log. repo, project and the artifacts' paths must have their symlinks resolved, as git writes paths relative to the real top level. It reads the folders between the project and a generated artifact deeper than one level (wrappers).
 func (c Checker) Check(ctx context.Context, repo, project string, artifacts []Artifact) (Result, error) {
 	unknown := Result{State: cleanup.GitUnknown}
 	if c.Git == "" || c.Runner == nil {
@@ -95,6 +95,14 @@ func (c Checker) Check(ctx context.Context, repo, project string, artifacts []Ar
 			return unknown, err
 		}
 		ignore = append(ignore, rel)
+		// git shows a wholly untracked folder as that folder alone, so an untracked .angular holding only cache appears as ".angular/"; a folder between the project and the artifact that holds nothing but the way to it is generated content too.
+		for _, dir := range wrappers(project, a.Path) {
+			rel, err := relSlash(repo, dir)
+			if err != nil {
+				return unknown, err
+			}
+			ignore = append(ignore, rel)
+		}
 	}
 	out, err := c.run(ctx, project, "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=dirty", "--", ".")
 	if err != nil {
@@ -144,6 +152,24 @@ func (c Checker) run(ctx context.Context, dir string, args ...string) ([]byte, e
 	return out.Stdout, err
 }
 
+// wrappers are the folders between project and the artifact at path, from the artifact's parent upwards, while each holds nothing but the next folder on the way to the artifact; a folder that cannot be read, or holds anything else, ends the list.
+func wrappers(project, path string) []string {
+	var out []string
+	child := path
+	for dir := filepath.Dir(path); dir != project && dir != child; dir = filepath.Dir(dir) {
+		if rel, err := filepath.Rel(project, dir); err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			break
+		}
+		des, err := os.ReadDir(dir)
+		if err != nil || len(des) != 1 || des[0].Name() != filepath.Base(child) {
+			break
+		}
+		out = append(out, dir)
+		child = dir
+	}
+	return out
+}
+
 // relSlash is path relative to base with forward slashes, as git writes paths; "" for base itself.
 func relSlash(base, path string) (string, error) {
 	rel, err := filepath.Rel(base, path)
@@ -159,7 +185,7 @@ func relSlash(base, path string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
-// parseStatusZ counts the records of `git status --porcelain=v1 -z` (paths relative to the repository root) not under ignore; a rename or copy record's extra NUL field is skipped; whole reports whether the only record is the untracked project folder itself or one of its ancestors. project is the project folder relative to the repository root, "" for the root itself. Pure.
+// parseStatusZ counts the records of `git status --porcelain=v1 -z` (paths relative to the repository root) except untracked ones under ignore; a rename or copy record's extra NUL field is skipped; whole reports whether the only record is the untracked project folder itself or one of its ancestors. project is the project folder relative to the repository root, "" for the root itself. Pure.
 func parseStatusZ(out []byte, ignore []string, project string) (count int, whole bool) {
 	fields := strings.Split(string(out), "\x00")
 	records := 0
@@ -177,7 +203,8 @@ func parseStatusZ(out []byte, ignore []string, project string) (count int, whole
 		if records == 1 {
 			only = rec
 		}
-		if !under(path, ignore) {
+		// Only untracked entries inside generated output are ignored; a staged or tracked change there (git rm -r --cached node_modules) still counts.
+		if untracked := x == '?' && y == '?'; !untracked || !under(path, ignore) {
 			count++
 		}
 	}

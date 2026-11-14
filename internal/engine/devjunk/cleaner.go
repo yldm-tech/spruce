@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,6 +200,8 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 			files.Categories = append(files.Categories, cat)
 		}
 	}
+	// The deleter learns the build output before the Executor can plan a clean of it, so the git re-check never misses an item.
+	c.del.set(b.projects, b.artifacts, git)
 	if err := c.exec.Remember(files); err != nil {
 		return cleanup.ScanResult{}, err
 	}
@@ -209,7 +212,6 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 			snap.items[it.ID] = cat.ID
 		}
 	}
-	c.del.set(b.projects, b.artifacts, git)
 	c.mu.Lock()
 	c.last = snap
 	c.mu.Unlock()
@@ -596,18 +598,38 @@ func (c *Cleaner) gitStates(ctx context.Context, git func(context.Context, strin
 	return out
 }
 
-// askGit is what git says about project: GitNone when no .git lies above it, otherwise git's answer, and GitUnknown when git fails or git is nil.
+// askGit is what git says about project: GitNone when no .git lies above it, otherwise git's answer, and GitUnknown when git fails or git is nil. It resolves the project's symlinks first, since a project reached through a link into the middle of a repository only finds that repository's .git from its real path; when that fails the project counts as being in a repository.
 func askGit(ctx context.Context, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error), project string, arts []gitstate.Artifact, log *slog.Logger) gitstate.Result {
-	repo, found := gitstate.RepoOf(project)
+	unknown := gitstate.Result{State: cleanup.GitUnknown}
+	real, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		log.Debug("resolve a project folder", "project", project, "err", err)
+		return unknown
+	}
+	repo, found := gitstate.RepoOf(real)
 	if !found {
 		return gitstate.Result{State: cleanup.GitNone}
 	}
 	if git == nil {
-		return gitstate.Result{State: cleanup.GitUnknown}
+		return unknown
 	}
-	res, err := git(ctx, repo, project, arts)
+	// git answers about real paths, so the artifacts move along with the project.
+	realArts := make([]gitstate.Artifact, 0, len(arts))
+	for _, a := range arts {
+		rel, err := filepath.Rel(project, a.Path)
+		if err != nil {
+			log.Debug("build output outside its project", "project", project, "path", a.Path, "err", err)
+			return unknown
+		}
+		realArts = append(realArts, gitstate.Artifact{Path: filepath.Join(real, rel), Generated: a.Generated})
+	}
+	res, err := git(ctx, repo, real, realArts)
 	if err != nil {
 		log.Debug("git state of a project", "project", project, "err", err)
+		// A failed check is never clean; a known reason to hold (dirty, tracked) still holds.
+		if res.State != cleanup.GitDirty {
+			res.State = cleanup.GitUnknown
+		}
 	}
 	if res.State == "" || res.State == cleanup.GitNone {
 		// git ran because a .git was found: whatever it answered, the project is in a repository.
@@ -671,10 +693,28 @@ type scopedDeleter struct {
 	checked map[string]gitstate.Result
 }
 
+// set adds what a scan found. Build output is added to what earlier scans found, never replaced: a clean works from the Executor's copy of a scan, which a scan finishing during the clean may no longer list (now excluded, refused by the read gate, measured empty), and every build output folder a clean can name must still be found here, or its git re-check would be skipped. A path keeps the project of the latest scan that found it; a project's build output only grows, so the re-check's ls-files covers every folder a clean may take.
 func (d *scopedDeleter) set(roots map[string]string, arts map[string][]gitstate.Artifact, git func(context.Context, string, string, []gitstate.Artifact) (gitstate.Result, error)) {
 	d.mu.Lock()
-	d.roots, d.arts, d.git = roots, arts, git
-	d.mu.Unlock()
+	defer d.mu.Unlock()
+	if d.roots == nil {
+		d.roots = map[string]string{}
+	}
+	if d.arts == nil {
+		d.arts = map[string][]gitstate.Artifact{}
+	}
+	maps.Copy(d.roots, roots)
+	for project, list := range arts {
+		// Clip so a reader holding the old slice never sees it change.
+		merged := slices.Clip(d.arts[project])
+		for _, a := range list {
+			if !slices.ContainsFunc(merged, func(m gitstate.Artifact) bool { return m.Path == a.Path }) {
+				merged = append(merged, a)
+			}
+		}
+		d.arts[project] = merged
+	}
+	d.git = git
 }
 
 // setMode starts a clean in mode, forgetting what git said during the last one.

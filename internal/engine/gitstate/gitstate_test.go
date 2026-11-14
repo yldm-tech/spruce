@@ -61,6 +61,8 @@ func TestParseStatusZ(t *testing.T) {
 		{"copy skips its source", "C  web/c.go\x00web/a.go\x00", nil, "web", 1, false},
 		{"untracked in generated output does not count", "?? web/node_modules/\x00?? web/.next/cache/x\x00", []string{"web/node_modules", "web/.next"}, "web", 0, false},
 		{"untracked in bin counts", "?? web/bin/x.dll\x00", []string{"web/node_modules"}, "web", 1, false},
+		{"staged deletion in generated output counts", "D  web/node_modules/a.js\x00?? web/node_modules/\x00", []string{"web/node_modules"}, "web", 1, false},
+		{"tracked change in generated output counts", " M web/node_modules/a.js\x00", []string{"web/node_modules"}, "web", 1, false},
 		{"ignore is a folder, not a prefix", "?? web/node_modules2/x\x00", []string{"web/node_modules"}, "web", 1, false},
 		{"whole project untracked", "?? web/\x00", nil, "web", 1, true},
 		{"an ancestor untracked", "?? Workspace/\x00", nil, "Workspace/web", 1, true},
@@ -216,5 +218,48 @@ func TestCheckCommandSetup(t *testing.T) {
 	f.On(git, statusArgs(project)...).Return("", 0)
 	if got, err := (Checker{Runner: f, Git: git, Timeout: 3}).Check(context.Background(), repo, project, nil); err != nil || got.State != cleanup.GitClean || len(f.Calls()) != 1 || f.Calls()[0].Timeout != 3 {
 		t.Errorf("without artifacts: %+v %v %v", got, err, f.Calls())
+	}
+}
+
+// TestCheckGeneratedWrappers: git shows a wholly untracked .angular as ".angular/"; holding only cache it is generated content, holding anything else it counts.
+func TestCheckGeneratedWrappers(t *testing.T) {
+	repo := t.TempDir()
+	mkdir(t, repo, ".git")
+	project := mkdir(t, repo, "web")
+	cache := mkdir(t, project, ".angular", "cache")
+	write(t, filepath.Join(cache, "x"), "1")
+	arts := []Artifact{{Path: cache, Generated: true}}
+	check := func() Result {
+		t.Helper()
+		f := execxtest.New()
+		f.On(git, statusArgs(project)...).Return("?? web/.angular/\x00", 0)
+		f.On(git, lsArgs(project, ".angular/cache")...).Return("", 0)
+		got, err := Checker{Runner: f, Git: git}.Check(context.Background(), repo, project, arts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := check(); got.State != cleanup.GitClean {
+		t.Errorf(".angular holding only cache: %+v", got)
+	}
+	write(t, filepath.Join(project, ".angular", "notes.txt"), "mine")
+	if got := check(); got.State != cleanup.GitDirty {
+		t.Errorf(".angular holding a file of its own: %+v", got)
+	}
+}
+
+// TestCheckStagedDeletionInGeneratedOutput: node_modules removed from the index but not yet committed is an uncommitted change, though ls-files no longer lists it.
+func TestCheckStagedDeletionInGeneratedOutput(t *testing.T) {
+	repo := t.TempDir()
+	mkdir(t, repo, ".git")
+	project := mkdir(t, repo, "web")
+	nm := filepath.Join(project, "node_modules")
+	f := execxtest.New()
+	f.On(git, statusArgs(project)...).Return("D  web/node_modules/a.js\x00?? web/node_modules/\x00", 0)
+	f.On(git, lsArgs(project, "node_modules")...).Return("", 0)
+	got, err := Checker{Runner: f, Git: git}.Check(context.Background(), repo, project, []Artifact{{Path: nm, Generated: true}})
+	if err != nil || got.State != cleanup.GitDirty || got.Tracked {
+		t.Errorf("staged deletion: %+v, %v", got, err)
 	}
 }
