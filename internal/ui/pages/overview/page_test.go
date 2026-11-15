@@ -151,13 +151,6 @@ func open(t *testing.T, st app.OverviewState) *page {
 	return start(t, newFakes(t), storefake.NewOverview(st))
 }
 
-// text waits for selector and returns its text.
-func (p *page) text(selector string) string {
-	p.tb.Helper()
-	p.WaitFor(selector, wait)
-	return p.Find(selector).Text
-}
-
 // waitText waits until selector shows want.
 func (p *page) waitText(selector, want string) {
 	p.tb.Helper()
