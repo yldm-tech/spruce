@@ -684,17 +684,17 @@ func (o *Overview) snapshot(run context.Context, s settings.AppSettings) {
 	}
 }
 
-// summary posts the weekly summary of the automatic rules (macOS): on the first turn after Monday 10:00, at least a week after the last one, when the rules moved anything over the past week less what was put back.
+// summary posts the weekly summary of the automatic rules (macOS) on the first turn after Monday 10:00: what they moved to the Trash in the week up to that Monday 10:00, less what was put back, when that is anything. LastSummary records the Monday 10:00 of the last week summed up, so each week is summed up once, also when Spruce was not running on the Monday.
 func (o *Overview) summary(s settings.AppSettings) {
 	if o.cfg.GOOS != "darwin" || !s.Automation.WeeklySummary || o.cfg.History == nil {
 		return
 	}
 	now := o.now()
+	monday := lastMonday10(now)
 	o.mu.Lock()
 	last := o.state.LastSummary
 	o.mu.Unlock()
-	monday := lastMonday10(now)
-	if !last.IsZero() && (!last.Before(monday) || now.Sub(last) < summaryWeek) {
+	if !last.IsZero() && !last.Before(monday) && !last.After(now) {
 		return
 	}
 	runs, err := o.cfg.History.List(0)
@@ -702,9 +702,9 @@ func (o *Overview) summary(s settings.AppSettings) {
 		o.log.Warn("read history for the weekly summary", "err", err)
 		return
 	}
-	sum := rules.Summarize(runs, now.Add(-summaryWeek), now)
+	sum := rules.Summarize(runs, monday.Add(-summaryWeek), monday)
 	o.mu.Lock()
-	o.state.LastSummary = now
+	o.state.LastSummary = monday
 	st := o.state
 	if sum.Trashed > 0 {
 		year, week := now.ISOWeek()
