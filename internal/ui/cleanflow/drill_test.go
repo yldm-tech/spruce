@@ -94,6 +94,12 @@ type page struct {
 // start opens 系统垃圾 as a DrillPage on the controller state st.
 func start(t *testing.T, st app.OverviewState, before ...func(*nav.Navigator)) *page {
 	t.Helper()
+	return startSized(t, st, nsgotest.Size(1052, 1200), before...)
+}
+
+// startSized is start in a window of size.
+func startSized(t *testing.T, st app.OverviewState, size nsgotest.Option, before ...func(*nav.Navigator)) *page {
+	t.Helper()
 	macWording(t)
 	fakes := storefake.New(t.TempDir())
 	ov := storefake.NewOverview(st)
@@ -111,7 +117,7 @@ func start(t *testing.T, st app.OverviewState, before ...func(*nav.Navigator)) *
 			return cleanflow.DrillPage{Route: nav.SystemJunk, Toast: toastOf, Notice: func() string { return "检查应用缓存和日志" }, ListLabel: "可以清理的系统垃圾",
 				SizeLabel: "可释放", EmptyTitle: "没有找到系统垃圾", EmptyDescription: "很干净", Reveal: p.files.Reveal}
 		}}
-	}, nsgotest.Size(1052, 1200))
+	}, size)
 	p.WaitUntil(wait, func() bool {
 		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State())
 	})
@@ -477,11 +483,28 @@ func TestBusyElsewhere(t *testing.T) {
 
 // Nothing of the source: the empty state; a failed source and unreadable places are told.
 func TestEmptyFailedAndDenied(t *testing.T) {
+	p := start(t, stateOf(other()))
+	p.Find("id:drill-empty >> text:没有找到系统垃圾")
+
+	// A failed source found nothing because it was not read: no clean empty state under its notice, and 重新检查 checks again.
 	st := stateOf(other())
 	st.Result.Scan.Sources = []cleanup.SourceState{{ID: "system-junk", Status: cleanup.SourceFailed, Error: "读取超时"}}
-	p := start(t, st)
-	p.Find("id:drill-empty >> text:没有找到系统垃圾")
+	p.set(st)
 	p.waitText("id:source-failed-system-junk", "系统垃圾没能检查完成：读取超时")
+	p.WaitFor("id:drill-failed >> text:暂时没有结果", wait)
+	if p.Exists("id:drill-empty") || p.Exists("text:没有找到系统垃圾") {
+		t.Error("the clean empty state shows under the failure")
+	}
+	p.Press("id:drill-retry")
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	// While the result may not be acted on, the status row offers 重新检查 and the empty state does not repeat it.
+	stale := stateOf(other())
+	stale.Result.Scan.Sources = st.Result.Scan.Sources
+	stale.Result.Actionable = false
+	p.set(stale)
+	p.WaitForGone("id:drill-retry", wait)
+	p.Find("id:drill-recheck")
+	p.Find("id:drill-failed")
 
 	denied := ready()
 	denied.Result.Scan.Sources[0].Denied = 2
@@ -498,6 +521,151 @@ func TestOpenedOnACategory(t *testing.T) {
 	p.WaitFor("id:items-system-junk:logs", wait)
 	if p.Exists("id:items-system-junk:caches") {
 		t.Error("another category opened")
+	}
+}
+
+// many are n 系统垃圾 categories of one checked item each, enough to start below the fold of a short window.
+func many(n int) []cleanup.Category {
+	cats := make([]cleanup.Category, n)
+	for i := range cats {
+		id := fmt.Sprintf("system-junk:c%02d", i)
+		cats[i] = cleanup.Category{ID: id, Source: "system-junk", Title: fmt.Sprintf("缓存 %02d", i), Icon: "cache", Kind: cleanup.KindCache,
+			Deletion: cleanup.DeleteTrash, Selected: true, Size: int64(1000 + i), Items: []cleanup.Item{
+				{ID: fmt.Sprintf("i%02d", i), Path: fmt.Sprintf("/Users/me/Library/Caches/c%02d", i), Size: int64(1000 + i), ModTime: modTime, Selected: true}}}
+	}
+	return cats
+}
+
+// GoDrill on a category below the fold scrolls the page to it; opened without one, the page stays at its top.
+func TestOpenedOnACategoryScrollsToIt(t *testing.T) {
+	const last = "system-junk:c19"
+	p := startSized(t, stateOf(many(20)...), nsgotest.Size(1052, 600), func(n *nav.Navigator) { n.GoDrill(nav.SystemJunk, last) })
+	p.WaitFor("id:items-"+last, wait)
+	p.WaitUntil(wait, func() bool { return p.Find("id:drill-system-junk").Offset.Y > 0 })
+	page, cat := p.Find("id:drill-system-junk"), p.Find("id:category-"+last)
+	if top := inPage(page, cat) - float32(page.Offset.Y); top < 0 || top > float32(page.Frame.Size.Height) {
+		t.Errorf("the category is at %v of a page %v tall, scrolled %v", top, page.Frame.Size.Height, page.Offset.Y)
+	}
+
+	q := startSized(t, stateOf(many(20)...), nsgotest.Size(1052, 600))
+	q.Settle()
+	if y := q.Find("id:drill-system-junk").Offset.Y; y != 0 {
+		t.Errorf("scrolled %v without a category to reveal", y)
+	}
+}
+
+// inPage is where v starts in the content of page, an ancestor of it.
+func inPage(page, v *nsgotest.View) float32 {
+	var y float32
+	for ; v != nil && v != page; v = v.Parent {
+		y += float32(v.Frame.Origin.Y)
+		if v.Parent != page && v.Parent != nil {
+			y -= float32(v.Parent.Offset.Y)
+		}
+	}
+	return y
+}
+
+// trash is the Trash as the check measured it: one item, deleted for good, unchecked.
+func trash() cleanup.Category {
+	return cleanup.Category{ID: "system-junk:trash", Source: "system-junk", Title: "废纸篓", Description: "废纸篓里的全部项目", Icon: "trash", Kind: cleanup.KindTrash,
+		Deletion: cleanup.DeletePermanent, Warning: "清空后无法恢复，默认不选", Size: 1_000_000, Items: []cleanup.Item{
+			{ID: "t", Path: "/Users/me/.Trash", Size: 1_000_000, ModTime: modTime, Dir: true, Note: "共 3 项"}}}
+}
+
+// Emptying the Trash waits while the toast offers 撤销, which it would destroy, and asks with the Trash measured now: the check's size is older than the moves since.
+func TestEmptyingTheTrash(t *testing.T) {
+	p := start(t, stateOf(append(junk(), trash())...))
+	p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour})
+	p.Press("id:select-none")
+	p.Press("id:check-system-junk:trash")
+	p.WaitUntil(wait, func() bool { return !p.Enabled("id:clean") })
+	if got := p.Find("id:drill-trash-wait").Text; got != "请等撤销提示消失后再清空废纸篓" {
+		t.Errorf("wait %q", got)
+	}
+	// Anything but the Trash may still be cleaned while 撤销 shows.
+	p.Press("id:check-system-junk:trash")
+	p.Press("id:check-system-junk:downloads")
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
+	if p.Exists("id:drill-trash-wait") {
+		t.Error("the wait shows without the Trash checked")
+	}
+	p.Press("id:check-system-junk:downloads")
+	p.Press("id:check-system-junk:trash")
+	p.WaitUntil(wait, func() bool { return !p.Enabled("id:clean") })
+
+	p.stores.Toasts.Dismiss()
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
+	p.WaitForGone("id:drill-trash-wait", wait)
+	p.ov.TrashInfoValue = app.TrashInfo{Items: 42, Bytes: 5_000_000, Restorable: 3}
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:confirm-trash").Text; got != "废纸篓里的 42 项（5 MB）会永久删除，无法恢复。其中 3 项是 Spruce 移到废纸篓的，清空后不能再放回原处。" {
+		t.Errorf("trash line %q", got)
+	}
+	if got := p.Find("id:plan-message").Text; got != "将清理 1 项，共 5 MB。删除后无法恢复。" {
+		t.Errorf("message %q", got)
+	}
+	p.Find("id:plan-permanent-0 >> text:1 项 · 5 MB")
+	p.Press("id:confirm-cancel")
+	p.WaitForGone("id:confirm", wait)
+
+	// Unmeasured, the question says the whole Trash goes.
+	p.ov.TrashErr = errors.New("没有权限")
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:confirm-trash").Text; got != "废纸篓里的全部项目会永久删除，无法恢复。" {
+		t.Errorf("trash line %q", got)
+	}
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := cleanup.CleanRequest{CategoryIDs: []string{"system-junk:trash"}, ItemIDs: []string{"t"}}
+	if got := p.cleans()[0].Req; !reflect.DeepEqual(got, want) {
+		t.Errorf("request %+v", got)
+	}
+}
+
+// While the shell's toast shows at the bottom of the page area (24 points up, at least 44 tall), 清理 stands above it, and comes back down once it goes.
+func TestActionBarRisesOverTheToast(t *testing.T) {
+	p := start(t, ready())
+	bottom := func() float32 {
+		v := p.Find("id:clean")
+		y := float32(v.Frame.Size.Height)
+		for ; v != nil; v = v.Parent {
+			y += float32(v.Frame.Origin.Y)
+			if v.Props.TestID == "drill-system-junk" {
+				y -= float32(v.Offset.Y)
+			}
+		}
+		return y
+	}
+	without := bottom()
+	p.Post(func() { p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour}) })
+	p.Settle()
+	if got := bottom(); got > 1200-24-44-12 || got >= without {
+		t.Errorf("清理 ends at %v with the toast, %v without it", got, without)
+	}
+	p.Post(p.stores.Toasts.Dismiss)
+	p.Settle()
+	if got := bottom(); got != without {
+		t.Errorf("清理 ends at %v after the toast, %v before it", got, without)
+	}
+}
+
+// A 撤销 toast that comes while the question is open keeps the confirmed clean from emptying the Trash.
+func TestEmptyingTheTrashRefusedUnderUndo(t *testing.T) {
+	p := start(t, stateOf(append(junk(), trash())...))
+	p.Press("id:select-none")
+	p.Press("id:check-system-junk:trash")
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour})
+	p.WaitFor("id:drill-trash-wait", wait)
+	p.Press("id:confirm-ok")
+	p.WaitForGone("id:confirm", wait)
+	p.Settle()
+	if len(p.cleans()) != 0 {
+		t.Error("emptied the Trash while 撤销 shows")
 	}
 }
 

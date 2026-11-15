@@ -30,14 +30,14 @@ func projectsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
 	none := core.NewMemo(cx, func() bool { return len(projects.Get()) == 0 })
 	return core.Dynamic(func(*core.Scope) core.Node {
 		if none.Get() {
-			return core.Func(func(cx *core.Scope) core.Node { return noProjects(cx, set) })
+			return core.Func(func(cx *core.Scope) core.Node { return noProjects(cx, d, set) })
 		}
 		return core.Func(func(cx *core.Scope) core.Node { return projectList(cx, d, set, projects.Get, artifacts.Get, rev) })
 	})
 }
 
-// noProjects is the 项目 tab without projects: no project folder set (with the way to 设置), or none found in them.
-func noProjects(cx *core.Scope, set *store.Settings) core.Node {
+// noProjects is the 项目 tab without projects: no project folder set (with the way to 设置), the check of the source failed, or none found in them.
+func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.Node {
 	noRoots := func() bool { return set.Loaded() && len(set.Value().Cleanup.DevProjectRoots) == 0 }
 	text := func(s func() string, testID string) core.Text {
 		return core.Text{ContentFunc: s, TestID: testID, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
@@ -56,6 +56,9 @@ func noProjects(cx *core.Scope, set *store.Settings) core.Node {
 					}},
 				}}
 			})
+		}
+		if d.Failed() {
+			return core.Func(func(*core.Scope) core.Node { return cleanflow.DrillFailed(d) })
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return core.View{Style: box, Children: []core.Node{

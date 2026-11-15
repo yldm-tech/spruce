@@ -36,8 +36,13 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 	meta := p.Route.Meta()
 	has := func() bool { return d.Result() != nil }
 	empty := core.NewMemo(cx, func() bool { return len(d.Categories()) == 0 })
+	failed := core.NewMemo(cx, d.Failed)
 	body := core.Show{When: has, Then: func(*core.Scope) core.Node {
 		return core.Dynamic(func(*core.Scope) core.Node {
+			if empty.Get() && failed.Get() {
+				// A source that failed found nothing because it was not read; its notice says so, and the clean empty state would say the opposite.
+				return core.Func(func(*core.Scope) core.Node { return DrillFailed(d) })
+			}
 			if empty.Get() {
 				def := kit.EmptyState{Title: p.EmptyTitle, Description: p.EmptyDescription, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty"}
 				if p.Empty == nil {
@@ -86,10 +91,34 @@ func DeniedText(denied int64) string {
 	return "有 " + strconv.FormatInt(denied, 10) + " 个位置没有读取权限，结果可能不完整"
 }
 
-// DrillBar is a drill-down view's action bar: the two figures beside 清理, which is disabled while count is 0 or CanClean says no.
+// toastClearance is what the shell's toast takes at the bottom of the page area while it shows: 24 points below it, at least 44 for itself and 12 to the action bar, less the page's own bottom padding (24); as 空间透视's action bar does.
+const toastClearance = 24 + 44 + 12 - 24
+
+// DrillBar is a drill-down view's action bar: the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait). While the shell's toast shows, the bar rises above it, so the toast never covers 清理 or that line.
 func DrillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref *core.Ref) core.Node {
-	return kit.ActionBar{Start: start, End: end,
-		Button: kit.ActionButton{Label: "清理", OnPress: clean, Ref: ref, TestID: "clean", Disabled: func() bool { return !d.CanClean(count()) }}}
+	return core.View{TestID: "drill-action-bar", StyleFunc: func() core.Style {
+		var bottom core.Points
+		if d.stores.Toasts.Current() != nil {
+			bottom = toastClearance
+		}
+		return core.Style{AutoMargin: core.SideTop, FlexShrink: 0, Padding: core.Edges{Bottom: bottom}}
+	}, Children: []core.Node{
+		core.Show{When: d.TrashWait, Then: func(*core.Scope) core.Node {
+			return core.Text{Content: "请等撤销提示消失后再清空" + format.TrashName(), TestID: "drill-trash-wait", Style: core.Style{FontFamily: kit.FontSans,
+				FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, TextAlign: core.TextAlignCenter}}
+		}},
+		kit.ActionBar{Start: start, End: end,
+			Button: kit.ActionButton{Label: "清理", OnPress: clean, Ref: ref, TestID: "clean", Disabled: func() bool { return !d.CanClean(count()) }}},
+	}}
+}
+
+// DrillFailed is the view of a source that failed and found nothing, under its notice (DrillNotices): no result yet, with 重新检查 unless the status row above already offers it.
+func DrillFailed(d *Drill) kit.EmptyState {
+	meta := nav.Route(d.Source).Meta()
+	retry := core.Show{When: func() bool { return d.Actionable() && !d.Checking() }, Then: func(*core.Scope) core.Node {
+		return kit.Button{Text: "重新检查", Variant: kit.ButtonGhost, TestID: "drill-retry", OnPress: d.CheckNow, Disabled: d.Busy}
+	}}
+	return kit.EmptyState{Title: "暂时没有结果", Description: "重新检查后再来看看。", Tone: meta.Tone, Glyph: meta.Glyph, Action: retry, TestID: "drill-failed"}
 }
 
 // StaleText is why a drill-down view may not clean now while no check runs: the refused check, the failed one, no result yet, or a result to check again.

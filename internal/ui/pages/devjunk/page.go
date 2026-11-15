@@ -61,9 +61,13 @@ func firstTab(n *nav.Navigator, reveal string) nav.DevTab {
 func toolsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
 	tools := core.NewMemoFunc(cx, func() []cleanup.Category { t, _ := SplitGroups(d.Categories()); return t }, nil)
 	empty := core.NewMemo(cx, func() bool { return len(tools.Get()) == 0 })
+	failed := core.NewMemo(cx, d.Failed)
 	cleanRef := new(core.Ref)
 	meta := nav.DevJunk.Meta()
 	return core.Dynamic(func(*core.Scope) core.Node {
+		if empty.Get() && failed.Get() {
+			return core.Func(func(*core.Scope) core.Node { return cleanflow.DrillFailed(d) })
+		}
 		if empty.Get() {
 			return core.Func(func(*core.Scope) core.Node {
 				return kit.EmptyState{Title: "没有找到开发工具的缓存", Description: "开发工具的缓存都已经很干净了。", Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty"}

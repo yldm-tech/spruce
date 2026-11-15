@@ -1,6 +1,7 @@
 package devjunk_test
 
 import (
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -86,6 +87,12 @@ type page struct {
 // start opens 开发者 on st with the project folders roots.
 func start(t *testing.T, st app.OverviewState, roots []string, before ...func(*nav.Navigator)) *page {
 	t.Helper()
+	return startSized(t, st, roots, nsgotest.Size(1052, 1200), before...)
+}
+
+// startSized is start in a window of size.
+func startSized(t *testing.T, st app.OverviewState, roots []string, size nsgotest.Option, before ...func(*nav.Navigator)) *page {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("expectations use the macOS wording and SI sizes")
 	}
@@ -110,7 +117,7 @@ func start(t *testing.T, st app.OverviewState, roots []string, before ...func(*n
 			}
 			return core.Func(devjunk.Page)
 		})
-	}, nsgotest.Size(1052, 1200))
+	}, size)
 	p.WaitUntil(wait, func() bool {
 		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State())
 	})
@@ -317,6 +324,49 @@ func TestLinksOpenTheirTab(t *testing.T) {
 	r.WaitFor("id:projects", wait)
 	r.Press("id:back")
 	r.WaitUntil(wait, func() bool { return r.nav.Current() == nav.Overview })
+}
+
+// GoDrill on a tool's category below the fold opens 工具缓存 scrolled to it.
+func TestOpenedOnAToolScrollsToIt(t *testing.T) {
+	cats := make([]cleanup.Category, 16)
+	for i := range cats {
+		path := fmt.Sprintf("/Users/me/.cache/tool-%02d", i)
+		cats[i] = cleanup.Category{ID: fmt.Sprintf("dev-junk:tool-t%02d", i), Source: "dev-junk", Title: fmt.Sprintf("工具 %02d", i), Icon: "build",
+			Kind: cleanup.KindDevCache, Deletion: cleanup.DeleteTrash, Items: []cleanup.Item{{ID: id(path), Path: path, Size: int64(100 + i), ModTime: now, Dir: true}}}
+	}
+	const last = "dev-junk:tool-t15"
+	p := startSized(t, stateOf(cats...), roots, nsgotest.Size(1052, 600), func(n *nav.Navigator) { n.GoDrill(nav.DevJunk, last) })
+	p.WaitFor("id:items-"+last, wait)
+	p.WaitUntil(wait, func() bool { return p.Find("id:drill-dev-junk").Offset.Y > 0 })
+	page := p.Find("id:drill-dev-junk")
+	var y float32
+	for v := p.Find("id:category-" + last); v != nil && v != page; v = v.Parent {
+		y += float32(v.Frame.Origin.Y)
+	}
+	if top := y - float32(page.Offset.Y); top < 0 || top > float32(page.Frame.Size.Height) {
+		t.Errorf("the category is at %v of a page %v tall, scrolled %v", top, page.Frame.Size.Height, page.Offset.Y)
+	}
+}
+
+// A failed check of the source found nothing because it read nothing: neither tab says it is clean, and 重新检查 checks again.
+func TestFailedSource(t *testing.T) {
+	st := stateOf()
+	st.Result.Scan.Sources = []cleanup.SourceState{{ID: "dev-junk", Status: cleanup.SourceFailed, Error: "读取超时"}}
+	p := start(t, st, roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	if got := p.Find("id:source-failed-dev-junk").Text; got != "开发者没能检查完成：读取超时" {
+		t.Errorf("failed %q", got)
+	}
+	p.Find("id:drill-failed >> text:暂时没有结果")
+	if p.Exists("id:projects-empty") {
+		t.Error("项目 says nothing was found")
+	}
+	p.Press("id:tab-tools")
+	p.WaitFor("id:drill-failed", wait)
+	if p.Exists("id:drill-empty") {
+		t.Error("工具缓存 says the caches are clean")
+	}
+	p.Press("id:drill-retry")
+	p.WaitUntil(wait, func() bool { c, _, _, _, _ := p.ov.Calls(); return c == 1 })
 }
 
 // Without projects: no project folder set leads to 设置; folders set but nothing found says so; no tool caches is the empty state.
