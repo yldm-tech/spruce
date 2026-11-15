@@ -50,4 +50,11 @@ type Deps struct {
 	Start nav.Route
 	// Activity is the gate every clean and the background work go through: main ends it as the app quits, and the tray's 退出 says when a clean is running.
 	Activity *schedule.Activity
+	// LaunchedAtLogin reports whether the system started this run at login, and whether that is known yet (loginitem.LaunchedAtLogin); nil counts as a launch the user made.
+	LaunchedAtLogin func() (atLogin, known bool)
+	// TrayIcon and TrayAlertIcon are the menu bar icon's template PNGs, the second for low space (macOS); without TrayIcon there is no menu bar icon.
+	TrayIcon, TrayAlertIcon []byte
+
+	// host replaces the main window's platform in the shell's own tests.
+	host windowHost
 }

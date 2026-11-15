@@ -18,3 +18,20 @@ func TestDisabledInTaskManager(t *testing.T) {
 		}
 	}
 }
+
+func TestAtLoginArg(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"-psn_0_12345"}, false},
+		{[]string{"--login"}, true},
+		{[]string{"--nsgo-dev", "--login"}, true},
+		{[]string{"--login=1"}, false},
+	} {
+		if got := atLoginArg(c.args); got != c.want {
+			t.Errorf("atLoginArg(%q) = %v, want %v", c.args, got, c.want)
+		}
+	}
+}

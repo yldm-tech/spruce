@@ -20,9 +20,11 @@ type row struct {
 	Label, Description string
 	// DescriptionFunc replaces Description as it changes.
 	DescriptionFunc func() string
-	Error, Note     func() string
-	Control         []core.Node
-	TestID          string
+	// Below are lines under the description, such as a rule's status.
+	Below       []core.Node
+	Error, Note func() string
+	Control     []core.Node
+	TestID      string
 }
 
 // Render implements core.Node.
@@ -30,17 +32,18 @@ func (r row) Render(*core.Scope) core.Node {
 	return core.View{TestID: r.TestID,
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding},
 		Children: []core.Node{
-			rowText(r.Label, r.Description, r.DescriptionFunc, r.Error, r.Note, r.TestID),
+			rowText(r.Label, r.Description, r.DescriptionFunc, r.Below, r.Error, r.Note, r.TestID),
 			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, FlexShrink: 0}, Children: r.Control},
 		}}
 }
 
-// rowText is a row's label over its description, then its error and note lines; it takes the room the control leaves.
-func rowText(label, description string, descriptionFunc, err, note func() string, testID string) core.Node {
+// rowText is a row's label over its description and the lines below it, then its error and note lines; it takes the room the control leaves.
+func rowText(label, description string, descriptionFunc func() string, below []core.Node, err, note func() string, testID string) core.Node {
 	text := []core.Node{kit.Text(label, kit.FontSubheading, kit.Medium, kit.ColorText)}
 	if description != "" || descriptionFunc != nil {
 		text = append(text, core.Text{Content: description, ContentFunc: descriptionFunc, Style: lineStyle(kit.ColorTextMuted)})
 	}
+	text = append(text, below...)
 	text = append(text, kit.ErrorLine{Text: err, TestID: testID + "-error"}, noteLine{Text: note, TestID: testID + "-note"})
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 3}, Children: text}
 }
@@ -70,14 +73,38 @@ func equalBool(a, b bool) bool { return a == b }
 type switchSetting struct {
 	Field              Field[bool]
 	Label, Description string
-	TestID             string
+	// DescriptionFunc replaces Description as it changes.
+	DescriptionFunc func() string
+	// Below are lines under the description.
+	Below []core.Node
+	// OnTurnOn runs as the user turns the switch on, in the same action: asking for a permission the setting needs belongs there.
+	OnTurnOn func()
+	TestID   string
 }
 
 // Render implements core.Node.
 func (c switchSetting) Render(cx *core.Scope) core.Node {
 	s := newSetting(cx, store.Use(cx).Settings, c.Field, 0, equalBool, func(v bool) string { return "已调整为 " + strconv.FormatBool(v) })
-	return row{Label: c.Label, Description: c.Description, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
-		Control: []core.Node{kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: s.change}}}
+	change := func(v bool) {
+		s.change(v)
+		if v && c.OnTurnOn != nil {
+			c.OnTurnOn()
+		}
+	}
+	return row{Label: c.Label, Description: c.Description, DescriptionFunc: c.DescriptionFunc, Below: c.Below, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
+		Control: []core.Node{kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: change}}}
+}
+
+// statusLine is a grey line under a row's description that follows text.
+func statusLine(text func() string, testID string) core.Node {
+	return core.Text{ContentFunc: text, TestID: testID, Style: lineStyle(kit.ColorTextMuted)}
+}
+
+// warningLine is a line in the warning color under a row's description, there only while when reports true.
+func warningLine(text string, when func() bool, testID string) core.Node {
+	return core.Show{When: when, Then: func(*core.Scope) core.Node {
+		return core.Text{Content: text, TestID: testID, Style: lineStyle(kit.ColorWarning)}
+	}}
 }
 
 // sliderSetting is a number on a slider over its allowed range, saved once the user stops moving it.
@@ -196,7 +223,7 @@ func (c folderListSetting) Render(cx *core.Scope) core.Node {
 		})
 	}
 	header := core.View{TestID: c.TestID, Style: core.Style{Padding: rowPadding, MinHeight: core.Pt(56), JustifyContent: core.JustifyCenter},
-		Children: []core.Node{rowText(c.Label, c.Description, nil,
+		Children: []core.Node{rowText(c.Label, c.Description, nil, nil,
 			func() string {
 				if p := problem.Get(); p != "" {
 					return p
