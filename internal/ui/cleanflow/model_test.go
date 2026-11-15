@@ -271,3 +271,91 @@ func TestCleanConfirmation(t *testing.T) {
 		t.Errorf("both %+v", got)
 	}
 }
+
+// A held item (Item.Hold) is never checked: not by the defaults, its category, 全选 or by itself, and a category whose other items are checked counts as all checked.
+func TestSelectionLeavesHeldItems(t *testing.T) {
+	held := item("h", 70)
+	held.Hold, held.Selected = "项目有未提交的改动", true
+	c := category("nm", true, item("a", 100), held)
+	cats := []cleanup.Category{c, category("all-held", false, held)}
+	sel := DefaultSelection(cats)
+	if got := ids(sel["nm"]); !reflect.DeepEqual(got, []string{"a"}) || CategoryState(c, sel) != CheckAll {
+		t.Errorf("defaults %v %v", got, CategoryState(c, sel))
+	}
+	if got := ids(SelectAll(cats)["nm"]); !reflect.DeepEqual(got, []string{"a"}) || len(SelectAll(cats)["all-held"]) != 0 {
+		t.Errorf("select all %v", got)
+	}
+	if got := SetCategory(NothingSelected, cats[1], true); len(got) != 0 {
+		t.Errorf("a category of held items %v", got)
+	}
+	if got := SetItem(sel, c, "h", true); !reflect.DeepEqual(got, sel) {
+		t.Errorf("checked the held item %v", got)
+	}
+	if Selectable(c) != 1 || Selectable(cats[1]) != 0 || CategoryState(cats[1], SelectAll(cats)) != CheckNone {
+		t.Error("selectable")
+	}
+}
+
+// Reconcile keeps what is still there and not held; Refs and ItemsRequest name every checked item in list order.
+func TestReconcileAndRequest(t *testing.T) {
+	old := []cleanup.Category{category("caches", true, item("a", 1), item("b", 2)), category("logs", true, item("c", 3))}
+	sel := SelectAll(old)
+	held := item("b", 2)
+	held.Hold = "x"
+	next := []cleanup.Category{category("caches", false, item("a", 1), held, item("n", 5))}
+	got := Reconcile(sel, next)
+	if !reflect.DeepEqual(got, Selection{"caches": {"a": {}}}) {
+		t.Errorf("reconcile %v", got)
+	}
+	cats := []cleanup.Category{category("caches", true, item("a", 1), item("b", 2)), category("logs", false, item("c", 3)), category("tmp", true, item("d", 4))}
+	sel = SetItem(SelectAll(cats), cats[0], "b", false)
+	if got := ItemsRequest(cats, sel); !reflect.DeepEqual(got, cleanup.CleanRequest{CategoryIDs: []string{"caches", "logs", "tmp"}, ItemIDs: []string{"a", "c", "d"}}) {
+		t.Errorf("request %+v", got)
+	}
+	if got := ItemsRequest(cats, NothingSelected); !reflect.DeepEqual(got, cleanup.CleanRequest{CategoryIDs: []string{}}) {
+		t.Errorf("empty request %+v", got)
+	}
+	if got := Refs(cats[:1], sel); len(got) != 1 || got[0].CategoryID != "caches" || got[0].ItemID != "a" {
+		t.Errorf("refs %+v", got)
+	}
+}
+
+// Only a move to the Trash that can be undone runs without asking.
+func TestNeedsConfirm(t *testing.T) {
+	trash := Plan{Trash: []PlanLine{{ID: "t", Count: 1}}}
+	for _, c := range []struct {
+		plan    Plan
+		canUndo bool
+		want    bool
+	}{
+		{trash, true, false},
+		{trash, false, true},
+		{Plan{Permanent: []PlanLine{{ID: "p", Count: 1}}}, true, true},
+		{Plan{Commands: []PlanLine{{ID: "c", Count: 1}}, Trash: trash.Trash}, true, true},
+	} {
+		if got := NeedsConfirm(c.plan, c.canUndo); got != c.want {
+			t.Errorf("%+v %v: %v", c.plan, c.canUndo, got)
+		}
+	}
+}
+
+// The status row says why the view may not clean.
+func TestStaleText(t *testing.T) {
+	for _, c := range []struct {
+		checkErr, err string
+		has           bool
+		want          string
+	}{
+		{"正在清理，完成后再检查", "x", true, "正在清理，完成后再检查"},
+		{"", "没有权限", true, "这次检查没有完成：没有权限"},
+		{"", "", false, "还没有检查结果"},
+		{"", "", true, "重新检查后才能清理"},
+	} {
+		if got := StaleText(c.checkErr, c.err, c.has); got != c.want {
+			t.Errorf("%+v: %q", c, got)
+		}
+	}
+	if DeniedText(0) != "" || DeniedText(3) != "有 3 个位置没有读取权限，结果可能不完整" {
+		t.Error("denied")
+	}
+}

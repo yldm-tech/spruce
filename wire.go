@@ -116,9 +116,6 @@ func wire(e env) (shell.Deps, error) {
 		{ID: string(app.CleanerDevJunk), New: newDevJunk},
 		{ID: string(app.CleanerInstallers), New: newInstallers},
 	}, e.log))
-	app.RegisterCleaner(cleanups, app.CleanerSystemJunk, newSystemJunk())
-	app.RegisterCleaner(cleanups, app.CleanerDevJunk, newDevJunk())
-	app.RegisterCleaner(cleanups, app.CleanerInstallers, newInstallers())
 
 	files := app.NewFiles(e.runner, trash.System(), e.log)
 	maint := app.NewMaintenance(svc, historyStore, e.log, activity)
@@ -143,9 +140,9 @@ func wire(e env) (shell.Deps, error) {
 		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: app.NewHistory(historyStore, ledger, e.log), Alerts: healthSvc,
 			Permissions: permissions, Locations: spaceSvc},
 		Overview:    uioverview.Deps{Files: files, Home: e.home},
-		SystemJunk:  uisystemjunk.Deps{Cleanup: cleanups, Files: files},
-		DevJunk:     uidevjunk.Deps{Cleanup: cleanups, Files: files},
-		Installers:  uiinstallers.Deps{Cleanup: cleanups, Files: files},
+		SystemJunk:  uisystemjunk.Deps{Files: files},
+		DevJunk:     uidevjunk.Deps{Files: files},
+		Installers:  uiinstallers.Deps{Files: files},
 		Uninstall:   uiuninstall.Deps{Uninstall: uninstaller, Files: files},
 		Space:       uispace.Deps{Space: spaceSvc, Files: files},
 		Maintenance: uimaintenance.Deps{Maintenance: maint},

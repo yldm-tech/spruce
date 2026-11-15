@@ -213,13 +213,19 @@ func (d *Drill) RequestClean(cats []cleanup.Category, confirm func(cats []cleanu
 		d.run(req, action, sub)
 		return
 	}
-	q := confirm(cats, sel)
-	q.ReturnFocus = returnFocus
-	q.OnConfirm = func() {
+	// The question goes with Dialog, before it could hand the focus back itself.
+	done := func() {
 		d.Dialog.Set(nil)
+		if returnFocus != nil {
+			returnFocus.Focus()
+		}
+	}
+	q := confirm(cats, sel)
+	q.OnConfirm = func() {
+		done()
 		d.run(req, action, sub)
 	}
-	q.OnCancel = func() { d.Dialog.Set(nil) }
+	q.OnCancel = done
 	d.Dialog.Set(&q)
 }
 

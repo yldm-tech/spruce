@@ -1,150 +1,102 @@
-// Package devjunk is the 开发者垃圾 page: before a scan the folders it will search for projects; while scanning the progress; then the tool caches and the projects' build output as two lists, 清理, its confirmation (commands, permanent deletions and the Trash counted apart), the cleaning overlay and the done card. The flow is the shared cleaner flow (package cleanflow).
+// Package devjunk is the 开发者 drill-down view of 概览, in two tabs over 概览's latest check: 项目, each project's build output with its last activity and Git status (a project with uncommitted changes can never be checked), and 工具缓存, the developer tools' caches. It never scans; its clean, its confirmation (commands, permanent deletions and the Trash counted apart), the cleaning overlay and the toast are the shared drill-down view's (cleanflow.Drill) over store.Overview.
 package devjunk
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
 
-	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/ui/cleanflow"
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
-	"github.com/yldm-tech/spruce/internal/ui/store"
+	"github.com/yldm-tech/spruce/internal/ui/pages/overview"
 )
 
-// rootsWidth is how many characters of a project folder the idle page shows, the rest elided in the middle.
-const rootsWidth = 64
-
-// Page is the 开发者垃圾 page.
+// Page is the 开发者 view.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
-	f := cleanflow.NewFlow(cx, deps.Cleanup, app.CleanerDevJunk)
-	stores := store.Use(cx)
-	roots := func() ([]string, bool) {
-		if stores == nil || !stores.Settings.Loaded() {
-			return nil, false
+	d := cleanflow.NewDrill(cx, string(nav.DevJunk), overview.CleanToast)
+	tab := core.NewSignal(cx, firstTab(nav.Use(cx), d.Reveal))
+	rev := revealer(deps.Files)
+	tabs := kit.Tabs[nav.DevTab]{Label: "开发者", Value: tab.Get, OnChange: tab.Set, Options: []kit.Option[nav.DevTab]{
+		{Value: nav.DevProjects, Label: "项目", TestID: "tab-projects"},
+		{Value: nav.DevTools, Label: "工具缓存", TestID: "tab-tools"},
+	}}
+	body := core.Show{When: func() bool { return d.Result() != nil }, Then: func(*core.Scope) core.Node {
+		return core.Group{
+			core.View{Style: core.Style{AlignItems: core.AlignStart, FlexShrink: 0}, Children: []core.Node{tabs}},
+			core.Dynamic(func(*core.Scope) core.Node {
+				if tab.Get() == nav.DevTools {
+					return core.Func(func(cx *core.Scope) core.Node { return toolsTab(cx, d, rev) })
+				}
+				return core.Func(func(cx *core.Scope) core.Node { return projectsTab(cx, d, rev) })
+			}),
 		}
-		return stores.Settings.Value().Cleanup.DevProjectRoots, true
+	}}
+	return core.Group{
+		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, Children: []core.Node{
+			kit.PageHeader{Route: nav.DevJunk}, cleanflow.DrillStatus(d), cleanflow.DrillNotices(d, DeniedNotice), body,
+		}},
+		cleanflow.DrillLayers(d),
 	}
-	toSettings := func() {
-		if n := nav.Use(cx); n != nil {
-			n.GoSettings(nav.SettingsCleanup)
+}
+
+// firstTab is the tab the view opens on: the one a link asked for (nav.Navigator.GoDevTab), else 工具缓存 for a tool's category to reveal, else 项目.
+func firstTab(n *nav.Navigator, reveal string) nav.DevTab {
+	if n != nil {
+		if t := n.TakeDevTab(); t != "" {
+			return t
 		}
 	}
-	plan := func() Plan { return CleanPlan(f.Categories(), f.Selection.Get()) }
-	return cleanflow.View(cx, f, cleanflow.ViewConfig{
-		Page:            nav.DevJunk,
-		IdleTitle:       "查找开发者垃圾",
-		IdleDescription: "扫描开发工具的缓存，以及项目文件夹里可以重新生成的构建产物。扫描只读取，不会删除任何东西。",
-		IdleDetails: func(*core.Scope) core.Node {
-			return projectRoots{Roots: roots, OnSettings: toSettings}
-		},
-		SizeLabel:        "已选大小",
-		EmptyTitle:       "没有找到开发者垃圾",
-		EmptyDescription: "开发工具的缓存和项目里的构建产物都已经很干净了。",
-		// The unreadable places are named above the empty state too, as above the results.
-		EmptyNotice: func(f *cleanflow.Flow) string {
-			if res := f.Result.GetUntracked(); res != nil {
-				return DeniedNotice(res.Denied)
+	if _, id, ok := strings.Cut(reveal, ":"); ok && !strings.HasPrefix(id, "artifact-") {
+		return nav.DevTools
+	}
+	return nav.DevProjects
+}
+
+// toolsTab is 工具缓存: the tools' caches in one CategoryList, whose 全选 and 全不选 act on them only, with 清理.
+func toolsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
+	tools := core.NewMemoFunc(cx, func() []cleanup.Category { t, _ := SplitGroups(d.Categories()); return t }, nil)
+	empty := core.NewMemo(cx, func() bool { return len(tools.Get()) == 0 })
+	cleanRef := new(core.Ref)
+	meta := nav.DevJunk.Meta()
+	return core.Dynamic(func(*core.Scope) core.Node {
+		if empty.Get() {
+			return core.Func(func(*core.Scope) core.Node {
+				return kit.EmptyState{Title: "没有找到开发工具的缓存", Description: "开发工具的缓存都已经很干净了。", Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty"}
+			})
+		}
+		return core.Func(func(*core.Scope) core.Node {
+			plan := func() Plan { return CleanPlan(tools.Get(), d.Selection.Get()) }
+			return core.Group{
+				core.View{TestID: "section-tools", Style: core.Style{Gap: 10, FlexShrink: 0}, Children: []core.Node{
+					heading("工具缓存", "heading-tools"),
+					cleanflow.CategoryList{Categories: tools.Get, Selection: d.Selection.Get, Label: "工具缓存", Reveal: rev, Disabled: d.Cleaning,
+						OnChange: func(next cleanflow.Selection) {
+							d.Change(cleanflow.WithinGroup(d.Selection.GetUntracked(), tools.GetUntracked(), next))
+						},
+						Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "list-tools"},
+				}},
+				cleanflow.DrillBar(d,
+					func() kit.Stat { return kit.Stat{Label: "已选择", Value: strconv.Itoa(plan().Count) + " 项"} },
+					func() kit.Stat { return kit.Stat{Label: "已选大小", Value: format.Bytes(plan().Bytes)} },
+					func() int { return plan().Count },
+					func() {
+						cats := tools.GetUntracked()
+						d.RequestClean(cats, confirmation, OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
+					}, cleanRef),
 			}
-			return ""
-		},
-		Results: func(_ *core.Scope, f *cleanflow.Flow) core.Node {
-			return results(f, roots, revealer(deps.Files))
-		},
-		Confirm: func(f *cleanflow.Flow) kit.ConfirmDialog {
-			c := ConfirmationLines(CleanPlan(f.Result.GetUntracked().Categories, f.Selection.GetUntracked()))
-			return kit.ConfirmDialog{Title: "确认清理", Message: confirmMessage(c), ConfirmLabel: "清理", Danger: c.Danger, TestID: "confirm"}
-		},
-		OverlaySub: func(*cleanflow.Flow) string { return OverlaySub(plan()) },
+		})
 	})
 }
 
-// projectRoots lists the folders the scan searches for projects, with a link to 设置 to change them; nothing before the settings are loaded.
-type projectRoots struct {
-	Roots      func() ([]string, bool)
-	OnSettings func()
-}
-
-// Render implements core.Node.
-func (p projectRoots) Render(*core.Scope) core.Node {
-	loaded := func() bool { _, ok := p.Roots(); return ok }
-	list := func() []string { r, _ := p.Roots(); return r }
-	none := func() bool { return len(list()) == 0 }
-	return core.Show{When: loaded, Then: func(*core.Scope) core.Node {
-		return core.View{TestID: "roots", Style: core.Style{AlignItems: core.AlignCenter, Gap: 8, MaxWidth: core.Pt(520)}, Children: []core.Node{
-			core.Dynamic(func(*core.Scope) core.Node {
-				if none() {
-					return core.Func(func(*core.Scope) core.Node {
-						return kit.Text("还没有设置项目文件夹，这次只扫描开发工具的缓存。", kit.FontBody, kit.Regular, kit.ColorTextSecondary)
-					})
-				}
-				return core.Func(func(*core.Scope) core.Node {
-					return core.Group{
-						kit.Text("会在这些文件夹里查找项目：", kit.FontBody, kit.Regular, kit.ColorTextSecondary),
-						rootsList(list),
-					}
-				})
-			}),
-			kit.Link{TestID: "roots-settings", Text: func() string {
-				if none() {
-					return "去设置"
-				}
-				return "更改文件夹"
-			}, OnPress: p.OnSettings},
-		}}
-	}}
-}
-
-// rootsList is the folders in a quiet box (.dev-junk-roots-list), each on one line elided in the middle, with the whole path as its tooltip.
-func rootsList(roots func() []string) core.Node {
-	return core.View{Role: core.RoleGroup, Label: "项目文件夹", TestID: "roots-list",
-		Style: core.Style{Gap: 4, MaxWidth: core.Pct(100), Padding: core.Symmetric(10, 16), CornerRadius: kit.RadiusCardIcon, Background: kit.SurfaceList,
-			BorderWidth: 1, BorderColor: kit.BorderSubtle},
-		Children: []core.Node{core.Each(roots, func(r string) string { return r }, func(_ *core.Scope, r func() string, i func() int) core.Node {
-			path := r()
-			t := kit.Tabular(kit.Text(format.TruncateMiddle(path, rootsWidth), kit.FontBody, kit.Regular, kit.ColorText))
-			t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
-			// The design draws the folders at the normal line height of Inter, tighter than the default of the font list.
-			t.Style.LineHeightEm = 1.21
-			return core.View{TestID: "root-" + strconv.Itoa(i()), Tooltip: kit.Tooltip(path), Children: []core.Node{t}}
-		})}}
-}
-
-// results is the page after a scan that found something: the unreadable places, the tool caches and the projects' build output as two sections, or a line saying why there was no build output.
-func results(f *cleanflow.Flow, roots func() ([]string, bool), rev reveal) core.Node {
-	res := f.Result.GetUntracked()
-	tools, projects := SplitGroups(res.Categories)
-	notResults := func() bool { return f.Phase.Get() != cleanflow.PhaseResults }
-	var children core.Group
-	if denied := DeniedNotice(res.Denied); denied != "" {
-		children = append(children, kit.Notice{Text: func() string { return denied }, Tone: kit.LevelWarning})
-	}
-	if len(tools) > 0 {
-		children = append(children, section(f, "工具缓存", "tools", tools, rev, notResults))
-	}
-	if len(projects) > 0 {
-		children = append(children, section(f, "项目构建产物", "projects", projects, rev, notResults))
-	} else {
-		children = append(children, core.Text{TestID: "roots-notice", ContentFunc: func() string { return RootsNotice(roots()) },
-			Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted}})
-	}
-	return children
-}
-
-// section is one group of results under its heading, with its own CategoryList whose 全选 and 全不选 act on the group only.
-func section(f *cleanflow.Flow, title, key string, group []cleanup.Category, rev reveal, disabled func() bool) core.Node {
-	return core.View{TestID: "section-" + key, Style: core.Style{Gap: 10}, Children: []core.Node{
-		heading(title, "heading-"+key),
-		cleanflow.CategoryList{Categories: func() []cleanup.Category { return group }, Selection: f.Selection.Get,
-			OnChange: func(next cleanflow.Selection) {
-				f.SetSelection(cleanflow.WithinGroup(f.Selection.GetUntracked(), group, next))
-			},
-			Label: title, Reveal: rev, Disabled: disabled, TestID: "list-" + key},
-	}}
+// confirmation is the question asked before cleaning the checked items of cats: the total, then one bulleted line per way things go.
+func confirmation(cats []cleanup.Category, sel cleanflow.Selection) kit.ConfirmDialog {
+	c := ConfirmationLines(CleanPlan(cats, sel))
+	return kit.ConfirmDialog{Title: "确认清理", Message: confirmMessage(c), ConfirmLabel: "清理", Danger: c.Danger, TestID: "confirm"}
 }
 
 // confirmMessage is the confirmation's body: the total, then one bulleted line per way things go.
