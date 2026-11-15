@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/yldm-tech/spruce/internal/engine/fsx"
 )
 
 // StateVersion is the version of background.json this build writes; a file of another version reads as the zero State.
@@ -75,46 +76,9 @@ func (s *StateStore) Save(st State) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := writeAtomic(s.path, b); err != nil {
+	if err := fsx.WriteFileAtomic(s.path, b); err != nil {
 		return fmt.Errorf("schedule: save state: %w", err)
 	}
-	return nil
-}
-
-// writeAtomic replaces path with b through a temporary file in the same folder, synced before the rename, so a crash leaves the old file or the new one. The file is 0600 and the folder is created (0700) when missing.
-func writeAtomic(path string, b []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			tmp.Close()
-			os.Remove(name)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		return err
-	}
-	ok = true
 	return nil
 }
 
