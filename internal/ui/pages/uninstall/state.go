@@ -95,7 +95,7 @@ func NewState(cx *core.Scope, d Deps, onChanged func()) *State {
 		Details:      core.NewSignalFunc(cx, map[string]AppDetails{}, nil),
 		Measuring:    core.NewSignal(cx, false),
 		Query:        core.NewSignal(cx, ""),
-		Sort:         core.NewSignal(cx, SortName),
+		Sort:         core.NewSignal(cx, SortSize),
 		Selected:     core.NewSignal(cx, ""),
 		Plan:         core.NewSignalFunc[*app.UninstallPlan](cx, nil, nil),
 		PlanLoading:  core.NewSignal(cx, false),
