@@ -66,6 +66,7 @@ func trashCat(scan cleanup.ScanResult) *cleanup.Category {
 func trashRow(cx *core.Scope, p *page) core.Node {
 	cat := core.NewMemo(cx, func() *cleanup.Category { return trashCat(p.scan()) })
 	ctx := cx.Context()
+	ask := p.asker(cx)
 	reading := core.NewSignal(cx, false)
 	bin := format.TrashName()
 	undoShown := core.NewMemo(cx, func() bool { t := p.stores.Toasts.Current(); return t != nil && t.UndoRun != "" })
@@ -77,10 +78,11 @@ func trashRow(cx *core.Scope, p *page) core.Node {
 				text += "其中 " + strconv.Itoa(info.Restorable) + " 项是 Spruce 移到" + bin + "的，清空后不能再放回原处。"
 			}
 		}
-		p.ask(kit.ConfirmDialog{TestID: "empty-trash-confirm", Title: "清空" + bin + "？", Lines: []string{text}, ConfirmLabel: "清空", Danger: true}, func() {
+		ask(kit.ConfirmDialog{TestID: "empty-trash-confirm", Title: "清空" + bin + "？", Lines: []string{text}, ConfirmLabel: "清空", Danger: true}, func() {
 			p.active.Set(emptyTrash)
 			undo := p.canUndo()
-			p.ov.Clean(cx, ctx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
+			// The clean belongs to the page, as a card's does: the row going while it runs cannot leave the page locked.
+			p.ov.Clean(p.cx, p.ctx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
 				func(out app.OverviewOutcome, err error) {
 					p.active.Set("")
 					p.stores.Locations.Bump()

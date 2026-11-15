@@ -3,6 +3,7 @@ package overview
 
 import (
 	"cmp"
+	"context"
 	"runtime"
 	"slices"
 	"strconv"
@@ -68,7 +69,9 @@ type heldCard struct {
 
 // page is the state the page's parts share.
 type page struct {
-	cx     *core.Scope
+	cx *core.Scope
+	// ctx is the page's context, taken as it is made: work for the whole page (a card's clean) ends with the page, not with the part that started it.
+	ctx    context.Context
 	stores *store.Stores
 	ov     *store.Overview
 	nav    *nav.Navigator
@@ -142,14 +145,26 @@ func (p *page) checkNow() {
 	})
 }
 
-// ask opens d, which runs confirm once confirmed.
-func (p *page) ask(d kit.ConfirmDialog, confirm func()) {
+// ask opens d, which runs confirm once confirmed, and returns the confirmation it opened.
+func (p *page) ask(d kit.ConfirmDialog, confirm func()) *kit.ConfirmDialog {
 	d.OnConfirm = func() {
 		p.dialog.Set(nil)
 		confirm()
 	}
 	d.OnCancel = func() { p.dialog.Set(nil) }
 	p.dialog.Set(&d)
+	return &d
+}
+
+// asker is ask for the part of the page made in cx: a confirmation it opened closes when cx is disposed (a card that a newer result moved past the first ones or dropped), so a confirmation never outlives what it confirms. Call it as the part is made, so the cleanup belongs to cx and not to whatever scope runs a handler.
+func (p *page) asker(cx *core.Scope) func(kit.ConfirmDialog, func()) {
+	var opened *kit.ConfirmDialog
+	cx.Cleanup(func() {
+		if opened != nil && p.dialog.GetUntracked() == opened {
+			p.dialog.Set(nil)
+		}
+	})
+	return func(d kit.ConfirmDialog, confirm func()) { opened = p.ask(d, confirm) }
 }
 
 // toast shows the toast t.
@@ -277,7 +292,7 @@ func unanswered(st app.OverviewState) bool {
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
-	p := &page{cx: cx, stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
+	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
 		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
 		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, timeNow()),
 		reduce: cx.Env().ReduceMotion}

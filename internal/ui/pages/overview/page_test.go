@@ -733,6 +733,86 @@ func TestNewerResultKeepsTheSelection(t *testing.T) {
 	}
 }
 
+// withItem is scan with one more item, checked, in the category id.
+func withItem(id string, it cleanup.Item) cleanup.ScanResult {
+	res := scan()
+	for i := range res.Categories {
+		if res.Categories[i].ID == id {
+			res.Categories[i].Items = append(res.Categories[i].Items, it)
+		}
+	}
+	out := cleanup.NewResult(res.Categories, now)
+	out.Sources = res.Sources
+	return out
+}
+
+// A newer result that lands while a confirmation is open does not change what the confirmed clean acts on: the card, untouched, now holds one more item, which the confirmation never named.
+func TestConfirmCleansWhatItShowed(t *testing.T) {
+	p := open(t, ready())
+	p.Press("id:rec-app-caches-act")
+	p.WaitFor("id:rec-confirm", wait)
+	p.Find("id:rec-confirm >> text:2 GB（2 项）会直接删除，不经过废纸篓，无法撤销。应用下次打开时会重新生成，第一次可能稍慢。")
+
+	st := ready()
+	st.Result = result(withItem("system-junk:app-caches", item(home+"/Library/Caches/com.new", 500*mb, true, 40*24*time.Hour)))
+	p.set(st)
+	p.waitText("id:rec-app-caches-size", "2.5 GB")
+	p.WaitFor("id:rec-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := []string{cleanup.ItemID(home + "/Library/Caches/com.spotify.client"), cleanup.ItemID(home + "/Library/Caches/com.apple.Safari")}
+	if c := p.cleans()[0]; !slices.Equal(c.Req.ItemIDs, want) || !slices.Equal(c.Req.CategoryIDs, []string{"system-junk:app-caches"}) {
+		t.Errorf("clean %+v, want the confirmed %v", c, want)
+	}
+}
+
+// A confirmation goes with the card that asked: a newer result without the card closes it, and nothing runs.
+func TestConfirmClosesWithItsCard(t *testing.T) {
+	p := open(t, ready())
+	p.Press("id:rec-app-caches-act")
+	p.WaitFor("id:rec-confirm", wait)
+	next := ready()
+	next.Result.Recommendations = slices.DeleteFunc(slices.Clone(next.Result.Recommendations), func(r advice.Recommendation) bool { return r.ID == "app-caches" })
+	p.set(next)
+	p.WaitForGone("id:rec-app-caches", wait)
+	p.WaitForGone("id:rec-confirm", wait)
+	if len(p.cleans()) != 0 {
+		t.Fatal("a closed confirmation cleaned")
+	}
+	if p.disabled("id:rec-installers-act") || p.disabled("id:recheck") {
+		t.Error("the page stays locked")
+	}
+}
+
+// A card that a newer result moves past the first ones while its clean runs does not lock the page: the clean goes on, and when it ends the toast shows and the other cards can act again.
+func TestCardMovedAwayWhileCleaning(t *testing.T) {
+	p := open(t, ready())
+	p.ov.CleanRelease = make(chan struct{})
+	p.ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{RunID: "r5", Undoable: true, Result: cleanup.CleanResult{Trashed: 600 * mb, Removed: 1}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	p.waitText("id:rec-installers-act", "正在移到废纸篓…")
+
+	// The controller ranks installers last now, past the first five cards.
+	next := ready()
+	recs := next.Result.Recommendations
+	i := slices.IndexFunc(recs, func(r advice.Recommendation) bool { return r.ID == "installers" })
+	moved := recs[i]
+	recs = append(slices.Delete(slices.Clone(recs), i, i+1), moved)
+	next.Result.Recommendations = recs
+	p.set(next)
+	p.WaitForGone("id:rec-installers", wait)
+
+	close(p.ov.CleanRelease)
+	p.ticking(func() bool { return p.toast() != nil })
+	if got := p.toast(); got.Text != "已移到废纸篓 600 MB" || got.UndoRun != "r5" {
+		t.Errorf("toast %+v", got)
+	}
+	p.WaitUntil(wait, func() bool { return !p.disabled("id:rec-app-caches-act") && !p.disabled("id:recheck") })
+}
+
 // 全选 and 全不选 act on the card; with nothing checked it cannot act.
 func TestSelectAllNone(t *testing.T) {
 	p := open(t, ready())

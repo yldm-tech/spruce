@@ -50,6 +50,8 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 	ref := new(core.Ref)
 	// The card's context, taken as it is made: a handler's own ends with it.
 	cardCtx := cx.Context()
+	// A confirmation the card opened closes when the card goes.
+	ask := p.asker(cx)
 
 	// A newer result updates the card in place: what the user checked stays (Pick.Reconcile).
 	first := true
@@ -114,21 +116,20 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			})
 	}
 
-	run := func(a advice.Action) {
-		r := rec()
-		req := CleanRequest(r, pick.GetUntracked())
-		if len(req.ItemIDs) == 0 {
+	// run cleans req, the card r's items as the user saw them when acting: a newer result that lands while a confirmation is open changes neither what nor how. The clean and its bookkeeping (the page's one-at-a-time lock, the held card, the toast) belong to the page, so a card that goes while it runs cannot leave the page locked.
+	run := func(a advice.Action, r advice.Recommendation, req cleanup.CleanRequest) {
+		if len(req.ItemIDs) == 0 || !p.actionable() || p.cleaning() {
 			return
 		}
 		undo := canUndo()
-		ctx, cancel := context.WithCancel(cardCtx)
+		ctx, cancel := context.WithCancel(p.ctx)
 		stop = cancel
 		p.active.Set(id)
 		p.hold(r, index())
 		failed.Set(0)
 		progress.Set(cleanup.Progress{})
 		showProgress.Set(a == advice.ActionDelete || a == advice.ActionCommand)
-		p.ov.Clean(cx, ctx, req, app.CleanOrigin{Recommendation: r.ID}, func(pr cleanup.Progress) { progress.Set(pr) },
+		p.ov.Clean(p.cx, ctx, req, app.CleanOrigin{Recommendation: r.ID}, func(pr cleanup.Progress) { progress.Set(pr) },
 			func(out app.OverviewOutcome, err error) {
 				cancel()
 				stop = nil
@@ -148,13 +149,15 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 
 	act := func() {
 		r := rec()
+		sel := pick.GetUntracked()
+		req := CleanRequest(r, sel)
 		a := action.GetUntracked()
 		n, size := len(core.Untracked(cx, refs)), bytes.GetUntracked()
 		if n == 0 {
 			return
 		}
 		if !NeedsConfirm(a, canUndo()) {
-			run(a)
+			run(a, r, req)
 			return
 		}
 		var d kit.ConfirmDialog
@@ -171,12 +174,12 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			}
 			d = confirmDialog(CommandConfirm(command, description, size))
 		case advice.ActionMixed:
-			d = cleanflow.CleanPlanDialog(cardCategories(scan(), r), pick.GetUntracked().Sel)
+			d = cleanflow.CleanPlanDialog(cardCategories(scan(), r), sel.Sel)
 		default:
 			d = confirmDialog(RecycleConfirm(r, n, size))
 		}
 		d.TestID = "rec-confirm"
-		p.ask(d, func() { run(a) })
+		ask(d, func() { run(a, r, req) })
 	}
 
 	actLabel := func() string {
@@ -204,10 +207,11 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		return canUndo() && known && p.stores.Settings.Loaded() && !RuleOn(p.stores.Settings.Value().Automation, r.Rule)
 	}
 	autoLink := core.Show{When: auto, Then: func(cx *core.Scope) core.Node {
+		ask := p.asker(cx)
 		return kit.Button{Text: "以后自动处理", Variant: kit.ButtonLink, TestID: "rec-" + id + "-auto", Disabled: leaving, OnPress: func() {
 			r := rec()
 			rule := Rules[r.Rule]
-			p.ask(kit.ConfirmDialog{TestID: "rule-confirm", Title: "开启「" + rule.Label + "」？", Lines: []string{rule.Description},
+			ask(kit.ConfirmDialog{TestID: "rule-confirm", Title: "开启「" + rule.Label + "」？", Lines: []string{rule.Description},
 				ConfirmLabel: "开启", CancelLabel: "取消"}, func() {
 				next := p.stores.Settings.Value()
 				next.Automation = WithRule(next.Automation, r.Rule)
