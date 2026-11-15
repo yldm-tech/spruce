@@ -16,7 +16,7 @@ func byID(ws []Watch) map[string]Watch {
 func TestDefaultWatchesMac(t *testing.T) {
 	home := filepath.FromSlash("/Users/me")
 	in := func(p string) string { return filepath.Join(home, filepath.FromSlash(p)) }
-	ws := DefaultWatches("darwin", home, nil, []string{in("code"), in("code"), "", home, filepath.Dir(home), in("Documents/work")})
+	ws := DefaultWatches("darwin", home, nil, nil, []string{in("code"), in("code"), "", home, filepath.Dir(home), in("Documents/work")})
 	got := byID(ws)
 	want := map[string]struct {
 		path, label, icon string
@@ -59,7 +59,7 @@ func TestDefaultWatchesMac(t *testing.T) {
 	if !AppDataWatch(got["library-containers"]) || !AppDataWatch(got["library-group-containers"]) || AppDataWatch(got["library-caches"]) {
 		t.Error("AppDataWatch")
 	}
-	if DefaultWatches("darwin", "", nil, nil) != nil {
+	if DefaultWatches("darwin", "", nil, nil, nil) != nil {
 		t.Error("watches without a home folder")
 	}
 }
@@ -67,7 +67,7 @@ func TestDefaultWatchesMac(t *testing.T) {
 func TestDefaultWatchesWindows(t *testing.T) {
 	home := filepath.FromSlash("/C/Users/me")
 	env := map[string]string{"LOCALAPPDATA": filepath.FromSlash("/C/Users/me/AppData/Local"), "TEMP": filepath.FromSlash("/D/Temp")}
-	ws := DefaultWatches("windows", home, func(k string) string { return env[k] }, []string{filepath.FromSlash("/D/src")})
+	ws := DefaultWatches("windows", home, func(k string) string { return env[k] }, nil, []string{filepath.FromSlash("/D/src")})
 	got := byID(ws)
 	in := func(p string) string { return filepath.Join(home, filepath.FromSlash(p)) }
 	want := map[string]struct {
@@ -99,9 +99,26 @@ func TestDefaultWatchesWindows(t *testing.T) {
 		t.Errorf("labels %+v %+v", got["temp"], got["downloads"])
 	}
 	// Without the variables the folders under the profile stand in.
-	ws = DefaultWatches("windows", home, func(string) string { return "" }, nil)
+	ws = DefaultWatches("windows", home, func(string) string { return "" }, nil, nil)
 	got = byID(ws)
 	if got["local-appdata"].Path != in("AppData/Local") || got["temp"].Path != in("AppData/Local/Temp") {
 		t.Errorf("fallbacks %+v %+v", got["local-appdata"], got["temp"])
+	}
+	// Folders moved off the home folder (OneDrive's folder backup, another drive) are watched where they are; the IDs stay, so earlier snapshots still compare.
+	moved := map[string]string{
+		"desktop":   in("OneDrive/Desktop"),
+		"documents": in("OneDrive/Documents"),
+		"downloads": filepath.FromSlash("/D/Downloads"),
+	}
+	got = byID(DefaultWatches("windows", home, func(string) string { return "" }, moved, nil))
+	for id, path := range moved {
+		if g := got[id]; g.Path != path || !g.Children {
+			t.Errorf("moved %s = %+v, want %s", id, g, path)
+		}
+	}
+	// An empty entry is the home folder's own.
+	got = byID(DefaultWatches("windows", home, func(string) string { return "" }, map[string]string{"desktop": ""}, nil))
+	if got["desktop"].Path != in("Desktop") {
+		t.Errorf("desktop %+v", got["desktop"])
 	}
 }

@@ -244,7 +244,7 @@ func wire(e env) (shell.Deps, error) {
 		Gate:       eng.gate,
 		Growth:     snapshots,
 		Watches: func(s settings.AppSettings) []growth.Watch {
-			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, s.Cleanup.DevProjectRoots)
+			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, growth.UserFolders(), s.Cleanup.DevProjectRoots)
 		},
 		GrowthOptions: growth.TakeOptions{
 			Usage:          diskUsage,
