@@ -102,11 +102,15 @@ type Navigator struct {
 
 	// histAsked counts GoHistory's requests, so 操作历史 sees one made while it is already open.
 	histAsked *core.Signal[int]
+	// settingsAsked counts GoSettings's requests, so 设置 sees one made while it is already open.
+	settingsAsked *core.Signal[int]
+	// shown counts the times the main window came back after it was hidden, so 概览, which stayed mounted, checks again as it does when it opens.
+	shown *core.Signal[int]
 }
 
 // NewNavigator returns a navigator on start.
 func NewNavigator(cx *core.Scope, start Route) *Navigator {
-	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0)}
+	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0), settingsAsked: core.NewSignal(cx, 0), shown: core.NewSignal(cx, 0)}
 }
 
 // Current returns the page shown; reading it subscribes.
@@ -218,8 +222,18 @@ func (n *Navigator) TakeSpacePath() string {
 // GoSettings shows 设置 on tab, as a link that names the setting it is about does (开发者垃圾's 更改文件夹 opens 清理).
 func (n *Navigator) GoSettings(tab SettingsTab) {
 	n.settingsTab = tab
+	n.settingsAsked.Set(n.settingsAsked.GetUntracked() + 1)
 	n.current.Set(Settings)
 }
+
+// SettingsAsked counts GoSettings's requests; reading it subscribes, so 设置 takes a request made while it is open (the menu bar's 自动清理 item over a window on 设置).
+func (n *Navigator) SettingsAsked() int { return n.settingsAsked.Get() }
+
+// WindowShown records that the main window came back after it was hidden (关闭窗口后继续在菜单栏运行), which keeps the page mounted.
+func (n *Navigator) WindowShown() { n.shown.Set(n.shown.GetUntracked() + 1) }
+
+// Shown counts WindowShown's calls; reading it subscribes, so 概览 treats the window coming back like opening it.
+func (n *Navigator) Shown() int { return n.shown.Get() }
 
 // TakeSettingsTab returns the tab GoSettings asked for, or "" when 设置 was opened without one, and forgets it, so the next visit opens on the first tab.
 func (n *Navigator) TakeSettingsTab() SettingsTab {

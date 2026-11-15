@@ -322,6 +322,20 @@ func Page(cx *core.Scope) core.Node {
 			cx.Untrack(p.checkNow)
 		}
 	})
+	// The window coming back after it was hidden (关闭窗口后继续在菜单栏运行) is opening it again for 概览, which stayed mounted: it decides again, on the state then.
+	shown := core.Untracked(cx, p.nav.Shown)
+	cx.Effect(func() {
+		n := p.nav.Shown()
+		if n == shown {
+			return
+		}
+		shown = n
+		cx.Untrack(func() {
+			if decided && shouldCheck(p.state()) {
+				p.checkNow()
+			}
+		})
+	})
 	// A change of what a check looks at (exclusions, folders) while 概览 is open checks again at once.
 	base, have := "", false
 	cx.Effect(func() {

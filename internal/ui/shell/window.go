@@ -78,9 +78,11 @@ type windows struct {
 	view func(cx *core.Scope) core.Node
 	// keepInTray reports whether closing the window hides it instead (macOS with 关闭窗口后继续在菜单栏运行 on).
 	keepInTray func() bool
+	// hidden is set while closing has hidden the window.
+	hidden bool
 }
 
-// show shows the main window, on route unless it is "": the Dock icon comes back, a window opens when none is (the app started at login without one, or it was closed for good), and it comes to the front.
+// show shows the main window, on route unless it is "": the Dock icon comes back, a window opens when none is (the app started at login without one, or it was closed for good), and it comes to the front. A window that was hidden is counted as shown again (nav.Navigator.WindowShown), so 概览, still mounted, checks again as opening it does (DESIGN 2.3 state D).
 func (w *windows) show(route nav.Route) {
 	w.host.SetDockVisible(true)
 	if w.host.Main() == nil {
@@ -89,6 +91,10 @@ func (w *windows) show(route nav.Route) {
 	}
 	if route != "" {
 		w.nav.Go(route)
+	}
+	if w.hidden {
+		w.hidden = false
+		w.nav.WindowShown()
 	}
 	if m := w.host.Main(); m != nil {
 		m.Focus()
@@ -103,6 +109,7 @@ func (w *windows) closing(cancel func()) {
 	cancel()
 	if m := w.host.Main(); m != nil {
 		m.Hide()
+		w.hidden = true
 	}
 	w.host.SetDockVisible(false)
 	if w.nav.Current() == nav.Health {

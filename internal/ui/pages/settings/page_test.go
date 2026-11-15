@@ -696,7 +696,7 @@ func equal(a, b enginesettings.AppSettings) bool {
 		slices.Equal(a.Cleanup.InstallerRoots, b.Cleanup.InstallerRoots)
 }
 
-// A link elsewhere that names a setting opens the page on its tab, once: the next visit opens on 通用.
+// A link elsewhere that names a setting opens the page on its tab, once: the next visit opens on 通用. One made while the page is open switches its tab.
 func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
 	var n *nav.Navigator
 	p := &page{t: t, svc: settingsfake.New(dataDir), files: &settingsfake.Files{}, fakes: storefake.New(t.TempDir())}
@@ -720,6 +720,17 @@ func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
 		t.Error("清理 is not the selected tab")
 	}
 
+	p.Post(func() { n.Go(nav.Health) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.Go(nav.Settings) })
+	p.WaitFor("id:settings-tab-general", wait)
+
+	// A link made while 设置 is open switches the tab in place and leaves nothing pending for the next visit.
+	p.Post(func() { n.GoSettings(nav.SettingsAuto) })
+	p.WaitFor("id:settings-tab-auto", wait)
+	if !p.Find("id:tab-auto").Props.Selected {
+		t.Error("自动清理 is not the selected tab")
+	}
 	p.Post(func() { n.Go(nav.Health) })
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })

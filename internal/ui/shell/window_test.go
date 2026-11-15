@@ -107,10 +107,18 @@ func TestClosingHidesAndKeepsThePage(t *testing.T) {
 	if got := w.nav.Current(); got != nav.Maintenance {
 		t.Errorf("page %q after hiding, want maintenance", got)
 	}
-	// Opening again shows the same window, without a new one.
+	// Opening again shows the same window, without a new one, and counts it as shown again once.
+	shown := w.nav.Shown()
 	w.show("")
 	if got, want := h.take(), []string{"dock", "focus"}; !slices.Equal(got, want) {
 		t.Errorf("show after hiding %v, want %v", got, want)
+	}
+	if got := w.nav.Shown(); got != shown+1 {
+		t.Errorf("Shown %d after showing a hidden window, want %d", got, shown+1)
+	}
+	w.show("")
+	if got := w.nav.Shown(); got != shown+1 {
+		t.Errorf("Shown %d after showing a window already shown, want %d", got, shown+1)
 	}
 }
 

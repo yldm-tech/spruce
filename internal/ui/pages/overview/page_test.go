@@ -350,6 +350,37 @@ func TestStale(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
 }
 
+// State D on a window shown again after it was hidden: 概览 stayed mounted, and decides again on the state then.
+func TestWindowShownAgainChecks(t *testing.T) {
+	p := open(t, ready())
+	p.WaitFor("id:rec-app-caches", wait)
+	// A result that can still be acted on is not checked again.
+	p.Post(p.nav.WindowShown)
+	p.Settle()
+	if p.checks() != 0 {
+		t.Fatalf("%d checks on showing a fresh result again", p.checks())
+	}
+	// Hidden for a day, the result went stale: showing the window checks.
+	st := ready()
+	st.Result.Stale, st.Result.Actionable, st.Result.CheckedAt = true, false, now.Add(-30*time.Hour)
+	p.set(st)
+	p.waitText("id:checked-at", "上次检查：昨天，结果可能已经变化")
+	if p.checks() != 0 {
+		t.Fatalf("%d checks before the window came back", p.checks())
+	}
+	p.Post(p.nav.WindowShown)
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	// Not while a check runs.
+	st.Phase = app.OverviewChecking
+	p.set(st)
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.State().Phase == app.OverviewChecking })
+	p.Post(p.nav.WindowShown)
+	p.Settle()
+	if p.checks() != 1 {
+		t.Errorf("%d checks on showing the window during a check", p.checks())
+	}
+}
+
 // A change of the exclusions or folders while 概览 is open checks again at once.
 func TestSettingsChangeChecksAgain(t *testing.T) {
 	p := open(t, ready())
