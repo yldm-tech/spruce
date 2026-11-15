@@ -30,3 +30,21 @@ func TestPickVolumesKeepsFixedDriveLetters(t *testing.T) {
 		t.Errorf("volumes %+v, want %+v", got, want)
 	}
 }
+
+func TestStartupVolumeReadsOnlyTheSystemDrive(t *testing.T) {
+	var asked []string
+	usage := func(root string) (int64, int64, error) {
+		asked = append(asked, root)
+		return 1e12, 4e11, nil
+	}
+	v, err := startupVolume(usage, func(string) string { return "" }, `C:\`)
+	if want := (Volume{Path: `C:\`, Name: "本地磁盘 (C:)", Total: 1e12, Free: 4e11, Startup: true}); err != nil || v != want {
+		t.Errorf("startup volume %+v %v, want %+v", v, err, want)
+	}
+	if len(asked) != 1 || asked[0] != `C:\` {
+		t.Errorf("asked %v", asked)
+	}
+	if v, _ := startupVolume(usage, func(string) string { return "Data" }, `D:\`); v.Name != "Data (D:)" {
+		t.Errorf("labelled drive %+v", v)
+	}
+}

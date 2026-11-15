@@ -1,7 +1,6 @@
 package app
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -91,20 +90,6 @@ func DiskLow(free, total int64) bool {
 		return false
 	}
 	return float64(free)/float64(total) < lowFreeShare || free < lowFreeBytes
-}
-
-// SystemDisk is the disk the system runs from in l, or else its first disk; false without disks. At and Low are the controller's.
-func SystemDisk(l SpaceLocations) (DiskState, bool) {
-	for _, v := range l.Volumes {
-		if v.Startup {
-			return DiskState{Volume: cmp.Or(v.Name, v.Path), Free: v.Free, Total: v.Total}, true
-		}
-	}
-	if len(l.Volumes) > 0 {
-		v := l.Volumes[0]
-		return DiskState{Volume: cmp.Or(v.Name, v.Path), Free: v.Free, Total: v.Total}, true
-	}
-	return DiskState{}, false
 }
 
 // gigabyte is the unit of the low-disk threshold, as sizes show on goos: 1000-based on macOS (Finder), 1024-based on Windows (Explorer).

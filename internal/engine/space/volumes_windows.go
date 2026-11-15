@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 
@@ -16,6 +17,31 @@ func Volumes(ctx context.Context) ([]Volume, error) {
 		return nil, err
 	}
 	return pickVolumes(parts, driveType, volumeUsage, volumeLabel, startupRoot()), nil
+}
+
+// StartupVolume returns the system drive as Volumes shows it, without listing the drives, which waits on every volume, a network drive that stopped answering too.
+func StartupVolume() (Volume, error) {
+	return startupVolume(volumeUsage, volumeLabel, startupRoot())
+}
+
+// startupVolume is StartupVolume over usage and label for the drive at root ("C:\").
+func startupVolume(usage usageFunc, label func(string) string, root string) (Volume, error) {
+	total, free, err := usage(root)
+	if err != nil {
+		return Volume{}, err
+	}
+	if total <= 0 {
+		return Volume{}, errors.New("space: the system drive reports no size")
+	}
+	return Volume{Path: root, Name: driveName(label(root), root), Total: total, Free: free, Startup: true}, nil
+}
+
+// driveName is what Explorer calls the drive at root with label: "本地磁盘 (C:)" without a label.
+func driveName(label, root string) string {
+	if label == "" {
+		label = "本地磁盘"
+	}
+	return label + " (" + strings.ToUpper(root[:2]) + ")"
 }
 
 func volumeUsage(root string) (int64, int64, error) {
@@ -63,11 +89,7 @@ func pickVolumes(parts []disk.PartitionStat, kind func(string) uint32, usage usa
 		if err != nil || total <= 0 {
 			continue
 		}
-		name := label(root)
-		if name == "" {
-			name = "本地磁盘"
-		}
-		v := Volume{Path: root, Name: name + " (" + strings.ToUpper(mp) + ")", Total: total, Free: free, Startup: strings.EqualFold(root, system)}
+		v := Volume{Path: root, Name: driveName(label(root), root), Total: total, Free: free, Startup: strings.EqualFold(root, system)}
 		if v.Startup {
 			out = append([]Volume{v}, out...)
 		} else {

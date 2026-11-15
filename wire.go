@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -251,13 +250,7 @@ func wire(e env) (shell.Deps, error) {
 			Usage:          diskUsage,
 			FullDiskAccess: func() bool { return fulldisk.Check() == fulldisk.Granted },
 		},
-		Disk: func(ctx context.Context) (app.DiskState, error) {
-			d, ok := app.SystemDisk(spaceSvc.Locations(ctx))
-			if !ok {
-				return app.DiskState{}, errors.New("no disk")
-			}
-			return d, nil
-		},
+		Disk:          spaceSvc.StartupDisk,
 		InstalledApps: eng.installedApps,
 		TrashSize:     files.TrashSize,
 		Ledger:        ledger,

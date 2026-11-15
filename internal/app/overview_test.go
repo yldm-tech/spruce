@@ -22,24 +22,6 @@ func TestDiskLow(t *testing.T) {
 	}
 }
 
-func TestSystemDisk(t *testing.T) {
-	if _, ok := SystemDisk(SpaceLocations{}); ok {
-		t.Error("a disk without disks")
-	}
-	l := SpaceLocations{Volumes: []SpaceVolume{
-		{Path: "/Volumes/Backup", Name: "Backup", Free: 1, Total: 2},
-		{Path: "/", Name: "Macintosh HD", Free: 30e9, Total: 500e9, Startup: true},
-	}}
-	if d, ok := SystemDisk(l); !ok || d.Volume != "Macintosh HD" || d.Free != 30e9 || d.Total != 500e9 {
-		t.Errorf("startup disk: %+v %v", d, ok)
-	}
-	l.Volumes[1].Startup = false
-	l.Volumes[0].Name = ""
-	if d, ok := SystemDisk(l); !ok || d.Volume != "/Volumes/Backup" {
-		t.Errorf("first disk by its path: %+v %v", d, ok)
-	}
-}
-
 func TestLastMonday10(t *testing.T) {
 	loc := time.FixedZone("JST", 9*3600)
 	for _, tc := range []struct{ at, want time.Time }{

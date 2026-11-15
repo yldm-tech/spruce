@@ -57,6 +57,34 @@ func TestPickVolumesShowsTheStartupDiskOnce(t *testing.T) {
 	}
 }
 
+// TestStartupVolumeReadsOnlyTheStartupDisk: the startup disk with the data volume's capacity, as Volumes shows it, else that of "/".
+func TestStartupVolumeReadsOnlyTheStartupDisk(t *testing.T) {
+	var asked []string
+	usage := func(free map[string]int64) usageFunc {
+		return func(mount string) (int64, int64, error) {
+			asked = append(asked, mount)
+			f, ok := free[mount]
+			if !ok {
+				return 0, 0, errors.New("no such volume")
+			}
+			return 500e9, f, nil
+		}
+	}
+	v, err := startupVolume(usage(map[string]int64{"/System/Volumes/Data": 120e9, "/": 1}), "My Mac")
+	if want := (Volume{Path: "/", Name: "My Mac", Total: 500e9, Free: 120e9, Startup: true}); err != nil || v != want {
+		t.Errorf("startup volume %+v %v, want %+v", v, err, want)
+	}
+	if len(asked) != 1 {
+		t.Errorf("asked %v, want the data volume only", asked)
+	}
+	if v, err := startupVolume(usage(map[string]int64{"/": 7e9}), "My Mac"); err != nil || v.Free != 7e9 {
+		t.Errorf("without a data volume: %+v %v", v, err)
+	}
+	if _, err := startupVolume(usage(nil), "My Mac"); err == nil {
+		t.Error("no error without a readable disk")
+	}
+}
+
 func TestStartupNameFollowsTheVolumesLink(t *testing.T) {
 	dir := tempRoot(t)
 	if got := startupName(dir); got != "Macintosh HD" {
