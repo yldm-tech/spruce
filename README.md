@@ -17,7 +17,7 @@ Spruce is a desktop app for macOS and Windows that tells you how much space you 
 
 ## Command line
 
-Run the executable with a command: `Spruce.app/Contents/MacOS/Spruce <command>` on macOS, `Spruce.exe <command>` on Windows. Everything is read-only except `clean --yes` and `restore --yes`. The help calls it `spruce`; to type it that way, link it into your PATH on macOS (`ln -s /Applications/Spruce.app/Contents/MacOS/Spruce /usr/local/bin/spruce`) or add an alias on Windows (`Set-Alias spruce "$env:LOCALAPPDATA\Programs\Spruce\Spruce.exe"` in your PowerShell profile). A first argument that looks like a command but is none (a typo such as `scna`) prints 「未知的命令」 with the usage and exits 2 instead of opening the app.
+Run the executable with a command: `Spruce.app/Contents/MacOS/Spruce <command>` on macOS, `Spruce.exe <command>` on Windows. Nothing but `clean --yes` and `restore --yes` deletes or changes your files; `history` and `restore` first record, in the data folder, any clean a Spruce process ended in the middle of. The help calls it `spruce`; to type it that way, link it into your PATH on macOS (`ln -s /Applications/Spruce.app/Contents/MacOS/Spruce /usr/local/bin/spruce`) or add an alias on Windows (`Set-Alias spruce "$env:LOCALAPPDATA\Programs\Spruce\Spruce.exe"` in your PowerShell profile). A first argument that looks like a command but is none (a typo such as `scna`) prints 「未知的命令」 with the usage and exits 2 instead of opening the app.
 
 | Command | What it does |
 |---|---|

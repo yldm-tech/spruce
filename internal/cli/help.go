@@ -20,7 +20,7 @@ const generalHelp = `用法：spruce <命令> [选项]
   help             显示帮助，spruce help <命令> 显示该命令的用法
   version          显示版本
 
-除 clean --yes 与 restore --yes 外，所有命令都只读取，不会删除或改动任何东西。
+除 clean --yes 与 restore --yes 外，所有命令都不会删除或改动你的文件；history 与 restore 会先补记 Spruce 中途退出的清理。
 除 help 外，每个命令都可以加 --json，在标准输出写一个 JSON 对象。
 
 退出码：0 成功（包括没有可做的和演练），1 失败，2 用法错误，3 部分完成，4 Spruce 正在清理，130 被中断。
@@ -63,14 +63,14 @@ var commandHelp = map[string]string{
 `,
 	"history": `用法：spruce history [--limit <数量>] [--json]
 
-列出最近的操作记录，以及哪些还能放回原处。只读取。
+列出最近的操作记录，以及哪些还能放回原处。会先补记 Spruce 中途退出的清理，不会改动你的文件。
 
   --limit <数量>  最多列出多少条，默认 20，最多 500
   --json          输出 JSON
 `,
 	"restore": `用法：spruce restore <记录 ID> [--yes] [--json]
 
-列出一次清理移到废纸篓、还能放回原处的项目；加 --yes 才会放回。不会覆盖任何东西，原位置已有同名项目的不放回。只在 macOS 上可用。
+列出一次清理移到废纸篓、还能放回原处的项目；加 --yes 才会放回。列出前会先补记 Spruce 中途退出的清理。不会覆盖任何东西，原位置已有同名项目的不放回。只在 macOS 上可用。
 
   <记录 ID>  spruce history 列出的记录
   --yes      执行放回

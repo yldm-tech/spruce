@@ -923,6 +923,12 @@ func TestVersionAndHelp(t *testing.T) {
 	if _, out, _ := h.run(t, "help"); !strings.Contains(out, "除 help 外，每个命令都可以加 --json") {
 		t.Errorf("general help %q", out)
 	}
+	// history and restore record the cleans a Spruce process ended midway (TestRecoverInterruptedBeforeTheRecords), so no help calls them read-only.
+	for _, args := range [][]string{{"help"}, {"help", "history"}, {"help", "restore"}} {
+		if _, out, _ := h.run(t, args...); !strings.Contains(out, "补记 Spruce 中途退出的清理") || strings.Contains(out, "只读取。") || strings.Contains(out, "都只读取") {
+			t.Errorf("%q: %q", args, out)
+		}
+	}
 	// Where restore is not available, clean's help does not offer it.
 	if _, out, _ := h.run(t, "help", "clean"); !strings.Contains(out, "spruce restore 放回原处") {
 		t.Errorf("macOS clean help %q", out)
