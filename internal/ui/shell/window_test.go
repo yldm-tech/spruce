@@ -178,3 +178,37 @@ func TestNotificationPressRoutes(t *testing.T) {
 		}
 	}
 }
+
+// While an overlay holds the sidebar (a clean, an uninstall, a deletion or a maintenance run, whose work belongs to the page), the menu bar and a notification bring the window forward but do not change the page.
+func TestExternalEntriesKeepTheBlockedPage(t *testing.T) {
+	w, h := newWindows(t, nav.Uninstall, true)
+	held := true
+	w.blocked = func() bool { return held }
+	w.show("")
+	h.take()
+	for name, enter := range map[string]func(){
+		"low-disk with cards":  func() { w.pressed(noticeLowDisk, true) },
+		"low-disk":             func() { w.pressed(noticeLowDisk, false) },
+		"weekly summary":       func() { w.pressed(noticeAutoSummary+"2026-W46", true) },
+		"打开概览":                 func() { w.show(nav.Overview) },
+		"自动清理":                 w.automation,
+		"another notification": func() { w.pressed("x", true) },
+	} {
+		enter()
+		if got := w.nav.Current(); got != nav.Uninstall {
+			t.Errorf("%s: page %q while blocked", name, got)
+		}
+		if kind, _ := w.nav.TakeHistoryFilter(); kind != "" {
+			t.Errorf("%s: history filter %q while blocked", name, kind)
+		}
+		if calls := h.take(); !slices.Contains(calls, "focus") {
+			t.Errorf("%s: the window was not brought forward: %v", name, calls)
+		}
+	}
+	// Once the overlay is gone they route again.
+	held = false
+	w.automation()
+	if got := w.nav.Current(); got != nav.Settings {
+		t.Errorf("unblocked: page %q, want settings", got)
+	}
+}
