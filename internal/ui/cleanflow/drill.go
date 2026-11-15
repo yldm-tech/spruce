@@ -207,6 +207,19 @@ func withoutTrash(categories []cleanup.Category) []cleanup.Category {
 	return slices.DeleteFunc(slices.Clone(categories), func(c cleanup.Category) bool { return c.Kind == cleanup.KindTrash })
 }
 
+// CleanSub is the line under the cleaning overlay for the checked items of categories: as many as the confirmation counts, which leaves the Trash to its own line, and whether the Trash is emptied too.
+func CleanSub(categories []cleanup.Category, sel Selection) string {
+	bin := format.TrashName()
+	n := SelectedTotals(withoutTrash(categories), sel).Count
+	switch {
+	case !TrashChecked(categories, sel):
+		return "共 " + strconv.Itoa(n) + " 项"
+	case n == 0:
+		return "清空" + bin
+	}
+	return "共 " + strconv.Itoa(n) + " 项，并清空" + bin
+}
+
 // EmptyTrashConfirm is the question when the Trash is all that is checked, as 概览's 清空废纸篓… asks it: line is TrashLine.
 func EmptyTrashConfirm(line string) kit.ConfirmDialog {
 	bin := format.TrashName()
@@ -226,8 +239,9 @@ func TrashLine(info app.TrashInfo, err error) string {
 	return text
 }
 
-// withLine adds line under the question's message.
-func withLine(q kit.ConfirmDialog, line string) kit.ConfirmDialog {
+// withTrashLine adds line, the Trash line (TrashLine), under the question's message. Emptying the Trash deletes for good whatever the rest does, so the question is the danger kind, focusing 取消 first.
+func withTrashLine(q kit.ConfirmDialog, line string) kit.ConfirmDialog {
+	q.Danger = true
 	if q.Message == nil {
 		q.Lines = append(slices.Clone(q.Lines), line)
 		return q
@@ -265,7 +279,7 @@ func (d *Drill) ScrollTo(card *core.Ref) {
 	})
 }
 
-// RequestClean cleans the checked items of cats (the part of the source the asking list shows), asking first with confirm's question when NeedsConfirm says so; sub is the line under the cleaning overlay. It names every checked item, so the clean acts on what the user saw when asking. It does nothing while CanClean is false. A clean that empties the Trash measures it first (Overview.TrashInfo) and asks with the live figures, because the Trash emptied is the one there when the user confirms: the Trash alone asks 清空废纸篓？ as 概览 does; with other items the summary and the plan cover those, and the Trash line under them the Trash.
+// RequestClean cleans the checked items of cats (the part of the source the asking list shows), asking first with confirm's question when NeedsConfirm says so; sub is the line under the cleaning overlay. It names every checked item, so the clean acts on what the user saw when asking. It does nothing while CanClean is false. A clean that empties the Trash measures it first (Overview.TrashInfo) and asks with the live figures, because the Trash emptied is the one there when the user confirms: the Trash alone asks 清空废纸篓？ as 概览 does; with other items the summary and the plan cover those, and the Trash line under them the Trash, in a question of the danger kind however the rest goes.
 func (d *Drill) RequestClean(cats []cleanup.Category, confirm func(cats []cleanup.Category, sel Selection) kit.ConfirmDialog, sub string, returnFocus *core.Ref) {
 	sel := d.Selection.GetUntracked()
 	req := ItemsRequest(cats, sel)
@@ -286,7 +300,7 @@ func (d *Drill) RequestClean(cats []cleanup.Category, confirm func(cats []cleanu
 				d.ask(EmptyTrashConfirm(line), req, action, sub, returnFocus)
 				return
 			}
-			d.ask(withLine(confirm(rest, sel), line), req, action, sub, returnFocus)
+			d.ask(withTrashLine(confirm(rest, sel), line), req, action, sub, returnFocus)
 		})
 		return
 	}

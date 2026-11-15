@@ -635,6 +635,38 @@ func TestEmptyingTheTrash(t *testing.T) {
 	}
 }
 
+// The Trash checked with items that only move to the Trash still asks with the danger tone, since the Trash goes for good; the overlay counts what the question counts and says the Trash is emptied too.
+func TestTrashWithMovesAsksAsDanger(t *testing.T) {
+	p := start(t, stateOf(append(junk(), trash())...))
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{}, nil
+	}
+	p.ov.TrashInfoValue = app.TrashInfo{Items: 42, Bytes: 5_000_000}
+	p.Press("id:select-none")
+	p.Press("id:check-system-junk:downloads")
+	p.Press("id:check-system-junk:trash")
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:plan-message").Text; got != "将清理 1 项，共 10 MB。它们会移到废纸篓，可以随时放回。" {
+		t.Errorf("message %q", got)
+	}
+	if got := p.Find("id:confirm-trash").Text; got != "废纸篓里的 42 项（5 MB）会永久删除，无法恢复。" {
+		t.Errorf("trash line %q", got)
+	}
+	if !p.Find("id:confirm-cancel").Focused {
+		t.Error("取消 does not have the focus")
+	}
+	p.Press("id:confirm-ok")
+	p.WaitFor("id:clean-overlay >> text:共 1 项，并清空废纸篓", wait)
+	close(release)
+	p.WaitForGone("id:clean-overlay", wait)
+}
+
 // While the shell's toast shows at the bottom of the page area (24 points up, at least 44 tall), 清理 stands above it, and comes back down once it goes.
 func TestActionBarRisesOverTheToast(t *testing.T) {
 	p := start(t, ready())

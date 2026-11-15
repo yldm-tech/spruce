@@ -69,7 +69,7 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 						func() kit.Stat { return kit.Stat{Label: p.SizeLabel, Value: format.Bytes(totals().Bytes)} },
 						func() int { return totals().Count }, func() {
 							cats := d.cats.GetUntracked()
-							d.RequestClean(cats, CleanPlanDialog, "共 "+strconv.Itoa(SelectedTotals(cats, d.Selection.GetUntracked()).Count)+" 项", cleanRef)
+							d.RequestClean(cats, CleanPlanDialog, CleanSub(cats, d.Selection.GetUntracked()), cleanRef)
 						}, cleanRef),
 				}
 			})
