@@ -21,57 +21,6 @@ func fractionOf(p cleanup.Progress) (float64, bool) {
 	return float64(p.Done) / float64(p.Total), true
 }
 
-// stateStyle is ScanProgress's: a column centered in what is left of the page.
-var stateStyle = core.Style{FlexGrow: 1, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 12,
-	Padding: core.Symmetric(24, 0), TextAlign: core.TextAlignCenter}
-
-// pathStyle is the one line of a path being read or removed (.scan-state-path).
-var pathStyle = core.Style{MaxWidth: core.Pt(520), FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextMuted,
-	FontVariant: core.FontTabularNums, WhiteSpace: core.WhiteSpaceNoWrap}
-
-// ScanProgress is a cleaner page while it scans, in place of its content: the ring (filling once the scanner knows how many steps there are, with the percent inside), the space found so far, the folder being read and 停止.
-type ScanProgress struct {
-	// Title is 正在扫描… when "".
-	Title    string
-	Progress func() cleanup.Progress
-	OnCancel func()
-	// CancelLabel is 停止 when "".
-	CancelLabel string
-	TestID      string
-}
-
-// Render implements core.Node.
-func (s ScanProgress) Render(*core.Scope) core.Node {
-	title, cancel := s.Title, s.CancelLabel
-	if title == "" {
-		title = "正在扫描…"
-	}
-	if cancel == "" {
-		cancel = "停止"
-	}
-	value := func() (float64, bool) { return fractionOf(s.Progress()) }
-	percent := core.Text{ContentFunc: func() string {
-		f, ok := value()
-		if !ok {
-			return ""
-		}
-		return strconv.Itoa(int(f*100+0.5)) + "%"
-	}}
-	return core.View{Role: core.RoleRegion, Label: title, TestID: s.TestID, Busy: func() bool { return true }, Style: stateStyle, Children: []core.Node{
-		kit.ProgressRing{Value: value, Size: 120, Label: title, Children: []core.Node{percent}, TestID: "scan-ring"},
-		kit.Text(title, kit.FontTitle, kit.Bold, kit.ColorText),
-		core.Text{ContentFunc: func() string { return "已找到 " + format.Bytes(s.Progress().Bytes) }, Style: core.Style{FontFamily: kit.FontSans,
-			FontSize: kit.FontSubheading, LineHeightMultiple: 1.5, Color: kit.ColorTextOverlaySub}},
-		core.Text{ContentFunc: func() string {
-			if p := s.Progress().Path; p != "" {
-				return format.TruncateMiddle(p, 64)
-			}
-			return "正在准备…"
-		}, MaxLines: 1, EllipsizeMode: core.EllipsizeTail, Style: pathStyle},
-		kit.Button{Text: cancel, Variant: kit.ButtonGhost, OnPress: s.OnCancel, TestID: "scan-stop"},
-	}}
-}
-
 // CleaningOverlay covers the main area while a clean runs, as the 维护 run overlay: the ring, Sub (e.g. 共 34 项), what is done and freed so far and the item being removed. OnCancel shows 停止, which ends the clean after the current item.
 type CleaningOverlay struct {
 	Open func() bool

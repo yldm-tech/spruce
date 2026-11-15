@@ -241,34 +241,3 @@ func SelectedTotals(categories []cleanup.Category, sel Selection) Totals {
 	}
 	return t
 }
-
-// ToCleanRequest turns a selection into the request Cleanup.Clean takes: every category with a checked item, and the item IDs only when some category is checked in part (the Go side then deletes exactly those items). IDs no longer in the categories are left out.
-func ToCleanRequest(categories []cleanup.Category, sel Selection) cleanup.CleanRequest {
-	req := cleanup.CleanRequest{CategoryIDs: []string{}}
-	var itemIDs []string
-	partial := false
-	for _, c := range categories {
-		ids := sel[c.ID]
-		if len(ids) == 0 {
-			continue
-		}
-		picked := 0
-		for _, it := range c.Items {
-			if _, ok := ids[it.ID]; ok {
-				itemIDs = append(itemIDs, it.ID)
-				picked++
-			}
-		}
-		if picked == 0 {
-			continue
-		}
-		req.CategoryIDs = append(req.CategoryIDs, c.ID)
-		if picked < len(c.Items) {
-			partial = true
-		}
-	}
-	if partial {
-		req.ItemIDs = itemIDs
-	}
-	return req
-}

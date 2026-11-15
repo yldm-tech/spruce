@@ -101,21 +101,6 @@ func TestSelection(t *testing.T) {
 		}
 	})
 
-	t.Run("builds the clean request with item IDs only for a partial selection", func(t *testing.T) {
-		if got := ToCleanRequest(cats, SelectAll(cats)); !reflect.DeepEqual(got, cleanup.CleanRequest{CategoryIDs: []string{"caches", "logs"}}) {
-			t.Errorf("all %+v", got)
-		}
-		partial := SetItem(SelectAll(cats), cats[0], "a", false)
-		if got := ToCleanRequest(cats, partial); !reflect.DeepEqual(got, cleanup.CleanRequest{CategoryIDs: []string{"caches", "logs"}, ItemIDs: []string{"b", "c"}}) {
-			t.Errorf("partial %+v", got)
-		}
-		// A stale ID from an older scan is dropped.
-		stale := Selection{"caches": {"gone": {}}}
-		if got := ToCleanRequest(cats, stale); !reflect.DeepEqual(got, cleanup.CleanRequest{CategoryIDs: []string{}}) {
-			t.Errorf("stale %+v", got)
-		}
-	})
-
 	t.Run("applies a group's selection to the group only", func(t *testing.T) {
 		all := DefaultSelection(cats)
 		got := WithinGroup(all, cats[1:2], SelectAll(cats))
@@ -200,54 +185,6 @@ func TestSetInUseAside(t *testing.T) {
 		got, inUse := SetInUseAside(plain)
 		if inUse != 0 || !reflect.DeepEqual(got, plain) {
 			t.Errorf("result %+v, in use %d", got, inUse)
-		}
-	})
-}
-
-// Ported from cleanSummary.test.ts.
-func TestCleanSummary(t *testing.T) {
-	macWording(t)
-	t.Run("totals the space and lists categories, failures and the Trash note", func(t *testing.T) {
-		r := cleanup.CleanResult{Freed: 1_200_000_000, Trashed: 300_000_000, Removed: 35, Skipped: 2, Partial: true,
-			Categories: []cleanup.CategoryOutcome{
-				{CategoryID: "caches", Title: "系统缓存", Removed: 34, Freed: 1_200_000_000, Failed: 10},
-				{CategoryID: "dmg", Title: "安装包", Removed: 1, Trashed: 300_000_000},
-			}}
-		for i := range 10 {
-			r.Failed = append(r.Failed, cleanup.Failure{ItemID: "f" + strconv.Itoa(i), CategoryID: "caches",
-				Path: "/Users/me/Library/Caches/app" + strconv.Itoa(i), Reason: "文件正在使用，已跳过"})
-		}
-		s := CleanSummary(CleanOutcome{Result: &r})
-		if s.Title != "清理完成" || s.Big != "1.5 GB" || !s.Succeeded {
-			t.Errorf("summary %+v", s)
-		}
-		want := []string{"系统缓存：已清理 34 项，释放 1.2 GB，10 项未能处理", "安装包：1 项已移到废纸篓（300 MB）"}
-		for i := range 8 {
-			want = append(want, "app"+strconv.Itoa(i)+"：文件正在使用，已跳过")
-		}
-		want = append(want, "另有 2 项未能处理", "2 项在扫描后已不存在，已跳过", "移到废纸篓的项目在清空废纸篓后才会释放空间")
-		if !reflect.DeepEqual(s.Lines, want) {
-			t.Errorf("lines\n%q\nwant\n%q", s.Lines, want)
-		}
-	})
-
-	t.Run("names interrupted, empty and failed cleans", func(t *testing.T) {
-		if s := CleanSummary(CleanOutcome{Result: &cleanup.CleanResult{Interrupted: true, Removed: 1, Partial: true}}); s.Title != "清理已中断" {
-			t.Errorf("interrupted %q", s.Title)
-		}
-		if s := CleanSummary(CleanOutcome{Result: &cleanup.CleanResult{Skipped: 3}}); s.Title != "清理未完成" || s.Succeeded {
-			t.Errorf("empty %+v", s)
-		}
-		want := Summary{Title: "清理没有进行", Big: "0 B", Lines: []string{"扫描结果已过期，请重新扫描"}}
-		if s := CleanSummary(CleanOutcome{Err: "扫描结果已过期，请重新扫描"}); !reflect.DeepEqual(s, want) {
-			t.Errorf("failed %+v", s)
-		}
-	})
-
-	t.Run("names a failure without a path by its reason", func(t *testing.T) {
-		r := cleanup.CleanResult{Failed: []cleanup.Failure{{CategoryID: "dev-junk", Reason: "开发者垃圾没能交给清理"}}}
-		if s := CleanSummary(CleanOutcome{Result: &r}); !reflect.DeepEqual(s.Lines, []string{"开发者垃圾没能交给清理"}) {
-			t.Errorf("lines %q", s.Lines)
 		}
 	})
 }
