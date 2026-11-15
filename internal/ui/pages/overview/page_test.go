@@ -451,6 +451,12 @@ func TestStoppedWithoutController(t *testing.T) {
 }
 
 // State G with a controller: a stopped check offers 开始检查.
+// A loaded controller's first answer with nothing in it (Windows: no undo, background checks off, the disk unread, no cache) still starts the check on open.
+func TestBareFirstAnswerChecks(t *testing.T) {
+	p := open(t, app.OverviewState{Phase: app.OverviewIdle})
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+}
+
 func TestStopped(t *testing.T) {
 	fakes := newFakes(t)
 	ov := storefake.NewOverview(app.OverviewState{Phase: app.OverviewChecking, CanUndo: true})

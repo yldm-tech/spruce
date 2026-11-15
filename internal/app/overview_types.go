@@ -86,6 +86,8 @@ type OverviewState struct {
 	LastAuto *AutoRun     `json:"lastAuto"`
 	// CanUndo is trash.CanRestore().
 	CanUndo bool `json:"canUndo"`
+	// Loaded is set once the controller has read what it keeps (its background state, the history and the cached check), so a reader tells its first answer from a state it has not answered yet, whatever else that answer holds.
+	Loaded bool `json:"loaded"`
 }
 
 // CleanOrigin says what a clean of 概览 acts for, which decides how it is recorded.

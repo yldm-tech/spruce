@@ -44,13 +44,15 @@ type Overview struct {
 	windows       []time.Duration
 }
 
-// NewOverview returns a fake whose state is st.
+// NewOverview returns a fake whose state is st. The fake is a controller that has loaded: every state it answers or broadcasts has Loaded set.
 func NewOverview(st app.OverviewState) *Overview {
+	st.Loaded = true
 	return &Overview{state: st, stateCh: make(chan app.OverviewState, 1), noticeCh: make(chan app.Notice, 8)}
 }
 
 // Set broadcasts st as the controller's new state.
 func (o *Overview) Set(st app.OverviewState) {
+	st.Loaded = true
 	o.mu.Lock()
 	o.state = st
 	o.mu.Unlock()

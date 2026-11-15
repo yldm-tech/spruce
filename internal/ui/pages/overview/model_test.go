@@ -434,7 +434,8 @@ func TestShouldCheck(t *testing.T) {
 			t.Errorf("%s: %v", tc.name, got)
 		}
 	}
-	if !unanswered(app.OverviewState{Phase: app.OverviewIdle}) || unanswered(app.OverviewState{Phase: app.OverviewIdle, CanUndo: true}) {
+	// A loaded controller's answer with nothing else in it (Windows: no undo, no rules, no disk) is an answer.
+	if !unanswered(app.OverviewState{Phase: app.OverviewIdle, CanUndo: true}) || unanswered(app.OverviewState{Phase: app.OverviewIdle, Loaded: true}) {
 		t.Error("unanswered")
 	}
 	if viewOf(app.OverviewState{Phase: app.OverviewChecking}) != viewProgress || viewOf(app.OverviewState{Error: "x"}) != viewFailed ||

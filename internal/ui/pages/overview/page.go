@@ -283,11 +283,8 @@ func shouldCheck(st app.OverviewState) bool {
 	return st.Result.FromCache || st.Result.Stale || !st.Result.Actionable
 }
 
-// unanswered reports whether st is the store's state before the controller's first answer: a controller always reports more (the disk, whether moves can be undone, a result, a check).
-func unanswered(st app.OverviewState) bool {
-	return st.Phase == app.OverviewIdle && st.Result == nil && st.Disk == nil && !st.CanUndo && st.Error == "" && st.Progress == nil && st.Waiting == "" &&
-		st.LastAuto == nil && len(st.Rules) == 0 && st.Next.IsZero()
-}
+// unanswered reports whether st is the store's state before the controller has loaded: its answer then may hold nothing else (Windows, no cache, no disk read, no rules), so only Loaded tells them apart.
+func unanswered(st app.OverviewState) bool { return !st.Loaded }
 
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
