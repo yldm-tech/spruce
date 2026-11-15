@@ -111,7 +111,8 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 		// The names write the home folder as ~ once the start screen's folders arrive.
 		h := home()
 		return core.Func(func(cx *core.Scope) core.Node {
-			now := cx.WallTime()
+			// The rows name days in the user's time zone (GrowthWhen takes now's): the wall time a test clock gives (core.ManualClock.SetWallTime) comes in UTC whatever time zone it was set from.
+			now := cx.WallTime().Local()
 			rows := make([]core.Node, len(list))
 			for i, item := range list {
 				rows[i] = growthRow(i, item, GrowthName(item, h), now, actions)
