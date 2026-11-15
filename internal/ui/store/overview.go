@@ -42,6 +42,17 @@ type Overview struct {
 	undone *core.Signal[Undone]
 	// undid are the runs of every Undo that put something back, for Undid.
 	undid map[string]bool
+	// running is the Clean that runs through the store, its latest progress and the function that stops it; cleanSeq tells a newer Clean's from an older one's. They outlive the page that started the clean, so a page opened meanwhile shows it and can stop it.
+	running       *core.Signal[runningClean]
+	cleanProgress *core.Signal[cleanup.Progress]
+	stopClean     func()
+	cleanSeq      int
+}
+
+// runningClean is a Clean through the store that has not ended, on set.
+type runningClean struct {
+	origin app.CleanOrigin
+	on     bool
 }
 
 // Undone is an Undo through the store that put at least one item back: the run it undid, and how many such undos came before it plus one, so a reader tells two undos of one run apart.
@@ -52,7 +63,7 @@ type Undone struct {
 
 func newOverview(cx *core.Scope, ctx context.Context, svc OverviewService) *Overview {
 	o := &Overview{cx: cx, ctx: ctx, svc: svc, state: core.NewSignalFunc(cx, app.OverviewState{Phase: app.OverviewIdle}, nil), busy: core.NewSignal(cx, false),
-		undone: core.NewSignal(cx, Undone{}), undid: map[string]bool{}}
+		undone: core.NewSignal(cx, Undone{}), undid: map[string]bool{}, running: core.NewSignal(cx, runningClean{}), cleanProgress: core.NewSignalFunc(cx, cleanup.Progress{}, nil)}
 	if svc == nil {
 		return o
 	}
@@ -110,30 +121,73 @@ func (o *Overview) StopCheck() {
 	}
 }
 
-// Clean cleans req of the current result for origin, with ctx the caller's (cancelling it stops after the current item). progress and done run in cx, the caller's scope, on the engine goroutine; done is dropped once cx is disposed, but Busy ends either way.
-func (o *Overview) Clean(cx *core.Scope, ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress), done func(app.OverviewOutcome, error)) {
+// Running returns the origin of the Clean that runs through the store, and whether one does; reading it subscribes. A page opened while its clean runs finds it here.
+func (o *Overview) Running() (app.CleanOrigin, bool) {
+	r := o.running.Get()
+	return r.origin, r.on
+}
+
+// CleanProgress returns the latest progress of the Clean that runs through the store, zero when none does; reading it subscribes.
+func (o *Overview) CleanProgress() cleanup.Progress { return o.cleanProgress.Get() }
+
+// StopClean stops the Clean that runs through the store after the current item (停止), as the function Clean returned does; nothing when none runs.
+func (o *Overview) StopClean() {
+	if o.stopClean != nil {
+		o.stopClean()
+	}
+}
+
+// Clean cleans req of the current result for origin. It runs on the app's context, so leaving the page does not stop it; the function it returns stops it after the current item (停止), as StopClean does, and Running and CleanProgress show it until it ends. progress and done run in cx, the caller's scope, on the engine goroutine, and are dropped once cx is disposed; outcome, when set, runs in the app's scope before done whatever happened to cx, for what must not be lost with the page (the toast with 撤销). Busy ends either way.
+func (o *Overview) Clean(cx *core.Scope, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress), done, outcome func(app.OverviewOutcome, error)) (stop func()) {
 	if o.svc == nil {
 		refuse(cx, done, app.OverviewOutcome{})
-		return
+		refuse(o.cx, outcome, app.OverviewOutcome{})
+		return func() {}
 	}
-	o.busy.Set(true)
+	ctx, cancel := context.WithCancel(o.ctx)
+	o.cleanSeq++
+	seq := o.cleanSeq
+	o.stopClean = cancel
+	o.cx.Batch(func() {
+		o.busy.Set(true)
+		o.running.Set(runningClean{origin: origin, on: true})
+		o.cleanProgress.Set(cleanup.Progress{})
+	})
 	go func() {
+		defer cancel()
 		out, err := o.svc.Clean(ctx, req, origin, func(p cleanup.Progress) {
+			o.cx.Post(func() {
+				if seq == o.cleanSeq {
+					o.cleanProgress.Set(p)
+				}
+			})
 			if progress != nil {
 				cx.Post(func() { progress(p) })
 			}
 		})
-		o.cx.Post(func() { o.busy.Set(false) })
+		o.cx.Post(func() {
+			o.busy.Set(false)
+			if seq == o.cleanSeq {
+				o.stopClean = nil
+				o.running.Set(runningClean{})
+				o.cleanProgress.Set(cleanup.Progress{})
+			}
+			if outcome != nil {
+				outcome(out, err)
+			}
+		})
 		if done != nil {
 			cx.Post(func() { done(out, err) })
 		}
 	}()
+	return cancel
 }
 
-// Undo puts back what the run runID moved to the Trash. It runs with the app's context, so leaving the page does not stop it; done runs in cx and is dropped once cx is disposed.
-func (o *Overview) Undo(cx *core.Scope, runID string, done func(app.RestoreOutcome, error)) {
+// Undo puts back what the run runID moved to the Trash. It runs with the app's context, so leaving the page does not stop it; done runs in cx and is dropped once cx is disposed, outcome (when set) runs in the app's scope before it whatever happened to cx.
+func (o *Overview) Undo(cx *core.Scope, runID string, done, outcome func(app.RestoreOutcome, error)) {
 	if o.svc == nil {
 		refuse(cx, done, app.RestoreOutcome{})
+		refuse(o.cx, outcome, app.RestoreOutcome{})
 		return
 	}
 	o.busy.Set(true)
@@ -144,6 +198,9 @@ func (o *Overview) Undo(cx *core.Scope, runID string, done func(app.RestoreOutco
 			if err == nil && out.Restored > 0 {
 				o.undid[runID] = true
 				o.undone.Set(Undone{RunID: runID, Seq: o.undone.GetUntracked().Seq + 1})
+			}
+			if outcome != nil {
+				outcome(out, err)
 			}
 		})
 		if done != nil {

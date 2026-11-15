@@ -129,7 +129,7 @@ func TestSmartCleanRecordsOneLinePerSource(t *testing.T) {
 	started := time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC)
 	RegisterCleaner(c, CleanerSmartScan, &fakeScanner{clean: cleanup.CleanResult{
 		Freed: 3000, Trashed: 500, Removed: 9, StartedAt: started, Duration: time.Second, Partial: true,
-		Failed: []cleanup.Failure{{CategoryID: "installers:dmg", Reason: "「磁盘映像」没有清理：扫描结果已过期，请重新扫描"}},
+		Failed: []cleanup.Failure{{CategoryID: "installers:dmg", Reason: "「磁盘映像」没有清理：检查结果可能已经变化，请重新检查后再清理"}},
 		Categories: []cleanup.CategoryOutcome{
 			{CategoryID: "system-junk:app-caches", Title: "应用缓存", Source: "system-junk", Removed: 4, Freed: 2000},
 			{CategoryID: "system-junk:logs", Title: "日志", Source: "system-junk", Removed: 2, Freed: 500, Failed: 1},
@@ -150,7 +150,7 @@ func TestSmartCleanRecordsOneLinePerSource(t *testing.T) {
 		"系统垃圾：已清理 6 项，1 项未能处理",
 		"开发者垃圾：已清理 1 项，已移到" + bin + " 2 项",
 		"安装包：3 项未能处理",
-		"「磁盘映像」没有清理：扫描结果已过期，请重新扫描",
+		"「磁盘映像」没有清理：检查结果可能已经变化，请重新检查后再清理",
 	}
 	if r.Kind != history.KindSmartScan || *r.Summary != (history.Totals{Freed: 3000, Trashed: 500, Items: 9, Failed: 1}) || strings.Join(r.Details, "\n") != strings.Join(want, "\n") {
 		t.Errorf("run %+v, details %q", r, r.Details)
@@ -169,8 +169,8 @@ func TestCleanupErrorsAreChinese(t *testing.T) {
 		{true, errors.New("walk: boom"), "扫描没能完成，详情已记录到日志"},
 		{true, cleanup.NewUserError("需要「完全磁盘访问权限」才能扫描", errors.New("EPERM")), "需要「完全磁盘访问权限」才能扫描"},
 		{false, cleanup.ErrBusy, "已有清理正在进行，请等它结束后再试"},
-		{false, cleanup.ErrStale, "扫描结果已过期，请重新扫描"},
-		{false, cleanup.ErrNoScan, "扫描结果已过期，请重新扫描"},
+		{false, cleanup.ErrStale, "检查结果可能已经变化，请重新检查后再清理"},
+		{false, cleanup.ErrNoScan, "检查结果可能已经变化，请重新检查后再清理"},
 		{false, cleanup.ErrNothingSelected, "没有选择任何项目"},
 		{false, errors.New("odd"), "清理没能开始，详情已记录到日志"},
 	}

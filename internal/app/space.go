@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -159,6 +160,7 @@ type Space struct {
 
 	// Replaced in tests.
 	volumes func(ctx context.Context) ([]space.Volume, error)
+	startup func() (space.Volume, error)
 	targets func(home string) []space.Target
 
 	scanning atomic.Bool
@@ -180,6 +182,7 @@ func NewSpace(home string, current func() settings.AppSettings, bin trash.Bin, s
 		log:      log,
 		activity: activity,
 		volumes:  space.Volumes,
+		startup:  space.StartupVolume,
 		targets:  space.Targets,
 	}
 }
@@ -198,6 +201,15 @@ func (s *Space) Locations(ctx context.Context) SpaceLocations {
 		out.Targets = append(out.Targets, SpaceTarget{ID: t.ID, Name: t.Name, Path: t.Path})
 	}
 	return out
+}
+
+// StartupDisk reads the space of the disk the system runs from, named as Locations names it, without listing the disks: it is read every few minutes, and listing waits on every mounted file system. At and Low are the controller's.
+func (s *Space) StartupDisk(context.Context) (DiskState, error) {
+	v, err := s.startup()
+	if err != nil {
+		return DiskState{}, err
+	}
+	return DiskState{Volume: cmp.Or(v.Name, v.Path), Free: v.Free, Total: v.Total}, nil
 }
 
 // spaceVolumesTimeout bounds listing the disks.

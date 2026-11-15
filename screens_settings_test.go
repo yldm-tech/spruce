@@ -38,7 +38,7 @@ func TestScreensSettings(t *testing.T) {
 		done(permission)
 	}
 	d := shell.Deps{Settings: settings.Deps{Files: &settingsfake.Files{}, GOOS: "darwin", NotificationPermission: notify}, Stores: svc.Use(fakes.Deps())}
-	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820), wallNow)
 	a.WaitFor("id:sidebar", wait)
 	a.Press("id:nav-settings")
 	a.WaitFor("id:section-permissions >> text:未授权", wait)

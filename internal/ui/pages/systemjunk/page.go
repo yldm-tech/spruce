@@ -28,7 +28,7 @@ func Page(cx *core.Scope) core.Node {
 		Toast:            overview.CleanToast,
 		Notice:           func() string { return description },
 		ListLabel:        "可以清理的系统垃圾",
-		SizeLabel:        "可释放",
+		SizeLabel:        "已选大小",
 		EmptyTitle:       "没有找到系统垃圾",
 		EmptyDescription: "缓存、日志和临时文件都很干净，过段时间再来看看。",
 		Reveal:           revealer(deps.Files),

@@ -48,7 +48,7 @@ func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.No
 		if noRoots() {
 			return core.Func(func(*core.Scope) core.Node {
 				return core.View{TestID: "projects-roots", Style: box, Children: []core.Node{
-					text(func() string { return "还没有设置项目文件夹，这次只扫描开发工具的缓存。" }, ""),
+					text(func() string { return "还没有设置项目文件夹，只检查了开发工具的缓存。" }, ""),
 					kit.Link{Text: func() string { return "去设置" }, OnPress: func() {
 						if n := nav.Use(cx); n != nil {
 							n.GoSettings(nav.SettingsCleanup)

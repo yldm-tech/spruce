@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
+	"github.com/yldm-tech/spruce/internal/engine/fsx"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 )
 
@@ -141,7 +141,7 @@ func (s *Store) Save(f File) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := writeAtomic(s.path, b); err != nil {
+	if err := fsx.WriteFileAtomic(s.path, b); err != nil {
 		return fmt.Errorf("scancache: save: %w", err)
 	}
 	return nil
@@ -172,41 +172,4 @@ func truncate(res cleanup.ScanResult, limit int) (cleanup.ScanResult, int) {
 	}
 	res.Categories = cats
 	return res, dropped
-}
-
-// writeAtomic replaces path with b through a temporary file in the same folder, synced before the rename, so a crash leaves the old file or the new one. The file is 0600 and the folder is created (0700) when missing.
-func writeAtomic(path string, b []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			tmp.Close()
-			os.Remove(name)
-		}
-	}()
-	if err := tmp.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		return err
-	}
-	ok = true
-	return nil
 }

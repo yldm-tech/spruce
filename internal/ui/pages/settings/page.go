@@ -5,7 +5,6 @@ import (
 	"context"
 	"runtime"
 	"strconv"
-	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -74,7 +73,7 @@ func Page(cx *core.Scope) core.Node {
 				var groups []core.Node
 				switch t {
 				case nav.SettingsAuto:
-					groups = autoTab(stores, notify, windows)
+					groups = autoTab(cx, stores, notify, windows)
 				case nav.SettingsCleanup:
 					groups = cleanupTab(stores.Settings)
 				case nav.SettingsHealth:
@@ -183,7 +182,7 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 }
 
 // autoTab is 设置 → 自动清理: on macOS what the rules do, a switch per rule with what it would take now or what it did last, and the weekly summary; on Windows only why there are none.
-func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []core.Node {
+func autoTab(cx *core.Scope, stores *store.Stores, notify *notifyPermission, windows bool) []core.Node {
 	if windows {
 		return []core.Node{kit.Card{Variant: kit.CardMuted, TestID: "auto-unsupported", Padding: core.Symmetric(16, 18), Children: []core.Node{
 			core.Text{Content: "Windows 版暂不提供自动清理。Windows 在回收站放不下某个项目时会询问是否直接删除，无人值守时无法保证只移到回收站。",
@@ -203,7 +202,7 @@ func autoTab(stores *store.Stores, notify *notifyPermission, windows bool) []cor
 			OnTurnOn: notify.askOnce,
 			Below: []core.Node{statusLine(func() string {
 				ov := stores.Overview.State()
-				return RuleStatusText(field.Get(st.Value()), RuleStatusOf(ov, spec.ID), ov.Result != nil, time.Now())
+				return RuleStatusText(field.Get(st.Value()), RuleStatusOf(ov, spec.ID), ov.Result != nil, cx.WallTime())
 			}, testID+"-status")}})
 	}
 	return []core.Node{

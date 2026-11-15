@@ -121,7 +121,6 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 	if runtime.GOOS == "windows" {
 		t.Skip("expectations use the macOS wording and SI sizes")
 	}
-	t.Cleanup(overview.SetNow(now))
 	fakes.Overview = ov
 	p := &page{fakes: fakes, ov: ov, files: &cleanflowfake.Files{}, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
@@ -138,7 +137,7 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 			}
 			return core.Func(overview.Page)
 		})
-	}, nsgotest.Size(1052, 1400))
+	}, nsgotest.Size(1052, 1400), func(a *nsgotest.App) { a.Clock.SetWallTime(now) })
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
 	// The page has the controller's state before the test acts on it.
 	if ov != nil {
@@ -246,7 +245,7 @@ func TestReady(t *testing.T) {
 	p.waitText("id:rec-app-caches-reason", "2 个应用的缓存，最大的是 com.spotify.client")
 	p.waitText("id:rec-app-caches-size", "2 GB")
 	p.waitText("id:rec-app-caches-consequence", "直接删除，应用下次打开时会重新生成，第一次可能稍慢")
-	p.WaitFor("id:rec-app-caches-badge >> text:会自动重新生成", wait)
+	p.WaitFor("id:rec-app-caches-badge >> text:无法撤销", wait)
 	p.waitText("id:rec-app-caches-act", "删除…")
 	p.WaitFor("id:rec-tool-npm-badge >> text:运行命令", wait)
 	p.waitText("id:rec-tool-npm-act", "运行清理…")
@@ -408,10 +407,24 @@ func TestEmpty(t *testing.T) {
 	p.WaitFor("id:overview-empty >> text:没有需要清理的内容", wait)
 	p.Find("id:overview-empty >> text:系统垃圾、开发者垃圾和安装包都很干净。Spruce 会定期再看看。")
 	p.waitText("id:checked-at", "上次检查：5分钟前")
-	if p.Exists("id:conclusion-value") || p.Exists("id:recs") || p.Exists("id:review") || p.Exists("id:trash-row") {
+	if p.Exists("id:conclusion-value") || p.Exists("id:recs") || p.Exists("id:review") || p.Exists("id:trash-row") || p.Exists("id:browse") {
 		t.Error("a part without content")
 	}
+	// Something found that no card takes (a running app's cache) brings 按类别查看 back, all three cards of it.
+	res = cleanup.NewResult([]cleanup.Category{category("system-junk:app-caches-running", "正在运行的应用的缓存", "这些应用正在运行", "cache", cleanup.DeletePermanent,
+		item(home+"/Library/Caches/com.running", 300*mb, false, time.Hour))}, now)
+	st.Result = result(res)
+	p.set(st)
 	p.WaitFor("id:browse", wait)
+	for _, id := range []string{"system-junk", "dev-junk", "installers"} {
+		p.Find("id:browse-" + id)
+	}
+	// So does a source that failed.
+	res = cleanup.NewResult([]cleanup.Category{}, now)
+	res.Sources = []cleanup.SourceState{{ID: "installers", Status: cleanup.SourceFailed, Error: "无法读取下载文件夹"}}
+	st.Result = result(res)
+	p.set(st)
+	p.waitText("id:browse-note-installers", "无法读取下载文件夹")
 }
 
 // State F: a failed check keeps the old result, outdated, with 重试; without one it is the error alone.
@@ -628,6 +641,65 @@ func TestTrashCard(t *testing.T) {
 	// While 撤销 shows, emptying the Trash waits.
 	if !p.disabled("id:empty-trash") || p.Find("id:empty-trash").Props.Label != "请等撤销提示消失后再清空" {
 		t.Error("清空废纸篓 while 撤销 shows")
+	}
+}
+
+// Leaving 概览 while a card cleans neither stops the clean nor loses its toast with 撤销: nothing holds the sidebar during a card's clean.
+func TestCardCleanOutlivesThePage(t *testing.T) {
+	p := open(t, ready())
+	p.ov.CleanRelease = make(chan struct{})
+	stopped := make(chan bool, 1)
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		stopped <- ctx.Err() != nil
+		return app.OverviewOutcome{RunID: "r1", Undoable: true, Result: cleanup.CleanResult{Trashed: 600 * mb, Removed: 1}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitUntil(wait, func() bool { return !p.Exists("id:rec-installers") })
+	close(p.ov.CleanRelease)
+	if <-stopped {
+		t.Fatal("leaving the page stopped the clean")
+	}
+	p.ticking(func() bool { return p.toast() != nil })
+	if got := p.toast(); got.Text != "已移到废纸篓 600 MB" || got.UndoRun != "r1" {
+		t.Errorf("toast %+v", got)
+	}
+	// Back on 概览, nothing is left locked.
+	p.ticking(func() bool { return !p.stores.Overview.Busy() })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitFor("id:rec-app-caches-act", wait)
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card stays disabled after the clean ended elsewhere")
+	}
+}
+
+// Back on 概览 while a card's clean still runs, the card shows it as its own, with its progress and 停止, which stops it.
+func TestCardCleanSeenAfterComingBack(t *testing.T) {
+	p := open(t, ready())
+	p.ov.CleanRelease = make(chan struct{})
+	stopped := make(chan bool, 1)
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		stopped <- ctx.Err() != nil
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Interrupted: true}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitUntil(wait, func() bool { return !p.Exists("id:rec-installers") })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitFor("id:rec-installers-progress", wait)
+	if l := p.Find("id:rec-app-caches-act").Props.Label; l != "正在清理另一项，完成后再试" || !p.disabled("id:rec-app-caches-act") {
+		t.Errorf("other card's label %q", l)
+	}
+	p.Press("id:rec-installers-stop")
+	if !<-stopped {
+		t.Fatal("停止 did not stop the clean")
+	}
+	p.ticking(func() bool { return !p.stores.Overview.Busy() })
+	p.WaitForGone("id:rec-installers-stop", wait)
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card stays disabled after the clean stopped")
 	}
 }
 
@@ -925,13 +997,13 @@ func TestTrashUnreadable(t *testing.T) {
 	for i := range res.Categories {
 		if res.Categories[i].ID == "system-junk:trash" {
 			res.Categories[i].Items, res.Categories[i].Size = nil, 0
-			res.Categories[i].Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新扫描"
+			res.Categories[i].Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新检查"
 		}
 	}
 	st := ready()
 	st.Result = result(res)
 	p := open(t, st)
-	p.waitText("id:trash-text", "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新扫描")
+	p.waitText("id:trash-text", "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新检查")
 	if p.Exists("id:empty-trash") {
 		t.Error("清空废纸篓 without a readable Trash")
 	}
@@ -1015,4 +1087,12 @@ func TestInstallersTitle(t *testing.T) {
 	p := open(t, st)
 	p.waitText("id:rec-installers-title", "旧安装包")
 	p.waitText("id:rec-installers-reason", "2 个安装包，都下载超过 7 天了，在下载、桌面里")
+}
+
+// The times read again every minute, on the scope's clock.
+func TestTimesFollowTheClock(t *testing.T) {
+	p := open(t, ready())
+	p.waitText("id:checked-at", "上次检查：5分钟前")
+	p.Advance(time.Minute)
+	p.waitText("id:checked-at", "上次检查：6分钟前")
 }

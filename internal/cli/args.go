@@ -9,10 +9,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yldm-tech/spruce/internal/app"
 )
 
-// Sources a merged scan can be limited to, in scan order.
-var sourceIDs = []string{"system-junk", "dev-junk", "installers"}
+// Sources a merged scan can be limited to, in scan order: the IDs wireEngine builds the merged scans' sources with.
+var sourceIDs = []string{string(app.CleanerSystemJunk), string(app.CleanerDevJunk), string(app.CleanerInstallers)}
 
 // list is a flag that may repeat (--source a --source b); each value may also list several, separated by commas.
 type list []string

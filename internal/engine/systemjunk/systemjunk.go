@@ -322,7 +322,7 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 	case err != nil && ctx.Err() != nil:
 		return nil, nil, ctx.Err()
 	case errors.Is(err, fs.ErrPermission):
-		cat.Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取" + bin + "，开启后重新扫描"
+		cat.Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取" + bin + "，开启后重新检查"
 		return &cat, nil, nil
 	case err != nil:
 		c.env.Log.Warn("measure trash", "err", err)

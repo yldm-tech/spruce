@@ -171,16 +171,17 @@ func TestExpandShowsTasksOrLines(t *testing.T) {
 	p.WaitFor("id:run-m1 >> id:task-dns", wait)
 	// The skipped task first, as the 维护 done card lists it, then the completed one.
 	var tasks []string
-	for _, v := range p.Find("id:run-m1 >> id:run-tasks").Children {
-		var line string
-		for _, c := range v.Children {
-			line += c.Text
-		}
-		tasks = append(tasks, line)
+	cells := p.Find("id:run-m1 >> id:run-tasks").Children
+	for i := 0; i+2 < len(cells); i += 3 {
+		tasks = append(tasks, cells[i].Text+"|"+cells[i+1].Text+"|"+cells[i+2].Text)
 	}
-	want := []string{"优化应用数据库已跳过Safari 仍在运行，已跳过", "刷新 DNS 缓存已完成已刷新 DNS 缓存"}
-	if !reflect.DeepEqual(tasks, want) {
-		t.Errorf("tasks %q", tasks)
+	want := []string{"优化应用数据库|已跳过|Safari 仍在运行", "刷新 DNS 缓存|已完成|已刷新 DNS 缓存"}
+	if !reflect.DeepEqual(tasks, want) || len(cells) != 6 {
+		t.Errorf("tasks %q (%d cells)", tasks, len(cells))
+	}
+	// One grid: every status starts at the same x, whatever the title's length.
+	if a, b := p.Find("id:task-databases-status").Frame.Origin.X, p.Find("id:task-dns-status").Frame.Origin.X; a != b || a == 0 {
+		t.Errorf("statuses at x %v and %v", a, b)
 	}
 	if got := p.Find("id:run-m1 >> id:run-times").Text; got != "开始 10:15:03 · 结束 10:15:31 · 用时 28 秒" {
 		t.Errorf("times %q", got)
@@ -344,7 +345,9 @@ func TestUnknownTasksAndKinds(t *testing.T) {
 	p.Find("id:run-x1 >> text:没有记录结果")
 	p.Press("id:run-m1-head")
 	p.WaitFor("id:run-m1 >> id:task-gone", wait)
-	p.Find("id:run-m1 >> id:task-gone >> text:gone")
+	if got := p.Find("id:run-m1 >> id:task-gone").Text; got != "gone" {
+		t.Errorf("unknown task titled %q", got)
+	}
 }
 
 func TestFiveHundredRuns(t *testing.T) {

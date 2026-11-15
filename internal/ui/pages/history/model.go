@@ -45,7 +45,7 @@ var kindRoutes = map[enginehist.Kind]nav.Route{
 // kindMetas are the kinds that belong to no page of their own: the automatic rules and 放回原处.
 var kindMetas = map[enginehist.Kind]nav.Meta{
 	enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
-	enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+	enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "undo"},
 }
 
 // KindMeta is the page a run's kind belongs to (its title, tile tone and glyph); 概览's cleans are titled 清理建议, as the page itself is 概览. A kind this build does not know, written by a newer version, shows as the history page's own, titled 其他操作.
@@ -224,7 +224,7 @@ type TaskLine struct {
 	Title  string
 	// Status is 已完成, 部分完成, 无需处理, 已跳过, 不可用 or 失败.
 	Status string
-	// Message is the task's own sentence, as the 维护 done card shows it.
+	// Message is the task's own sentence, as the 维护 done card shows it, without a closing 「，{Status}」 that repeats the status.
 	Message string
 	// Attention is set when the task needs the user's attention (maintenance.IsIssue).
 	Attention bool
@@ -276,7 +276,9 @@ func TaskLines(results []taskresult.Result, catalog []app.TaskView) []TaskLine {
 		if !ok {
 			title = r.TaskID
 		}
-		lines[i] = TaskLine{TaskID: r.TaskID, Title: title, Status: StatusLabel(r), Message: r.Message, Attention: maintenance.IsIssue(r)}
+		status := StatusLabel(r)
+		// 「Safari 仍在运行，已跳过」 under 已跳过 says it twice; only an ending that is the status itself goes.
+		lines[i] = TaskLine{TaskID: r.TaskID, Title: title, Status: status, Message: strings.TrimSuffix(r.Message, "，"+status), Attention: maintenance.IsIssue(r)}
 	}
 	return lines
 }

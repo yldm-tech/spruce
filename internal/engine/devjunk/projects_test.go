@@ -2,6 +2,7 @@ package devjunk
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -139,6 +140,106 @@ func TestProjectActivity(t *testing.T) {
 	}
 	if got := projectActivity(proj, nil); got.Sub(recent).Abs() > time.Second {
 		t.Errorf("activity = %v, want %v", got, recent)
+	}
+}
+
+// ageAll sets every file and folder under dir to at.
+func ageAll(t *testing.T, dir string, at time.Time) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chtimes(p, at, at)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProjectActivityInsideARepository: a package of a monorepo and a git worktree have no .git folder of their own; the repository's git folder still tells when someone last committed or checked out.
+func TestProjectActivityInsideARepository(t *testing.T) {
+	old := time.Now().Add(-100 * 24 * time.Hour)
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	near := func(got, want time.Time) bool { return got.Sub(want).Abs() <= time.Second }
+
+	mono, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"package.json", ".git/HEAD", ".git/index", ".git/logs/HEAD", "packages/web/package.json", "packages/web/node_modules/x", "packages/web/src/app.js"} {
+		writeFile(t, mono, f, 1)
+	}
+	ageAll(t, mono, old)
+	pkg := filepath.Join(mono, "packages", "web")
+	if got := projectActivity(pkg, nil); !near(got, old) {
+		t.Errorf("idle monorepo package: activity %v, want %v", got, old)
+	}
+	if err := os.Chtimes(filepath.Join(mono, ".git", "logs", "HEAD"), recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectActivity(pkg, nil); !near(got, recent) {
+		t.Errorf("monorepo package after a commit: activity %v, want %v", got, recent)
+	}
+
+	// A worktree's .git is a file naming its git folder inside the main repository.
+	wt, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitdir := filepath.Join(mono, ".git", "worktrees", "feature")
+	writeFile(t, gitdir, "HEAD", 1)
+	writeFile(t, gitdir, "index", 1)
+	writeFile(t, wt, "Cargo.toml", 1)
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ageAll(t, wt, old)
+	ageAll(t, gitdir, old)
+	if got := projectActivity(wt, nil); !near(got, old) {
+		t.Errorf("idle worktree: activity %v, want %v", got, old)
+	}
+	if err := os.Chtimes(filepath.Join(gitdir, "index"), recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectActivity(wt, nil); !near(got, recent) {
+		t.Errorf("worktree after staging: activity %v, want %v", got, recent)
+	}
+	// A relative gitdir line is relative to the worktree.
+	rel, err := filepath.Rel(wt, gitdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+rel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if dir, ok := gitDir(wt); !ok || dir != gitdir {
+		t.Errorf("relative gitdir %q %v, want %q", dir, ok, gitdir)
+	}
+}
+
+// TestProjectActivityOutsideARepository: without git, an edit one level inside a top-level folder counts; build output and dependencies do not.
+func TestProjectActivityOutsideARepository(t *testing.T) {
+	proj := t.TempDir()
+	old := time.Now().Add(-100 * 24 * time.Hour)
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	for _, f := range []string{"package.json", "src/app.js", "node_modules/x/index.js", ".next/cache"} {
+		writeFile(t, proj, f, 1)
+	}
+	ageAll(t, proj, old)
+	for _, p := range []string{filepath.Join(proj, "node_modules", "x"), filepath.Join(proj, ".next", "cache")} {
+		if err := os.Chtimes(p, time.Now(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := projectActivity(proj, nil); got.Sub(old).Abs() > time.Second {
+		t.Errorf("activity %v, want %v: build output counted", got, old)
+	}
+	if err := os.Chtimes(filepath.Join(proj, "src", "app.js"), recent, recent); err != nil {
+		t.Fatal(err)
+	}
+	if got := projectActivity(proj, nil); got.Sub(recent).Abs() > time.Second {
+		t.Errorf("activity %v, want %v after an edit in src", got, recent)
 	}
 }
 

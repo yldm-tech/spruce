@@ -202,26 +202,28 @@ func TrashChecked(categories []cleanup.Category, sel Selection) bool {
 	return false
 }
 
-// liveTrash returns categories with the checked Trash sized as info measured it now, for the confirmation: the scan's size is older than the moves to the Trash since. On err the categories stay as they are.
-func liveTrash(categories []cleanup.Category, sel Selection, info app.TrashInfo, err error) []cleanup.Category {
-	if err != nil {
-		return categories
+// withoutTrash returns categories without the Trash (cleanup.KindTrash): the confirmation's summary and plan rows leave it to the Trash line, which has its live figures, so the scan's single Trash item and its older size are not shown beside them.
+func withoutTrash(categories []cleanup.Category) []cleanup.Category {
+	return slices.DeleteFunc(slices.Clone(categories), func(c cleanup.Category) bool { return c.Kind == cleanup.KindTrash })
+}
+
+// CleanSub is the line under the cleaning overlay for the checked items of categories: as many as the confirmation counts, which leaves the Trash to its own line, and whether the Trash is emptied too.
+func CleanSub(categories []cleanup.Category, sel Selection) string {
+	bin := format.TrashName()
+	n := SelectedTotals(withoutTrash(categories), sel).Count
+	switch {
+	case !TrashChecked(categories, sel):
+		return "共 " + strconv.Itoa(n) + " 项"
+	case n == 0:
+		return "清空" + bin
 	}
-	out := slices.Clone(categories)
-	for i := range out {
-		c := &out[i]
-		if c.Kind != cleanup.KindTrash || sel.Count(c.ID) == 0 {
-			continue
-		}
-		c.Items = slices.Clone(c.Items)
-		for j := range c.Items {
-			if sel.Has(c.ID, c.Items[j].ID) {
-				c.Size += info.Bytes - c.Items[j].Size
-				c.Items[j].Size = info.Bytes
-			}
-		}
-	}
-	return out
+	return "共 " + strconv.Itoa(n) + " 项，并清空" + bin
+}
+
+// EmptyTrashConfirm is the question when the Trash is all that is checked, as 概览's 清空废纸篓… asks it: line is TrashLine.
+func EmptyTrashConfirm(line string) kit.ConfirmDialog {
+	bin := format.TrashName()
+	return kit.ConfirmDialog{TestID: "confirm", Title: "清空" + bin + "？", Message: core.Text{Content: line, TestID: "confirm-trash"}, ConfirmLabel: "清空", Danger: true}
 }
 
 // TrashLine is the confirmation's line about emptying the Trash, from the live Trash (Overview.TrashInfo) as 概览's 清空废纸篓 dialog words it: what is deleted for good and what Spruce moved there that could no longer be put back.
@@ -237,8 +239,9 @@ func TrashLine(info app.TrashInfo, err error) string {
 	return text
 }
 
-// withLine adds line under the question's message.
-func withLine(q kit.ConfirmDialog, line string) kit.ConfirmDialog {
+// withTrashLine adds line, the Trash line (TrashLine), under the question's message. Emptying the Trash deletes for good whatever the rest does, so the question is the danger kind, focusing 取消 first.
+func withTrashLine(q kit.ConfirmDialog, line string) kit.ConfirmDialog {
+	q.Danger = true
 	if q.Message == nil {
 		q.Lines = append(slices.Clone(q.Lines), line)
 		return q
@@ -276,7 +279,7 @@ func (d *Drill) ScrollTo(card *core.Ref) {
 	})
 }
 
-// RequestClean cleans the checked items of cats (the part of the source the asking list shows), asking first with confirm's question when NeedsConfirm says so; sub is the line under the cleaning overlay. It names every checked item, so the clean acts on what the user saw when asking. It does nothing while CanClean is false. A clean that empties the Trash measures it first (Overview.TrashInfo) and asks with the live figures, because the Trash emptied is the one there when the user confirms.
+// RequestClean cleans the checked items of cats (the part of the source the asking list shows), asking first with confirm's question when NeedsConfirm says so; sub is the line under the cleaning overlay. It names every checked item, so the clean acts on what the user saw when asking. It does nothing while CanClean is false. A clean that empties the Trash measures it first (Overview.TrashInfo) and asks with the live figures, because the Trash emptied is the one there when the user confirms: the Trash alone asks 清空废纸篓？ as 概览 does; with other items the summary and the plan cover those, and the Trash line under them the Trash, in a question of the danger kind however the rest goes.
 func (d *Drill) RequestClean(cats []cleanup.Category, confirm func(cats []cleanup.Category, sel Selection) kit.ConfirmDialog, sub string, returnFocus *core.Ref) {
 	sel := d.Selection.GetUntracked()
 	req := ItemsRequest(cats, sel)
@@ -292,7 +295,12 @@ func (d *Drill) RequestClean(cats []cleanup.Category, confirm func(cats []cleanu
 		d.reading.Set(true)
 		d.ov.TrashInfo(d.cx, d.ctx, func(info app.TrashInfo, err error) {
 			d.reading.Set(false)
-			d.ask(withLine(confirm(liveTrash(cats, sel, info, err), sel), TrashLine(info, err)), req, action, sub, returnFocus)
+			line, rest := TrashLine(info, err), withoutTrash(cats)
+			if !slices.ContainsFunc(rest, func(c cleanup.Category) bool { return sel.Count(c.ID) > 0 }) {
+				d.ask(EmptyTrashConfirm(line), req, action, sub, returnFocus)
+				return
+			}
+			d.ask(withTrashLine(confirm(rest, sel), line), req, action, sub, returnFocus)
 		})
 		return
 	}
@@ -316,7 +324,7 @@ func (d *Drill) ask(q kit.ConfirmDialog, req cleanup.CleanRequest, action advice
 	d.Dialog.Set(&q)
 }
 
-// run cleans req through store.Overview for the source, under the view's context, then shows the toast and refreshes the disks and the Trash.
+// run cleans req through store.Overview for the source, then shows the toast and refreshes the disks and the Trash.
 func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) {
 	if core.Untracked(d.cx, func() bool { return !d.CanClean(len(req.ItemIDs)) }) {
 		return
@@ -324,8 +332,7 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 	undo := core.Untracked(d.cx, d.CanUndo)
 	d.seq++
 	mine := d.seq
-	ctx, cancel := context.WithCancel(d.ctx)
-	d.cancel = cancel
+	stores, toast := d.stores, d.toast
 	d.cx.Batch(func() {
 		d.Progress.Set(cleanup.Progress{})
 		d.Sub.Set(sub)
@@ -336,8 +343,8 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			d.Progress.Set(p)
 		}
 	})
-	d.ov.Clean(d.cx, ctx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(out app.OverviewOutcome, err error) {
-		cancel()
+	// The view going away stops its clean after the current item (the cleaning overlay holds the sidebar meanwhile, so only quitting does); the toast comes from the app's scope, so what was done is still shown.
+	stop := d.ov.Clean(d.cx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(app.OverviewOutcome, error) {
 		if mine != d.seq {
 			return
 		}
@@ -346,16 +353,19 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			d.cleaning.Set(false)
 			d.Progress.Set(cleanup.Progress{})
 		})
-		d.stores.Locations.Bump()
-		d.stores.Trash.Bump()
+	}, func(out app.OverviewOutcome, err error) {
+		stores.Locations.Bump()
+		stores.Trash.Bump()
 		if err != nil {
-			d.stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: errorToast})
+			stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: errorToast})
 			return
 		}
-		if d.toast != nil {
-			d.stores.Toasts.Show(d.toast(action, out, undo))
+		if toast != nil {
+			stores.Toasts.Show(toast(action, out, undo))
 		}
 	})
+	d.cancel = stop
+	context.AfterFunc(d.ctx, stop)
 }
 
 // Stop ends the view's clean after the current item.

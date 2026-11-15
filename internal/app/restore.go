@@ -16,7 +16,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/undo"
 )
 
-// SetLedger makes c journal every clean's moves to the Trash and record them in l, so they can be put back (macOS); nil records nothing. It is a function rather than a method so the page cannot call it.
+// SetLedger makes c journal every clean's moves to the Trash and deletions for good, so a clean Spruce does not finish still gets its history run (RecoverInterrupted), and record the moves in l, so they can be put back (macOS; on Windows the ledger keeps none, undo.Keepable); nil records nothing. It is a function rather than a method so the page cannot call it.
 func SetLedger(c *Cleanup, l *undo.Ledger) { c.ledger = l }
 
 // SetSpaceLedger makes s record its moves to the Trash in l, with each entry's parent folder as the root it may come back into.
@@ -33,10 +33,10 @@ type undoRun struct {
 	log     *slog.Logger
 }
 
-// beginUndo starts the journal of meta.RunID when l is set and this platform can put items back, and returns ctx with the journal ahead of the OnMoved callback ctx carries. A journal that cannot start or be written is logged; the clean goes on.
+// beginUndo starts the journal of meta.RunID when l is set, and returns ctx with the journal ahead of the OnMoved and OnRemoved callbacks ctx carries. It journals on every platform, so RecoverInterrupted can count what a clean Spruce did not finish moved and deleted; where items cannot be put back (Windows) the ledger keeps none of the moves (undo.Keepable), so nothing is offered for 撤销. A journal that cannot start or be written is logged; the clean goes on.
 func beginUndo(ctx context.Context, l *undo.Ledger, log *slog.Logger, meta undo.JournalMeta) (context.Context, *undoRun) {
 	u := &undoRun{runID: meta.RunID, log: log}
-	if l == nil || !trash.CanRestore() {
+	if l == nil {
 		return ctx, u
 	}
 	u.ledger = l
@@ -46,7 +46,13 @@ func beginUndo(ctx context.Context, l *undo.Ledger, log *slog.Logger, meta undo.
 		return ctx, u
 	}
 	u.journal = j
-	next := cleanup.OnMoved(ctx)
+	next, nextRemoved := cleanup.OnMoved(ctx), cleanup.OnRemoved(ctx)
+	ctx = cleanup.WithOnRemoved(ctx, func(r cleanup.Removed) {
+		if err := j.AddRemoved(r); err != nil {
+			log.Warn("write undo journal", "run", meta.RunID, "path", r.Path, "err", err)
+		}
+		nextRemoved(r)
+	})
 	return cleanup.WithOnMoved(ctx, func(m cleanup.Moved) {
 		if err := j.Add(m); err != nil {
 			log.Warn("write undo journal", "run", meta.RunID, "path", m.Path, "err", err)
@@ -194,25 +200,32 @@ func RecoverInterrupted(ctx context.Context, l *undo.Ledger, h history.Store, a 
 		log.Warn("recover interrupted cleans", "err", err)
 	}
 	for _, rec := range recs {
-		if len(rec.Moves) == 0 {
+		if len(rec.Moves) == 0 && len(rec.Removed) == 0 {
 			continue
 		}
-		var trashed int64
+		var trashed, freed int64
 		for _, m := range rec.Moves {
 			trashed += m.Size
 		}
+		for _, r := range rec.Removed {
+			freed += r.Freed
+		}
+		var details []string
+		if len(rec.Moves) > 0 {
+			details = append(details, fmt.Sprintf("已移到%s %d 项", binName(), len(rec.Moves)))
+		}
+		if len(rec.Removed) > 0 {
+			details = append(details, fmt.Sprintf("已删除 %d 项", len(rec.Removed)))
+		}
+		details = append(details, "清理在中途停止，其余项目没有改动", "Spruce 在清理时退出，这条记录是下次打开时补上的")
 		run := history.Run{
 			ID:        rec.Meta.RunID,
 			Kind:      cmp.Or(rec.Meta.Kind, history.KindSmartScan),
 			StartedAt: rec.Meta.Started,
 			EndedAt:   rec.Ended,
-			Summary:   &history.Totals{Trashed: trashed, Items: len(rec.Moves)},
-			Details: []string{
-				fmt.Sprintf("已移到%s %d 项", binName(), len(rec.Moves)),
-				"清理在中途停止，其余项目没有改动",
-				"Spruce 在清理时退出，这条记录是下次打开时补上的",
-			},
-			Rule: rec.Meta.Rule,
+			Summary:   &history.Totals{Freed: freed, Trashed: trashed, Items: len(rec.Moves) + len(rec.Removed)},
+			Details:   details,
+			Rule:      rec.Meta.Rule,
 		}
 		if rec.Kept > 0 {
 			_, bytes := undo.Kept(rec.Moves)
@@ -222,6 +235,6 @@ func RecoverInterrupted(ctx context.Context, l *undo.Ledger, h history.Store, a 
 			log.Error("record interrupted clean in history", "run", run.ID, "err", err)
 			continue
 		}
-		log.Info("recorded an interrupted clean", "run", run.ID, "items", len(rec.Moves))
+		log.Info("recorded an interrupted clean", "run", run.ID, "items", run.Summary.Items)
 	}
 }

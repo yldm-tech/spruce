@@ -120,17 +120,20 @@ func (s *State) Restore(id string) {
 		return
 	}
 	s.Restoring.Set(id)
-	s.stores.Overview.Undo(s.cx, id, func(out app.RestoreOutcome, err error) {
+	stores := s.stores
+	s.stores.Overview.Undo(s.cx, id, func(app.RestoreOutcome, error) {
 		s.Restoring.Set("")
-		s.stores.Trash.Bump()
-		s.stores.Locations.Bump()
-		if err != nil {
-			s.stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
-		} else {
-			text, view, d := RestoreToast(out)
-			s.stores.Toasts.Show(store.Toast{Text: text, ViewRun: view, Duration: d})
-		}
 		s.Load()
+	}, func(out app.RestoreOutcome, err error) {
+		// In the app's scope: leaving 操作历史 while it runs does not lose the toast.
+		stores.Trash.Bump()
+		stores.Locations.Bump()
+		if err != nil {
+			stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
+			return
+		}
+		text, view, d := RestoreToast(out)
+		stores.Toasts.Show(store.Toast{Text: text, ViewRun: view, Duration: d})
 	})
 }
 

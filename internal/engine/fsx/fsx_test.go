@@ -263,6 +263,31 @@ func TestSafeRemoveCancelled(t *testing.T) {
 	}
 }
 
+func TestExcludedInside(t *testing.T) {
+	home := filepath.FromSlash("/Users/me")
+	if runtime.GOOS == "windows" {
+		home = `C:\Users\me`
+	}
+	j := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+	ex := []string{"~/Library/Caches/com.foo/keep", j("Projects", "app"), "node_modules", filepath.Join(home, "Logs", "*.log"), " "}
+	cases := map[string]bool{
+		j("Library", "Caches", "com.foo"):         true,
+		j("Library", "Caches", "COM.FOO"):         true,
+		j("Library"):                              true,
+		j("Library", "Caches", "com.foo", "keep"): false,
+		j("Library", "Caches", "com.foobar"):      false,
+		j("Projects", "app"):                      false,
+		j("Projects", "app", "node_modules"):      false,
+		j("Logs"):                                 false,
+		"":                                        false,
+	}
+	for p, want := range cases {
+		if got := excludedInside(p, ex, home); got != want {
+			t.Errorf("excludedInside(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
 func TestExcluded(t *testing.T) {
 	home := filepath.FromSlash("/Users/me")
 	if runtime.GOOS == "windows" {

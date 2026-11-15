@@ -19,6 +19,9 @@ import (
 )
 
 // screensApp starts the shell on fakes and goes to page: through the sidebar for its pages, and by opening on it for a drill-down view, which has no entry there.
+// wallNow sets the wall time the pages read (core.Scope.WallTime) to the real time, which the fakes' states are made relative to; the test clock itself stays manual.
+func wallNow(a *nsgotest.App) { a.Clock.SetWallTime(time.Now()) }
+
 func screensApp(t *testing.T, fakes *storefake.Services, d shell.Deps, page string) *nsgotest.App {
 	t.Helper()
 	d.Stores = fakes.Deps()
@@ -26,7 +29,7 @@ func screensApp(t *testing.T, fakes *storefake.Services, d shell.Deps, page stri
 	if !r.InSidebar() {
 		d.Start = r
 	}
-	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820), wallNow)
 	a.WaitFor("id:sidebar", 10*time.Second)
 	if r.InSidebar() {
 		a.Press("id:nav-" + page)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yldm-tech/spruce/internal/engine/fsx"
 )
 
 // ErrNoHistory is what Changes returns while fewer than two snapshots are kept (that load): nothing can be compared yet.
@@ -52,43 +54,9 @@ func (s *Store) Save(snap Snapshot) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("growth: %w", err)
 	}
-	if err := writeAtomic(s.path(snap.At), data); err != nil {
+	if err := fsx.WriteFileAtomic(s.path(snap.At), data); err != nil {
 		return fmt.Errorf("growth: %w", err)
 	}
-	return nil
-}
-
-func writeAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".snapshot-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	ok := false
-	defer func() {
-		if !ok {
-			_ = os.Remove(tmp)
-		}
-	}()
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	ok = true
 	return nil
 }
 

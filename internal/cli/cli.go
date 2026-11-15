@@ -56,6 +56,8 @@ type Engine interface {
 	Entry(runID string) (undo.Entry, error)
 	// Restore is app.Restore.Run.
 	Restore(ctx context.Context, runID string) (app.RestoreOutcome, error)
+	// RecoverInterrupted is app.RecoverInterrupted: it records the cleans a Spruce process ended in the middle of, so history and restore see them without the app being opened first.
+	RecoverInterrupted(ctx context.Context)
 }
 
 // Deps is what Main needs besides the arguments.
@@ -89,7 +91,7 @@ var commands = map[string]string{
 	"version":         "version",
 }
 
-// IsCommand reports whether args (os.Args[1:]) start a command-line run rather than the app. Finder, Explorer, the login item and the single-instance hand-off never pass these words, and none of them is the elevated child's flag.
+// IsCommand reports whether args (os.Args[1:]) start a known command of the command line rather than the app. Finder, Explorer, the login item and the single-instance hand-off never pass these words, and none of them is the elevated child's flag.
 func IsCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -98,7 +100,7 @@ func IsCommand(args []string) bool {
 	return ok
 }
 
-// Main runs the command args names (os.Args[1:], args[0] a word IsCommand accepts), writing its output to stdout and progress and notes to stderr, and returns the exit code. Cancelling ctx (Ctrl+C) stops a scan, or a clean after its current item, and returns ExitInterrupted.
+// Main runs the command args names (os.Args[1:]; an args[0] IsCommand does not accept is an unknown command, a usage error), writing its output to stdout and progress and notes to stderr, and returns the exit code. Cancelling ctx (Ctrl+C) stops a scan, or a clean after its current item, and returns ExitInterrupted.
 func Main(ctx context.Context, args []string, d Deps, stdout, stderr io.Writer) int {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -109,7 +111,7 @@ func Main(ctx context.Context, args []string, d Deps, stdout, stderr io.Writer) 
 	}
 	name, ok := commands[args[0]]
 	if !ok {
-		return r.usage(fmt.Errorf("未知的命令 %q", args[0]), "")
+		return r.unknown(args[0])
 	}
 	r.command = name
 	rest := args[1:]
@@ -153,6 +155,29 @@ func (r *run) usage(err error, command string) int {
 		hint += " " + command
 	}
 	fmt.Fprintf(r.stderr, "spruce：%v\n运行 %s 查看用法。\n", err, hint)
+	return ExitUsage
+}
+
+// unknown reports a command that does not exist, with the general help, and returns ExitUsage.
+func (r *run) unknown(name string) int {
+	msg := fmt.Sprintf("未知的命令 %q", name)
+	if r.json {
+		r.writeError(msg)
+		return ExitUsage
+	}
+	fmt.Fprintf(r.stderr, "spruce：%s\n\n%s", msg, r.generalHelp())
+	return ExitUsage
+}
+
+// RefuseRoot is what the command line does when it runs as root (sudo): it reports, as JSON when args ask for it, that it only cleans the current user's files, and returns ExitUsage without opening the data folder. Root's files there would lock the user's own Spruce out of its lock, history and ledger, and its moves would miss the user's Trash.
+func RefuseRoot(args []string, stdout, stderr io.Writer) int {
+	r := &run{stdout: stdout, stderr: stderr, json: wantsJSON(args)}
+	const msg = "请不要用 sudo 运行 spruce：它只清理当前用户的文件"
+	if r.json {
+		r.writeError(msg)
+	} else {
+		fmt.Fprintf(stderr, "spruce：%s\n", msg)
+	}
 	return ExitUsage
 }
 

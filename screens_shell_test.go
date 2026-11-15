@@ -30,7 +30,7 @@ func shellScreensApp(t *testing.T, start nav.Route) (*nsgotest.App, *showing) {
 	a := nsgotest.Start(t, core.AppRoot(func(cx *core.Scope) {
 		shell.App(d)(cx)
 		stores.Stores, stores.app = store.Use(cx), cx
-	}), nsgotest.Size(1280, 820))
+	}), nsgotest.Size(1280, 820), wallNow)
 	a.WaitFor("id:sidebar", 10*time.Second)
 	return a, stores
 }

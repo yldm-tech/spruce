@@ -195,10 +195,16 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
 	if run.Kind == enginehist.KindMaintenance {
-		body = core.View{Style: list, TestID: "run-tasks", Children: []core.Node{
-			core.Each(func() []TaskLine { return TaskLines(run.Results, s.Catalog.Get()) }, func(l TaskLine) string { return l.TaskID },
-				func(_ *core.Scope, l func() TaskLine, _ func() int) core.Node { return taskLine(l) }),
-		}}
+		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title. Its cells are its direct children, made again when the catalog (the titles) arrives. The cells align at the start, not on their baseline: baseline alignment in a grid misplaces whole rows when a cell's text can wrap (https://github.com/nsgo-dev/nsgo/issues/280), so taskLine sets the smaller status on the title's baseline itself.
+		grid := list
+		grid.Display, grid.GridTemplateColumns, grid.Gap, grid.ColumnGap, grid.RowGap, grid.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 0, 12, 8, core.AlignStart
+		body = core.Dynamic(func(*core.Scope) core.Node {
+			var cells []core.Node
+			for _, l := range TaskLines(run.Results, s.Catalog.Get()) {
+				cells = append(cells, taskLine(l)...)
+			}
+			return core.View{Style: grid, TestID: "run-tasks", Children: cells}
+		})
 	} else if len(run.Details) > 0 {
 		lines := make([]core.Node, len(run.Details))
 		for i, line := range run.Details {
@@ -215,25 +221,21 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
 }
 
-// taskLine is one task of a maintenance run: its title, how it ended (in the warning color when it needs attention) and its message.
-func taskLine(l func() TaskLine) core.Node {
-	text := func(fn func() string, size core.Points, weight core.FontWeight, color func() core.Color, st core.Style) core.Node {
-		t := core.Text{ContentFunc: fn, StyleFunc: func() core.Style {
-			s := st
-			s.FontFamily, s.FontWeight, s.FontSize, s.LineHeightMultiple, s.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color()
-			return s
-		}}
-		return t
+// taskLine is one task of a maintenance run, three cells of the run's task grid: its title (TestID task-<id>), how it ended (in the warning color when it needs attention; task-<id>-status) and its message (task-<id>-message).
+func taskLine(l TaskLine) []core.Node {
+	id := "task-" + l.TaskID
+	text := func(content string, size core.Points, weight core.FontWeight, color core.Color, st core.Style, testID string) core.Node {
+		st.FontFamily, st.FontWeight, st.FontSize, st.LineHeightMultiple, st.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color
+		return core.Text{Content: content, TestID: testID, Style: st}
 	}
-	fixed := func(c core.Color) func() core.Color { return func() core.Color { return c } }
-	return core.View{TestID: "task-" + l().TaskID, Style: core.Style{Direction: core.Row, AlignItems: core.AlignBaseline, Gap: 12}, Children: []core.Node{
-		text(func() string { return l().Title }, kit.FontBody, kit.Semibold, fixed(kit.ColorText), core.Style{MinWidth: core.Pt(120), FlexShrink: 0}),
-		text(func() string { return l().Status }, kit.FontSmall, kit.Regular, func() core.Color {
-			if l().Attention {
-				return kit.ColorWarning
-			}
-			return kit.ColorTextMuted
-		}, core.Style{FlexShrink: 0}),
-		text(func() string { return l().Message }, kit.FontBody, kit.Regular, fixed(kit.ColorTextSecondary), core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)}),
-	}}
+	status := kit.ColorTextMuted
+	if l.Attention {
+		status = kit.ColorWarning
+	}
+	return []core.Node{
+		text(l.Title, kit.FontBody, kit.Semibold, kit.ColorText, core.Style{}, id),
+		// The smaller status sits on the title's baseline: its line starts lower by what the larger lines take more.
+		text(l.Status, kit.FontSmall, kit.Regular, status, core.Style{Padding: core.Edges{Top: (kit.FontBody - kit.FontSmall) * 1.5}}, id+"-status"),
+		text(l.Message, kit.FontBody, kit.Regular, kit.ColorTextSecondary, core.Style{MinWidth: core.Pt(0)}, id+"-message"),
+	}
 }

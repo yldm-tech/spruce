@@ -234,7 +234,7 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 		progress = func(Progress) {}
 	}
 	trashOnly := req.Mode == ModeTrashOnly
-	onMoved := OnMoved(ctx)
+	onMoved, onRemoved := OnMoved(ctx), OnRemoved(ctx)
 	var exclusions []string
 	if e.opts.Exclusions != nil {
 		exclusions = e.opts.Exclusions()
@@ -274,6 +274,10 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 			fail(j.item.Hold, nil, false)
 			continue
 		case len(exclusions) > 0 && fsx.Excluded(j.item.Path, exclusions):
+			fail(reasonExcluded, nil, false)
+			continue
+		case j.item.Dir && len(exclusions) > 0 && fsx.ExcludedInside(j.item.Path, exclusions):
+			// An exclusion added inside a folder since the scan: deleting the folder would delete it.
 			fail(reasonExcluded, nil, false)
 			continue
 		}
@@ -322,6 +326,7 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 				res.Removed++
 				out.Removed++
 				gone = append(gone, j.item.ID)
+				onRemoved(Removed{ItemID: j.item.ID, Path: j.item.Path, Freed: rm.Freed})
 			}
 		case DeleteTrash:
 			to, err := e.del.Trash(ctx, j.item.Path, j.cat.Roots)

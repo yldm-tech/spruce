@@ -169,7 +169,7 @@ func (c *Cleanup) Clean(ctx context.Context, cleaner CleanerID, req cleanup.Clea
 	return run.Result, err
 }
 
-// CleanWith is Clean recorded as opts says. Every clean runs inside the activity gate (Activity.BeginClean), which stops background work first and refuses while another Spruce process cleans; the run ID is made before the clean, and the history run is appended after it even when ctx has ended (quitting, 停止), so what was done is never lost. With a ledger (SetLedger, macOS) every move to the Trash is journaled as it happens and recorded in the ledger before the history run, which then carries Run.Undo.
+// CleanWith is Clean recorded as opts says. Every clean runs inside the activity gate (Activity.BeginClean), which stops background work first and refuses while another Spruce process cleans; the run ID is made before the clean, and the history run is appended after it even when ctx has ended (quitting, 停止), so what was done is never lost. With a ledger (SetLedger) every move to the Trash and every deletion for good is journaled as it happens, so a clean Spruce does not finish is still recorded (RecoverInterrupted), and the moves Spruce can put back (macOS) are recorded in the ledger before the history run, which then carries Run.Undo.
 //
 // An automatic clean (opts.Kind KindAuto) must come from an automatic rule inside the background slot, and only ever moves to the Trash: ctx must come from schedule.Activity.BeginAutoClean, the platform macOS, the cleaner CleanerSmartScanBackground and every item named; req.Mode is forced to cleanup.ModeTrashOnly whatever the caller passed. A clean that breaks any of these is refused (schedule.ErrNotAuto) before anything is deleted, and so is an automatic context with another kind.
 func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.CleanRequest, opts CleanOptions, progress func(cleanup.Progress)) (CleanRun, error) {
@@ -391,7 +391,7 @@ func (c *Cleanup) userError(ctx context.Context, cleaner CleanerID, op string, e
 	case errors.Is(err, cleanup.ErrBusy):
 		return &appError{msg: "已有清理正在进行，请等它结束后再试", err: cleanup.ErrBusy}
 	case errors.Is(err, cleanup.ErrNoScan), errors.Is(err, cleanup.ErrStale):
-		return errors.New("扫描结果已过期，请重新扫描")
+		return errors.New("检查结果可能已经变化，请重新检查后再清理")
 	case errors.Is(err, cleanup.ErrNothingSelected):
 		return errors.New("没有选择任何项目")
 	case op == "scan":

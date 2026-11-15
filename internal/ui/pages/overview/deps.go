@@ -2,7 +2,6 @@ package overview
 
 import (
 	"context"
-	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 )
@@ -21,6 +20,3 @@ type Deps struct {
 
 // DepsKey provides the page's Deps.
 var DepsKey = core.NewKey[Deps]("spruce.overview", Deps{})
-
-// timeNow is the clock the times of the page count from.
-var timeNow = time.Now

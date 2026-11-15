@@ -72,8 +72,8 @@ func watch(id, path string, children bool) Watch {
 	return Watch{ID: id, Label: label, Icon: icon, Path: path, Children: children}
 }
 
-// DefaultWatches are the locations snapshots measure on goos for home: the caches, app data and developer folders, the user's folders, the tools' caches and the project roots (devRoots, from settings). It does no I/O: Take leaves out what does not exist. A project root that is the home folder or holds it is left out (it would measure everything), and so is one listed twice. Pure.
-func DefaultWatches(goos, home string, getenv func(string) string, devRoots []string) []Watch {
+// DefaultWatches are the locations snapshots measure on goos for home: the caches, app data and developer folders, the user's folders, the tools' caches and the project roots (devRoots, from settings). folders, by watch ID ("downloads", "desktop", "documents"), are where the user's folders really are when they are not in the home folder (UserFolders on Windows); a missing one is the home folder's own. It does no I/O: Take leaves out what does not exist. A project root that is the home folder or holds it is left out (it would measure everything), and so is one listed twice. Pure.
+func DefaultWatches(goos, home string, getenv func(string) string, folders map[string]string, devRoots []string) []Watch {
 	if home == "" {
 		return nil
 	}
@@ -81,6 +81,7 @@ func DefaultWatches(goos, home string, getenv func(string) string, devRoots []st
 		getenv = func(string) string { return "" }
 	}
 	in := func(parts ...string) string { return filepath.Join(append([]string{home}, parts...)...) }
+	user := func(id, name string) string { return orDefault(folders[id], in(name)) }
 	var out []Watch
 	if goos == "windows" {
 		local := orDefault(getenv("LOCALAPPDATA"), in("AppData", "Local"))
@@ -91,9 +92,9 @@ func DefaultWatches(goos, home string, getenv func(string) string, devRoots []st
 			watch("local-appdata", local, true),
 			watch("roaming-appdata", roaming, true),
 			watch("temp", temp, false),
-			watch("downloads", in("Downloads"), true),
-			watch("desktop", in("Desktop"), true),
-			watch("documents", in("Documents"), true),
+			watch("downloads", user("downloads", "Downloads"), true),
+			watch("desktop", user("desktop", "Desktop"), true),
+			watch("documents", user("documents", "Documents"), true),
 			watch("nuget", filepath.Join(profile, ".nuget"), false),
 			watch("gradle", filepath.Join(profile, ".gradle"), false),
 			watch("maven", filepath.Join(profile, ".m2"), false),
@@ -108,9 +109,9 @@ func DefaultWatches(goos, home string, getenv func(string) string, devRoots []st
 			watch("xcode-derived-data", in("Library", "Developer", "Xcode", "DerivedData"), false),
 			watch("library-containers", in("Library", "Containers"), true),
 			watch("library-group-containers", in("Library", "Group Containers"), true),
-			watch("downloads", in("Downloads"), true),
-			watch("desktop", in("Desktop"), true),
-			watch("documents", in("Documents"), true),
+			watch("downloads", user("downloads", "Downloads"), true),
+			watch("desktop", user("desktop", "Desktop"), true),
+			watch("documents", user("documents", "Documents"), true),
 			watch("movies", in("Movies"), false),
 			watch("music", in("Music"), false),
 			watch("pictures", in("Pictures"), false),

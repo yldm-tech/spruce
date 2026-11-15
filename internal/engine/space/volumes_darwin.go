@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,26 @@ func Volumes(ctx context.Context) ([]Volume, error) {
 		return nil, err
 	}
 	return pickVolumes(parts, volumeUsage, startupName("/Volumes")), nil
+}
+
+// StartupVolume returns the startup disk as Volumes shows it (named after the startup disk, with the data volume's capacity) without listing the mounts, which waits on every file system, a network share that stopped answering too.
+func StartupVolume() (Volume, error) {
+	return startupVolume(volumeUsage, startupName("/Volumes"))
+}
+
+// startupVolume is StartupVolume over usage, for the startup disk called name: the data volume's capacity, else that of "/".
+func startupVolume(usage usageFunc, name string) (Volume, error) {
+	total, free, err := usage(dataVolume)
+	if err != nil || total <= 0 {
+		total, free, err = usage("/")
+	}
+	if err != nil {
+		return Volume{}, err
+	}
+	if total <= 0 {
+		return Volume{}, errors.New("space: the startup disk reports no size")
+	}
+	return Volume{Path: "/", Name: name, Total: total, Free: free, Startup: true}, nil
 }
 
 func volumeUsage(mount string) (int64, int64, error) {

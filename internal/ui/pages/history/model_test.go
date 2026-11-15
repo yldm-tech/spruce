@@ -174,7 +174,7 @@ func TestTaskLines(t *testing.T) {
 	}
 	want := []string{
 		"重建图标缓存|部分完成|注销后生效|!",
-		"优化应用数据库|已跳过|Safari 仍在运行，已跳过|!",
+		"优化应用数据库|已跳过|Safari 仍在运行|!",
 		"gone|不可用|这台电脑上没有这项|!",
 		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
 	}
@@ -217,7 +217,7 @@ func TestCountText(t *testing.T) {
 func TestNewKindsMetaTitlesAndOrder(t *testing.T) {
 	for kind, want := range map[enginehist.Kind]nav.Meta{
 		enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
-		enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+		enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "undo"},
 	} {
 		if got := KindMeta(kind); got.Title != want.Title || got.Tone != want.Tone || got.Glyph != want.Glyph {
 			t.Errorf("KindMeta(%s) = %+v", kind, got)

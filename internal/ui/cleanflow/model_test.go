@@ -296,3 +296,24 @@ func TestStaleText(t *testing.T) {
 		t.Error("denied")
 	}
 }
+
+// The cleaning overlay counts what the confirmation counts, leaving the Trash to its own words.
+func TestCleanSub(t *testing.T) {
+	macWording(t)
+	cats := []cleanup.Category{
+		{ID: "c", Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{{ID: "a"}, {ID: "b"}}},
+		{ID: "t", Kind: cleanup.KindTrash, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{{ID: "trash"}}},
+	}
+	for _, c := range []struct {
+		sel  Selection
+		want string
+	}{
+		{Selection{"c": {"a": {}, "b": {}}}, "共 2 项"},
+		{Selection{"c": {"a": {}}, "t": {"trash": {}}}, "共 1 项，并清空废纸篓"},
+		{Selection{"t": {"trash": {}}}, "清空废纸篓"},
+	} {
+		if got := CleanSub(cats, c.sel); got != c.want {
+			t.Errorf("CleanSub(%v) = %q, want %q", c.sel, got, c.want)
+		}
+	}
+}

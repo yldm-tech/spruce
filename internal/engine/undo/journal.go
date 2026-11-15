@@ -36,7 +36,7 @@ type Journal struct {
 	f  *os.File
 }
 
-// Begin starts <dir>/<runID>.partial: one JSON line with meta, then Journal.Add appends one line per move (write and fsync; a few hundred microseconds per item, small next to a Trash move). Moves without a restorable TrashedPath are journaled too, for the history count. Record (or Close and Recover) ends it.
+// Begin starts <dir>/<runID>.partial: one JSON line with meta, then Journal.Add appends one line per move and Journal.AddRemoved one per item deleted for good (write and fsync; a few hundred microseconds per item, small next to a Trash move). Moves without a restorable TrashedPath are journaled too, for the history count. Record (or Close and Recover) ends it.
 func (l *Ledger) Begin(meta JournalMeta) (*Journal, error) {
 	if !validRunID(meta.RunID) {
 		return nil, fmt.Errorf("%w: %q", ErrBadRunID, meta.RunID)
@@ -78,6 +78,25 @@ func (j *Journal) Add(m cleanup.Moved) error {
 	return j.writeLocked(line)
 }
 
+// removedLine is how a journal holds an item deleted for good, apart from the moves: under its own key, so a reader that only knows moves skips it (its Path is empty).
+type removedLine struct {
+	Removed *cleanup.Removed `json:"removed"`
+}
+
+// AddRemoved appends r, an item the clean deleted for good, to the journal and syncs it to disk. Nothing of it can be put back; Recover returns it for the history count.
+func (j *Journal) AddRemoved(r cleanup.Removed) error {
+	line, err := json.Marshal(removedLine{Removed: &r})
+	if err != nil {
+		return fmt.Errorf("undo: encode removal: %w", err)
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.f == nil {
+		return errors.New("undo: the journal is closed")
+	}
+	return j.writeLocked(line)
+}
+
 func (j *Journal) writeLocked(line []byte) error {
 	if _, err := j.f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("undo: write journal: %w", err)
@@ -100,17 +119,18 @@ func (j *Journal) Close() error {
 	return err
 }
 
-// Recovered is a run whose journal outlived Spruce: what it moved before Spruce ended.
+// Recovered is a run whose journal outlived Spruce: what it moved, and deleted for good, before Spruce ended.
 type Recovered struct {
-	Meta  JournalMeta
-	Moves []cleanup.Moved
+	Meta    JournalMeta
+	Moves   []cleanup.Moved
+	Removed []cleanup.Removed
 	// Kept is how many moves the ledger now holds as restorable.
 	Kept int
 	// Ended is when the journal was last written, the best known end of the run.
 	Ended time.Time
 }
 
-// Recover turns every leftover journal (Spruce ended before Record) into a ledger entry and returns what each run moved, so the caller appends the history run that is missing; then it removes the journals. Journals this ledger began and has not finished are left alone. A line that does not decode (the last one cut short) is ignored; a journal without its first line is removed.
+// Recover turns every leftover journal (Spruce ended before Record) into a ledger entry and returns what each run moved and deleted for good, so the caller appends the history run that is missing; then it removes the journals. Journals this ledger began and has not finished are left alone. A line that does not decode (the last one cut short) is ignored; a journal without its first line is removed.
 func (l *Ledger) Recover() ([]Recovered, error) {
 	l.mu.Lock()
 	names, err := os.ReadDir(l.dir)
@@ -177,6 +197,13 @@ func readJournal(path string) (Recovered, bool, error) {
 			first = false
 			if err := json.Unmarshal(sc.Bytes(), &rec.Meta); err != nil || rec.Meta.RunID == "" {
 				return Recovered{}, false, nil
+			}
+			continue
+		}
+		var rm removedLine
+		if err := json.Unmarshal(sc.Bytes(), &rm); err == nil && rm.Removed != nil {
+			if rm.Removed.Path != "" {
+				rec.Removed = append(rec.Removed, *rm.Removed)
 			}
 			continue
 		}

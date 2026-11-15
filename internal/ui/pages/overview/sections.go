@@ -3,6 +3,7 @@ package overview
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -82,18 +83,11 @@ func trashRow(cx *core.Scope, p *page) core.Node {
 		ask(kit.ConfirmDialog{TestID: "empty-trash-confirm", Title: "清空" + bin + "？", Lines: []string{text}, ConfirmLabel: "清空", Danger: true}, func() {
 			p.active.Set(emptyTrash)
 			undo := p.canUndo()
-			// The clean belongs to the page, as a card's does: the row going while it runs cannot leave the page locked.
-			p.ov.Clean(p.cx, p.ctx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
-				func(out app.OverviewOutcome, err error) {
-					p.active.Set("")
-					p.stores.Locations.Bump()
-					p.stores.Trash.Bump()
-					if err != nil {
-						p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
-						return
-					}
-					p.toast(CleanToast(advice.ActionDelete, out, undo))
-				})
+			stores := p.stores
+			// As a card's clean: it outlives the page, its toast comes from the app's scope and the page's lock is the page's.
+			p.ov.Clean(p.cx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
+				func(app.OverviewOutcome, error) { p.active.Set("") },
+				func(out app.OverviewOutcome, err error) { cleaned(stores, advice.ActionDelete, out, err, undo) })
 		})
 	}
 	press := func() {
@@ -148,7 +142,7 @@ func trashRow(cx *core.Scope, p *page) core.Node {
 	}}
 }
 
-// browse is 按类别查看: one card per source with what it found and what the cards take of it, each opening the source's drill-down view.
+// browse is 按类别查看: one card per source with what it found and what the cards take of it, each opening the source's drill-down view. It shows, all three cards together, while any source found something or failed; three cards of 「0 B」 would only repeat the empty conclusion.
 func browse(cx *core.Scope, p *page) core.Node {
 	list := core.NewMemoFunc(cx, func() []Browse {
 		if r := p.result(); r != nil {
@@ -156,6 +150,9 @@ func browse(cx *core.Scope, p *page) core.Node {
 		}
 		return nil
 	}, nil)
+	shown := core.NewMemo(cx, func() bool {
+		return slices.ContainsFunc(list.Get(), func(b Browse) bool { return b.Items > 0 || b.Error != "" })
+	})
 	cards := make([]core.Node, len(Sources))
 	for i, id := range Sources {
 		meta := nav.Route(id).Meta()
@@ -183,10 +180,11 @@ func browse(cx *core.Scope, p *page) core.Node {
 				mutedText(func() string { return BrowseNote(b()) }, func() bool { return b().Error != "" }, "browse-note-"+string(id)),
 			}}
 	}
-	return core.View{Role: core.RoleRegion, Label: "按类别查看", Style: core.Style{Gap: 12, FlexShrink: 0}, Children: []core.Node{
+	section := core.View{Role: core.RoleRegion, Label: "按类别查看", Style: core.Style{Gap: 12, FlexShrink: 0}, Children: []core.Node{
 		kit.SectionTitle("按类别查看"),
 		cardGrid("按类别查看", "browse", cards...),
 	}}
+	return core.Show{When: shown.Get, Then: func(*core.Scope) core.Node { return section }}
 }
 
 // growthState is what 空间变化 read.

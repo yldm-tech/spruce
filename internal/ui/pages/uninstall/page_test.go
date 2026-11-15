@@ -270,6 +270,8 @@ func TestUninstallsTheAppWithTheCheckedLeftovers(t *testing.T) {
 	p.Find("id:confirm >> text:「Foo」和勾选的 1 个相关文件（共 120 MB）会移到废纸篓，可以随时放回。")
 	p.Press("id:confirm-ok")
 	p.WaitFor("id:removing", wait)
+	// The overlay shows before the service, called on its own goroutine, has the request.
+	p.WaitUntil(wait, func() bool { return len(svc.Removes()) > 0 })
 	if got := svc.Removes(); len(got) != 1 || got[0].AppID != "foo" || !slices.Equal(got[0].LeftoverIDs, []string{"sup"}) {
 		t.Fatalf("removes %+v", got)
 	}

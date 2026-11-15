@@ -45,7 +45,11 @@ type fakeEngine struct {
 	restores   []string
 	restoreOut app.RestoreOutcome
 	restoreErr error
+	// recovered counts RecoverInterrupted calls.
+	recovered int
 }
+
+func (f *fakeEngine) RecoverInterrupted(context.Context) { f.recovered++ }
 
 func (f *fakeEngine) Scan(ctx context.Context, progress func(cleanup.Progress)) (cleanup.ScanResult, error) {
 	progress(cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 500, Total: 1000})
@@ -197,12 +201,55 @@ func TestIsCommand(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	h := newHarness()
-	code, _, errOut := h.run(t, "frobnicate")
-	if code != ExitUsage || !strings.Contains(errOut, "未知的命令") {
-		t.Fatalf("code %d, stderr %q", code, errOut)
+	code, out, errOut := h.run(t, "frobnicate")
+	if code != ExitUsage || !strings.Contains(errOut, `未知的命令 "frobnicate"`) || out != "" {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	// The command list follows, so a typo shows what was meant.
+	if !strings.Contains(errOut, "用法：spruce <命令>") || !strings.Contains(errOut, "  scan ") {
+		t.Errorf("no usage after the error: %q", errOut)
+	}
+	if code, out, _ := h.run(t, "scna", "--json"); code != ExitUsage || decode(t, out)["error"] != `未知的命令 "scna"` {
+		t.Errorf("JSON: code %d, stdout %q", code, out)
 	}
 	if h.built != 0 {
 		t.Fatal("a usage error built the engine")
+	}
+}
+
+func TestRefuseRoot(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := RefuseRoot([]string{"clean", "--yes"}, &out, &errOut); code != ExitUsage || out.Len() != 0 || !strings.Contains(errOut.String(), "请不要用 sudo 运行 spruce") {
+		t.Errorf("code %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := RefuseRoot([]string{"history", "--json"}, &out, &errOut); code != ExitUsage || !strings.Contains(decode(t, out.String())["error"].(string), "sudo") {
+		t.Errorf("JSON: code %d, stdout %q", code, out.String())
+	}
+}
+
+// TestRecoverInterruptedBeforeTheRecords: history, restore and clean --yes record the cleans a Spruce process ended midway first; the read-only checks do not write anything.
+func TestRecoverInterruptedBeforeTheRecords(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"history"}, 1},
+		{[]string{"restore", "20261115T090000Z-0001"}, 1},
+		{[]string{"clean", "--yes"}, 1},
+		{[]string{"clean"}, 0},
+		{[]string{"scan"}, 0},
+		{[]string{"recommendations"}, 0},
+	} {
+		h := newHarness()
+		h.eng.runs = runs()
+		h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+		h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": entry()}
+		h.run(t, tc.args...)
+		if h.eng.recovered != tc.want {
+			t.Errorf("%q: recovered %d times, want %d", tc.args, h.eng.recovered, tc.want)
+		}
 	}
 }
 
@@ -296,10 +343,15 @@ func TestScanFailures(t *testing.T) {
 		if code != ExitPartial {
 			t.Fatalf("code %d", code)
 		}
-		for _, want := range []string{"安装包没能检查完成：无法读取下载文件夹", "有 2 个位置没有读取权限"} {
+		for _, want := range []string{"安装包没能检查完成：无法读取下载文件夹", "有 2 个位置没有读取权限", "读取权限属于终端程序"} {
 			if !strings.Contains(errOut, want) {
 				t.Errorf("stderr lacks %q: %q", want, errOut)
 			}
+		}
+		// On Windows there is no terminal permission to point at.
+		h.d.GOOS = "windows"
+		if _, _, errOut := h.run(t, "scan"); !strings.Contains(errOut, "有 2 个位置没有读取权限") || strings.Contains(errOut, "终端") {
+			t.Errorf("Windows stderr %q", errOut)
 		}
 	})
 	t.Run("every source failed", func(t *testing.T) {
@@ -578,7 +630,7 @@ func TestCleanOutcomes(t *testing.T) {
 	})
 	t.Run("refused", func(t *testing.T) {
 		h := newHarness()
-		h.eng.cleanErr = errors.New("扫描结果已过期，请重新扫描")
+		h.eng.cleanErr = errors.New("检查结果可能已经变化，请重新检查后再清理")
 		if code, _, _ := h.run(t, "clean", "--yes"); code != ExitFailed {
 			t.Fatalf("code %d", code)
 		}
@@ -780,8 +832,29 @@ func TestRestoreRefusals(t *testing.T) {
 	if code, _, errOut := h.run(t, "restore", "nope"); code != ExitFailed || !strings.Contains(errOut, "没有找到记录") {
 		t.Fatalf("unknown run: code %d, %q", code, errOut)
 	}
-	if code, _, errOut := h.run(t, "restore", "20261114T090000Z-0002"); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
-		t.Fatalf("not restorable: code %d, %q", code, errOut)
+	// With --yes the same checks run first, so both forms refuse the same records.
+	for _, yes := range [][]string{nil, {"--yes"}} {
+		if code, _, errOut := h.run(t, append([]string{"restore", "nope"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "没有找到记录") {
+			t.Fatalf("unknown run %v: code %d, %q", yes, code, errOut)
+		}
+		if code, _, errOut := h.run(t, append([]string{"restore", "20261114T090000Z-0002"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
+			t.Fatalf("not restorable %v: code %d, %q", yes, code, errOut)
+		}
+	}
+	// A run whose every move an earlier 放回原处 tried is not offered, nor acted on.
+	tried := entry()
+	for i := range tried.Moves {
+		tried.Moves[i].Tried = !tried.Moves[i].Restored
+	}
+	h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": tried}
+	h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+	for _, yes := range [][]string{nil, {"--yes"}} {
+		if code, _, errOut := h.run(t, append([]string{"restore", "20261115T090000Z-0001"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
+			t.Fatalf("tried run %v: code %d, %q", yes, code, errOut)
+		}
+	}
+	if len(h.eng.restores) != 0 {
+		t.Fatalf("restores %q", h.eng.restores)
 	}
 	h.d.CanRestore = false
 	if code, _, errOut := h.run(t, "restore", "20261115T090000Z-0001", "--yes"); code != ExitFailed || !strings.Contains(errOut, "不能放回原处") || len(h.eng.restores) != 0 {
@@ -791,6 +864,9 @@ func TestRestoreRefusals(t *testing.T) {
 
 func TestRestoreYes(t *testing.T) {
 	h := newHarness()
+	h.eng.runs = runs()
+	h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+	h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": entry()}
 	h.eng.restoreOut = app.RestoreOutcome{RunID: "r9", Restored: 2, Bytes: 350 * mb}
 	code, out, _ := h.run(t, "restore", "20261115T090000Z-0001", "--yes")
 	if code != ExitOK || !slices.Equal(h.eng.restores, []string{"20261115T090000Z-0001"}) || !strings.Contains(out, "已放回原处 2 项（350 MB）") {
@@ -843,6 +919,25 @@ func TestVersionAndHelp(t *testing.T) {
 	}
 	if code, _, _ := h.run(t, "help", "frobnicate"); code != ExitUsage {
 		t.Fatalf("help of an unknown command: code %d", code)
+	}
+	if _, out, _ := h.run(t, "help"); !strings.Contains(out, "除 help 外，每个命令都可以加 --json") {
+		t.Errorf("general help %q", out)
+	}
+	// history and restore record the cleans a Spruce process ended midway (TestRecoverInterruptedBeforeTheRecords), so no help calls them read-only.
+	for _, args := range [][]string{{"help"}, {"help", "history"}, {"help", "restore"}} {
+		if _, out, _ := h.run(t, args...); !strings.Contains(out, "补记 Spruce 中途退出的清理") || strings.Contains(out, "只读取。") || strings.Contains(out, "都只读取") {
+			t.Errorf("%q: %q", args, out)
+		}
+	}
+	// Where restore is not available, clean's help does not offer it.
+	if _, out, _ := h.run(t, "help", "clean"); !strings.Contains(out, "spruce restore 放回原处") {
+		t.Errorf("macOS clean help %q", out)
+	}
+	h.d.CanRestore = false
+	for _, args := range [][]string{{"help", "clean"}, {"clean", "--help"}} {
+		if code, out, _ := h.run(t, args...); code != ExitOK || strings.Contains(out, "spruce restore") || !strings.Contains(out, "清理会记入操作历史。") {
+			t.Errorf("%q without restore: code %d, stdout %q", args, code, out)
+		}
 	}
 	if h.built != 0 {
 		t.Fatal("help or version built the engine")

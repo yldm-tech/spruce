@@ -170,6 +170,17 @@ func (p *page) asker(cx *core.Scope) func(kit.ConfirmDialog, func()) {
 // toast shows the toast t.
 func (p *page) toast(t store.Toast) { p.stores.Toasts.Show(t) }
 
+// cleaned is what a clean of 概览 leaves once it ended, shown in the app's scope so leaving the page does not lose it: the disks and the Trash read again, and the toast (CleanToast, with 撤销 when undo was possible as it started).
+func cleaned(stores *store.Stores, a advice.Action, out app.OverviewOutcome, err error, undo bool) {
+	stores.Locations.Bump()
+	stores.Trash.Bump()
+	if err != nil {
+		stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
+		return
+	}
+	stores.Toasts.Show(CleanToast(a, out, undo))
+}
+
 // drill opens the drill-down view of source, on the 开发者 tab when tab is set, revealing categoryID.
 func (p *page) drill(source, categoryID string, tab nav.DevTab) {
 	r := nav.Route(source)
@@ -291,7 +302,7 @@ func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
 	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
 		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
-		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, timeNow()),
+		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, cx.WallTime()),
 		reduce: cx.Env().ReduceMotion}
 	seen, _ := seenAuto.Load(p.ov)
 	at, _ := seen.(time.Time)
@@ -299,10 +310,10 @@ func Page(cx *core.Scope) core.Node {
 	if id := p.nav.TakeOverviewCard(); id != "" {
 		p.focus.Set(id)
 	}
-	// The times read again every minute.
+	// The times read again every minute, on the scope's clock (a test's manual clock and wall time).
 	var tick func()
 	tick = func() {
-		p.now.Set(timeNow())
+		p.now.Set(cx.WallTime())
 		cx.AfterFunc(time.Minute, tick)
 	}
 	cx.AfterFunc(time.Minute, tick)

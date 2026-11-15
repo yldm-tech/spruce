@@ -80,16 +80,21 @@ type windows struct {
 	keepInTray func() bool
 	// hidden is set while closing has hidden the window.
 	hidden bool
+	// blocked reports, without subscribing, whether an overlay holds the sidebar (store.Block): a clean, an uninstall, a deletion or a maintenance run under its overlay, or a dialog. The menu bar and the notifications stay reachable meanwhile, and changing the page then would end the page's work, so they only bring the window forward. Nil is never blocked.
+	blocked func() bool
 }
 
-// show shows the main window, on route unless it is "": the Dock icon comes back, a window opens when none is (the app started at login without one, or it was closed for good), and it comes to the front. A window that was hidden is counted as shown again (nav.Navigator.WindowShown), so 概览, still mounted, checks again as opening it does (DESIGN 2.3 state D).
+// held reports whether an overlay holds the sidebar now.
+func (w *windows) held() bool { return w.blocked != nil && w.blocked() }
+
+// show shows the main window, on route unless it is "" or an overlay holds the sidebar (held): the Dock icon comes back, a window opens when none is (the app started at login without one, or it was closed for good), and it comes to the front. A window that was hidden is counted as shown again (nav.Navigator.WindowShown), so 概览, still mounted, checks again as opening it does (DESIGN 2.3 state D).
 func (w *windows) show(route nav.Route) {
 	w.host.SetDockVisible(true)
 	if w.host.Main() == nil {
 		w.host.SetMainView(w.view)
 		w.host.OnClosing(w.closing)
 	}
-	if route != "" {
+	if route != "" && !w.held() {
 		w.nav.Go(route)
 	}
 	if w.hidden {
@@ -123,7 +128,7 @@ const (
 	noticeAutoSummary = "auto-summary:"
 )
 
-// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else.
+// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else, and also while an overlay holds the sidebar.
 func (w *windows) pressed(id string, hasRecommendations bool) {
 	switch {
 	case id == noticeLowDisk && hasRecommendations:
@@ -132,8 +137,18 @@ func (w *windows) pressed(id string, hasRecommendations bool) {
 		w.show(nav.Space)
 	case strings.HasPrefix(id, noticeAutoSummary):
 		w.show("")
-		w.nav.GoHistory(history.KindAuto, "")
+		if !w.held() {
+			w.nav.GoHistory(history.KindAuto, "")
+		}
 	default:
 		w.show("")
+	}
+}
+
+// automation opens 设置 → 自动清理 for the menu bar's rules item, or only the window while an overlay holds the sidebar.
+func (w *windows) automation() {
+	w.show("")
+	if !w.held() {
+		w.nav.GoSettings(nav.SettingsAuto)
 	}
 }

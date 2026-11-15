@@ -338,5 +338,27 @@ func TestSpaceLocations(t *testing.T) {
 	if loc := f.svc.Locations(short); len(loc.Volumes) != 0 || len(loc.Targets) == 0 {
 		t.Errorf("locations with a stuck disk list %+v", loc)
 	}
+}
 
+// TestSpaceStartupDisk: the controller's free space comes from the startup disk alone, never from the disk list, which a stuck share holds.
+func TestSpaceStartupDisk(t *testing.T) {
+	f := newSpaceFixture(t)
+	f.svc.volumes = func(context.Context) ([]space.Volume, error) {
+		t.Error("the disk list was read")
+		return nil, errors.New("unused")
+	}
+	f.svc.startup = func() (space.Volume, error) {
+		return space.Volume{Path: "/", Name: "Macintosh HD", Total: 500e9, Free: 30e9, Startup: true}, nil
+	}
+	if d, err := f.svc.StartupDisk(t.Context()); err != nil || d.Volume != "Macintosh HD" || d.Free != 30e9 || d.Total != 500e9 {
+		t.Errorf("startup disk %+v %v", d, err)
+	}
+	f.svc.startup = func() (space.Volume, error) { return space.Volume{Path: "/", Total: 1, Startup: true}, nil }
+	if d, _ := f.svc.StartupDisk(t.Context()); d.Volume != "/" {
+		t.Errorf("unnamed startup disk %+v", d)
+	}
+	f.svc.startup = func() (space.Volume, error) { return space.Volume{}, errors.New("boom") }
+	if _, err := f.svc.StartupDisk(t.Context()); err == nil {
+		t.Error("no error from an unreadable disk")
+	}
 }

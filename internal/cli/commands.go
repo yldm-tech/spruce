@@ -67,7 +67,12 @@ func (r *run) check(eng Engine) (res cleanup.ScanResult, partial bool, err error
 		}
 	}
 	if res.Denied > 0 {
-		r.note("有 %d 个位置没有读取权限，结果可能不完整", res.Denied)
+		if r.d.GOOS == "darwin" {
+			// Run from a terminal, the privacy permissions are the terminal's, not Spruce.app's.
+			r.note("有 %d 个位置没有读取权限，结果可能不完整；在终端中运行时，读取权限属于终端程序，可以在「隐私与安全性 → 完全磁盘访问权限」中加入所用的终端", res.Denied)
+		} else {
+			r.note("有 %d 个位置没有读取权限，结果可能不完整", res.Denied)
+		}
 	}
 	return res, partial, nil
 }
@@ -253,6 +258,9 @@ func (r *run) clean(args []string) int {
 	eng, err := r.engine(sourcesOrNil(sources))
 	if err != nil {
 		return r.fail(err)
+	}
+	if yes {
+		eng.RecoverInterrupted(r.ctx)
 	}
 	res, partial, err := r.check(eng)
 	if err != nil {
@@ -477,6 +485,7 @@ func (r *run) history(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
+	eng.RecoverInterrupted(r.ctx)
 	all, err := eng.History(history.MaxRuns)
 	if err != nil {
 		return r.fail(err)
@@ -596,9 +605,7 @@ func (r *run) restore(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	if yes {
-		return r.putBack(eng, runID)
-	}
+	eng.RecoverInterrupted(r.ctx)
 	runs, err := eng.History(history.MaxRuns)
 	if err != nil {
 		return r.fail(err)
@@ -621,6 +628,13 @@ func (r *run) restore(args []string) int {
 		plan.Items++
 		plan.Bytes += m.Size
 		plan.Moves = append(plan.Moves, RestoreItem{Path: m.Path, Size: m.Size, Dir: m.Dir})
+	}
+	if plan.Items == 0 {
+		return r.fail(errors.New("这条记录已经不能放回原处了"))
+	}
+	// --yes acts on what the preview lists: the moves neither put back nor tried by an earlier 放回原处 (undo.Ledger.Restore skips the same).
+	if yes {
+		return r.putBack(eng, runID)
 	}
 	if r.json {
 		r.writeJSON(output{Restore: &plan})

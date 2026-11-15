@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,28 @@ func TestCleanRechecksExclusionsAddedAfterTheScan(t *testing.T) {
 	}
 }
 
+// TestCleanRefusesAFolderHoldingAnExclusion: an exclusion added inside a folder item after the scan keeps the whole folder, as the scans do.
+func TestCleanRefusesAFolderHoldingAnExclusion(t *testing.T) {
+	fx := newFixture(t)
+	var exclusions []string
+	e, del := cleanFixture(t, fx, ExecutorOptions{Exclusions: func() []string { return exclusions }}, nil)
+	exclusions = []string{filepath.Join(fx.paths["b"], "inner"), filepath.Join(fx.dir, "caches", "a", "*")}
+	res, err := e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := failureOf(res, fx.paths["b"]); !ok || f.Reason != "已在设置中排除，已跳过" {
+		t.Errorf("folder holding an exclusion: %+v", res.Failed)
+	}
+	if slices.Contains(del.removed, fx.paths["b"]) {
+		t.Error("a folder holding an exclusion was deleted")
+	}
+	// A file is never refused for an exclusion below its path, nor for a pattern.
+	if res.Removed != 2 || !slices.Contains(del.removed, fx.paths["a"]) {
+		t.Errorf("removed %d %v, want a and c", res.Removed, del.removed)
+	}
+}
+
 func TestCleanTrashOnly(t *testing.T) {
 	fx := newFixture(t)
 	e, del := cleanFixture(t, fx, ExecutorOptions{}, func(s *ScanResult) {
@@ -129,6 +152,36 @@ func TestCleanTrashOnly(t *testing.T) {
 	}
 	if _, err := e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches"}, Mode: "shred"}, nil); !errors.Is(err, ErrBadMode) {
 		t.Errorf("unknown mode: %v", err)
+	}
+}
+
+func TestCleanReportsRemovalsBeforeProgress(t *testing.T) {
+	fx := newFixture(t)
+	e, _ := cleanFixture(t, fx, ExecutorOptions{}, nil)
+	var events []string
+	var removed []Removed
+	ctx := WithOnRemoved(t.Context(), func(r Removed) {
+		events = append(events, "removed:"+filepath.Base(r.Path))
+		removed = append(removed, r)
+	})
+	if _, err := e.Clean(ctx, CleanRequest{CategoryIDs: []string{"caches", "installers"}}, func(p Progress) {
+		events = append(events, "progress:"+filepath.Base(p.Path))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The three caches are deleted for good (fakeDeleter frees what it is told); the installers go to the Trash and are not reported here.
+	if len(removed) != 3 {
+		t.Fatalf("removed %+v", removed)
+	}
+	for _, r := range removed {
+		if r.ItemID != ItemID(r.Path) || filepath.Dir(r.Path) != filepath.Join(fx.dir, "caches") {
+			t.Errorf("removal %+v", r)
+		}
+	}
+	for i, ev := range events {
+		if strings.HasPrefix(ev, "removed:") && (i+1 == len(events) || !strings.HasPrefix(events[i+1], "progress:")) {
+			t.Errorf("a removal not followed by progress: %v", events)
+		}
 	}
 }
 

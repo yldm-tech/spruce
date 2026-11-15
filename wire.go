@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -245,19 +244,13 @@ func wire(e env) (shell.Deps, error) {
 		Gate:       eng.gate,
 		Growth:     snapshots,
 		Watches: func(s settings.AppSettings) []growth.Watch {
-			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, s.Cleanup.DevProjectRoots)
+			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, growth.UserFolders(), s.Cleanup.DevProjectRoots)
 		},
 		GrowthOptions: growth.TakeOptions{
 			Usage:          diskUsage,
 			FullDiskAccess: func() bool { return fulldisk.Check() == fulldisk.Granted },
 		},
-		Disk: func(ctx context.Context) (app.DiskState, error) {
-			d, ok := app.SystemDisk(spaceSvc.Locations(ctx))
-			if !ok {
-				return app.DiskState{}, errors.New("no disk")
-			}
-			return d, nil
-		},
+		Disk:          spaceSvc.StartupDisk,
 		InstalledApps: eng.installedApps,
 		TrashSize:     files.TrashSize,
 		Ledger:        ledger,

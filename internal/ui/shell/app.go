@@ -62,7 +62,7 @@ func App(d Deps) func(app *core.Scope) {
 		}
 		w := &windows{host: host, nav: navigator, keepInTray: keepInTray, view: func(cx *core.Scope) core.Node {
 			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f })
-		}}
+		}, blocked: func() bool { return core.Untracked(app, stores.Block.Blocked) }}
 
 		// Closing the window ends the app unless it is to stay in the menu bar.
 		app.Effect(func() {
@@ -136,11 +136,8 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 			Open:     func() { w.show("") },
 			Overview: func() { w.show(nav.Overview) },
 			Check:    func() { stores.Overview.CheckNow(nil) },
-			Auto: func() {
-				w.show("")
-				w.nav.GoSettings(nav.SettingsAuto)
-			},
-			Quit: app.Quit,
+			Auto:     w.automation,
+			Quit:     app.Quit,
 		}
 		if st.Result != nil {
 			s.Headline = st.Result.Headline

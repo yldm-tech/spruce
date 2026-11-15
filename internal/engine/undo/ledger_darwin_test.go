@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -282,16 +283,19 @@ func TestRestoreReportsEachFailure(t *testing.T) {
 	if tried != 4 {
 		t.Errorf("%d moves marked tried, want 4", tried)
 	}
-	// Asked again explicitly, Restore tries them again (the command line can); nothing is overwritten.
+	// Asked again, Restore tries nothing again, even once a move could go back: nothing is retried.
 	if err := os.Remove(cache.Path); err != nil {
 		t.Fatal(err)
 	}
 	outs, err = f.l.Restore(t.Context(), "run2", trash.SystemRestorer())
-	if err != nil || len(outs) != 4 {
+	if err != nil || len(outs) != 0 {
 		t.Fatalf("second restore %d outcomes, %v", len(outs), err)
 	}
-	if e, _ := f.l.Load("run2"); !slicesContainsRestored(e, cache.Path) {
-		t.Error("the cache did not come back on the second try")
+	if again, _ := f.l.Load("run2"); slicesContainsRestored(again, cache.Path) || !slices.EqualFunc(again.Moves, e.Moves, func(a, b Move) bool { return a.Path == b.Path && a.Restored == b.Restored && a.Tried == b.Tried }) {
+		t.Error("a second restore changed the entry")
+	}
+	if _, err := os.Lstat(cache.Path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the tried cache was put back: %v", err)
 	}
 }
 
@@ -390,6 +394,10 @@ func TestJournalRecoverAfterACrash(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	deleted := cleanup.Removed{ItemID: "gone", Path: filepath.Join(f.root, "gone"), Freed: 9}
+	if err := j.AddRemoved(deleted); err != nil {
+		t.Fatal(err)
+	}
 	// Spruce ends mid-write: the last line is cut short.
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
@@ -430,6 +438,9 @@ func TestJournalRecoverAfterACrash(t *testing.T) {
 	}
 	if len(r.Moves) != 2 || r.Kept != 1 || r.Ended.IsZero() {
 		t.Errorf("moves %d kept %d ended %v", len(r.Moves), r.Kept, r.Ended)
+	}
+	if len(r.Removed) != 1 || r.Removed[0] != deleted {
+		t.Errorf("removed %+v, want %+v", r.Removed, deleted)
 	}
 	if _, err := os.Stat(next.journalPath("crashed")); !os.IsNotExist(err) {
 		t.Errorf("the journal is still there: %v", err)

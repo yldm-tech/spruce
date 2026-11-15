@@ -196,7 +196,8 @@ type Badge struct {
 func BadgeFor(a advice.Action, canUndo bool) Badge {
 	switch a {
 	case advice.ActionDelete:
-		return Badge{Text: "会自动重新生成", Glyph: "info"}
+		// Not every deletion comes back (logs, crash reports, temporary files); what every one shares is that it cannot be undone.
+		return Badge{Text: "无法撤销", Glyph: "alert"}
 	case advice.ActionCommand:
 		return Badge{Text: "运行命令", Glyph: "alert", Warning: true}
 	case advice.ActionMixed:
