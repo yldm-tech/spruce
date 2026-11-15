@@ -86,7 +86,9 @@ func start(t *testing.T, st app.OverviewState, folders []string) *page {
 			return core.Func(installers.Page)
 		})
 	}, nsgotest.Size(1052, 1000))
-	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), p.ov.State()) })
+	p.WaitUntil(wait, func() bool {
+		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), p.ov.State())
+	})
 	return p
 }
 

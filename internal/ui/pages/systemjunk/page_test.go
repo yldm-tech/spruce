@@ -82,7 +82,9 @@ func start(t *testing.T, st app.OverviewState) *page {
 		systemjunk.DepsKey.Provide(cx, systemjunk.Deps{Files: p.files})
 		return systemjunk.Page(cx)
 	}, nsgotest.Size(1052, 1000))
-	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), p.ov.State()) })
+	p.WaitUntil(wait, func() bool {
+		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), p.ov.State())
+	})
 	return p
 }
 

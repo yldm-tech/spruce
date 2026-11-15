@@ -111,7 +111,9 @@ func start(t *testing.T, st app.OverviewState, roots []string, before ...func(*n
 			return core.Func(devjunk.Page)
 		})
 	}, nsgotest.Size(1052, 1200))
-	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State()) })
+	p.WaitUntil(wait, func() bool {
+		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State())
+	})
 	return p
 }
 

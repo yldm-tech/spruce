@@ -112,7 +112,9 @@ func start(t *testing.T, st app.OverviewState, before ...func(*nav.Navigator)) *
 				SizeLabel: "可释放", EmptyTitle: "没有找到系统垃圾", EmptyDescription: "很干净", Reveal: p.files.Reveal}
 		}}
 	}, nsgotest.Size(1052, 1200))
-	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State()) })
+	p.WaitUntil(wait, func() bool {
+		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State())
+	})
 	return p
 }
 
@@ -410,7 +412,10 @@ func TestStopAndRefusal(t *testing.T) {
 	p.Press("id:overlay-cancel")
 	p.WaitForGone("id:clean-overlay", wait)
 	p.Press("id:clean")
-	p.WaitUntil(wait, func() bool { t := p.stores.Toasts.Current(); return t != nil && t.Text == "Spruce 正在命令行中清理，请稍后再试" })
+	p.WaitUntil(wait, func() bool {
+		t := p.stores.Toasts.Current()
+		return t != nil && t.Text == "Spruce 正在命令行中清理，请稍后再试"
+	})
 }
 
 // While a check runs the view says so and 清理 waits; a result it may not act on says why, offers 重新检查 and was checked again as the view opened.
