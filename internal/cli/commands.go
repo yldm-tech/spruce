@@ -596,9 +596,6 @@ func (r *run) restore(args []string) int {
 	if err != nil {
 		return r.fail(err)
 	}
-	if yes {
-		return r.putBack(eng, runID)
-	}
 	runs, err := eng.History(history.MaxRuns)
 	if err != nil {
 		return r.fail(err)
@@ -621,6 +618,13 @@ func (r *run) restore(args []string) int {
 		plan.Items++
 		plan.Bytes += m.Size
 		plan.Moves = append(plan.Moves, RestoreItem{Path: m.Path, Size: m.Size, Dir: m.Dir})
+	}
+	if plan.Items == 0 {
+		return r.fail(errors.New("这条记录已经不能放回原处了"))
+	}
+	// --yes acts on what the preview lists: the moves neither put back nor tried by an earlier 放回原处 (undo.Ledger.Restore skips the same).
+	if yes {
+		return r.putBack(eng, runID)
 	}
 	if r.json {
 		r.writeJSON(output{Restore: &plan})

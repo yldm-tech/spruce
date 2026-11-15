@@ -780,8 +780,29 @@ func TestRestoreRefusals(t *testing.T) {
 	if code, _, errOut := h.run(t, "restore", "nope"); code != ExitFailed || !strings.Contains(errOut, "没有找到记录") {
 		t.Fatalf("unknown run: code %d, %q", code, errOut)
 	}
-	if code, _, errOut := h.run(t, "restore", "20261114T090000Z-0002"); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
-		t.Fatalf("not restorable: code %d, %q", code, errOut)
+	// With --yes the same checks run first, so both forms refuse the same records.
+	for _, yes := range [][]string{nil, {"--yes"}} {
+		if code, _, errOut := h.run(t, append([]string{"restore", "nope"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "没有找到记录") {
+			t.Fatalf("unknown run %v: code %d, %q", yes, code, errOut)
+		}
+		if code, _, errOut := h.run(t, append([]string{"restore", "20261114T090000Z-0002"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
+			t.Fatalf("not restorable %v: code %d, %q", yes, code, errOut)
+		}
+	}
+	// A run whose every move an earlier 放回原处 tried is not offered, nor acted on.
+	tried := entry()
+	for i := range tried.Moves {
+		tried.Moves[i].Tried = !tried.Moves[i].Restored
+	}
+	h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": tried}
+	h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+	for _, yes := range [][]string{nil, {"--yes"}} {
+		if code, _, errOut := h.run(t, append([]string{"restore", "20261115T090000Z-0001"}, yes...)...); code != ExitFailed || !strings.Contains(errOut, "已经不能放回原处") {
+			t.Fatalf("tried run %v: code %d, %q", yes, code, errOut)
+		}
+	}
+	if len(h.eng.restores) != 0 {
+		t.Fatalf("restores %q", h.eng.restores)
 	}
 	h.d.CanRestore = false
 	if code, _, errOut := h.run(t, "restore", "20261115T090000Z-0001", "--yes"); code != ExitFailed || !strings.Contains(errOut, "不能放回原处") || len(h.eng.restores) != 0 {
@@ -791,6 +812,9 @@ func TestRestoreRefusals(t *testing.T) {
 
 func TestRestoreYes(t *testing.T) {
 	h := newHarness()
+	h.eng.runs = runs()
+	h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+	h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": entry()}
 	h.eng.restoreOut = app.RestoreOutcome{RunID: "r9", Restored: 2, Bytes: 350 * mb}
 	code, out, _ := h.run(t, "restore", "20261115T090000Z-0001", "--yes")
 	if code != ExitOK || !slices.Equal(h.eng.restores, []string{"20261115T090000Z-0001"}) || !strings.Contains(out, "已放回原处 2 项（350 MB）") {

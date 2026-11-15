@@ -309,7 +309,7 @@ func Reason(m cleanup.Moved, err error) string {
 	return "没能放回，可以在废纸篓里手动放回"
 }
 
-// Restore puts back every unrestored move of runID through r, one at a time, then rewrites the entry (restored moves, and tried ones that failed for another reason than ctx) and adds every restored move's item ID to restored.json (of its original path and, when it came back under another name, of that path too). Moves are independent: one that fails is reported with its reason and the rest go on; nothing is overwritten or retried. KeepBoth is set for the user's own files (installers, large files, an app and its leftovers, 空间透视's moves), never for caches, logs and build output. The error is non-nil only for a missing or expired entry (ErrNoEntry), a restore of the same run already going on (ErrRestoring), ctx (the outcomes then hold what was done before it ended) or a ledger that could not be rewritten afterwards (ErrNotSaved, with every outcome).
+// Restore puts back every move of runID that is still open (neither put back nor tried in vain by an earlier 放回原处) through r, one at a time, then rewrites the entry (restored moves, and tried ones that failed for another reason than ctx) and adds every restored move's item ID to restored.json (of its original path and, when it came back under another name, of that path too). Moves are independent: one that fails is reported with its reason and the rest go on; nothing is overwritten or retried. KeepBoth is set for the user's own files (installers, large files, an app and its leftovers, 空间透视's moves), never for caches, logs and build output. The error is non-nil only for a missing or expired entry (ErrNoEntry), a restore of the same run already going on (ErrRestoring), ctx (the outcomes then hold what was done before it ended) or a ledger that could not be rewritten afterwards (ErrNotSaved, with every outcome).
 func (l *Ledger) Restore(ctx context.Context, runID string, r trash.Restorer) ([]Outcome, error) {
 	if !validRunID(runID) {
 		return nil, fmt.Errorf("%w: %q", ErrBadRunID, runID)
@@ -338,7 +338,7 @@ func (l *Ledger) Restore(ctx context.Context, runID string, r trash.Restorer) ([
 	var outs []Outcome
 	var ctxErr error
 	for _, m := range e.Moves {
-		if m.Restored {
+		if !m.open() {
 			continue
 		}
 		if err := ctx.Err(); err != nil {

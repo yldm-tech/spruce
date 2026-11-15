@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -282,16 +283,19 @@ func TestRestoreReportsEachFailure(t *testing.T) {
 	if tried != 4 {
 		t.Errorf("%d moves marked tried, want 4", tried)
 	}
-	// Asked again explicitly, Restore tries them again (the command line can); nothing is overwritten.
+	// Asked again, Restore tries nothing again, even once a move could go back: nothing is retried.
 	if err := os.Remove(cache.Path); err != nil {
 		t.Fatal(err)
 	}
 	outs, err = f.l.Restore(t.Context(), "run2", trash.SystemRestorer())
-	if err != nil || len(outs) != 4 {
+	if err != nil || len(outs) != 0 {
 		t.Fatalf("second restore %d outcomes, %v", len(outs), err)
 	}
-	if e, _ := f.l.Load("run2"); !slicesContainsRestored(e, cache.Path) {
-		t.Error("the cache did not come back on the second try")
+	if again, _ := f.l.Load("run2"); slicesContainsRestored(again, cache.Path) || !slices.EqualFunc(again.Moves, e.Moves, func(a, b Move) bool { return a.Path == b.Path && a.Restored == b.Restored && a.Tried == b.Tried }) {
+		t.Error("a second restore changed the entry")
+	}
+	if _, err := os.Lstat(cache.Path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the tried cache was put back: %v", err)
 	}
 }
 
