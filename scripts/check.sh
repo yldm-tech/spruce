@@ -17,8 +17,9 @@ for t in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64; do
 done
 
 echo "check: go test -race"
-# The root package runs the headless screen tests, and the long-list one alone takes about 9 minutes with the race detector on a loaded machine, so the default 10 minute limit is too tight.
+# The root package runs the headless screen tests under go test; the 3,000-row long-list one skips itself under the race detector (it alone took up to 25 minutes on a loaded machine) and runs here once without it.
 go test -race -timeout 25m ./...
+go test -count=1 -run '^TestScreensSystemJunkLongList$' .
 
 echo "check: golangci-lint (darwin, windows)"
 golangci-lint run ./...

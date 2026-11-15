@@ -69,6 +69,8 @@ func TestRestorePutsBackAndShowsTheOutcome(t *testing.T) {
 	p.Press("id:run-t1-restore")
 	p.WaitUntil(wait, func() bool { return p.Find("id:run-t1-restore").Props.Busy })
 	p.Find("id:run-t1-restore >> text:正在放回…")
+	// The button turns busy before the store's goroutine reaches the service, so wait for the call instead of reading it at once.
+	p.WaitUntil(wait, func() bool { _, _, _, undos, _ := ov.Calls(); return len(undos) > 0 })
 	if _, _, _, undos, _ := ov.Calls(); !reflect.DeepEqual(undos, []string{"t1"}) {
 		t.Errorf("Undo calls %v", undos)
 	}

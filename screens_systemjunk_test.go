@@ -110,6 +110,9 @@ func TestScreensSystemJunk(t *testing.T) {
 
 // TestScreensSystemJunkLongList expands a category of 3,000 items and scrolls through it: the design's largest list, for its look and, under -trace, its commit times.
 func TestScreensSystemJunkLongList(t *testing.T) {
+	if raceEnabled {
+		t.Skip("the 3,000-row scroll is about checking look and commit times, which the headless and target runs without the race detector cover; under -race it alone takes up to 25 minutes on a loaded machine")
+	}
 	mod := time.Now().Add(-50 * time.Hour)
 	items := make([]cleanup.Item, 3000)
 	var size int64
