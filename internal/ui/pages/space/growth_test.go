@@ -95,6 +95,41 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	p.WaitFor("text:正在分析「个人文件夹」…", wait)
 }
 
+// TestActionBarRisesOverTheToast: the shell's toast sits at the bottom of the page area, 24 points up and at least 44 tall, so while it shows the figures and 重新扫描 stand above it, and come back down once it goes.
+func TestActionBarRisesOverTheToast(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	trashed(svc)
+	p := start(t, svc, undoable(t))
+	p.WaitFor(homeList, wait)
+	// bottom is where 重新扫描 ends, from the top of the window.
+	bottom := func() float32 {
+		v := p.Find("id:rescan")
+		y := float32(v.Frame.Size.Height)
+		for ; v != nil; v = v.Parent {
+			y += float32(v.Frame.Origin.Y)
+			if v.Props.TestID == "space-page" {
+				y -= float32(v.Offset.Y)
+			}
+		}
+		return y
+	}
+	without := bottom()
+	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.waitToast()
+	p.Settle()
+	if got := bottom(); got > 820-24-44-12 || got >= without {
+		t.Errorf("重新扫描 ends at %v with the toast, %v without it", got, without)
+	}
+	if page := p.Find("id:space-page"); page.Content.Height > page.Frame.Size.Height {
+		t.Errorf("the page scrolls with the toast: content %v in %v", page.Content.Height, page.Frame.Size.Height)
+	}
+	p.Post(p.stores.Toasts.Dismiss)
+	p.Settle()
+	if got := bottom(); got != without {
+		t.Errorf("重新扫描 ends at %v after the toast, %v before it", got, without)
+	}
+}
+
 // TestUndoWhileAwayScansOnReturn: the toast's 撤销 outlives the page, so a move undone while another page shows scans its location again when 空间透视 opens again, and only once.
 func TestUndoWhileAwayScansOnReturn(t *testing.T) {
 	svc := spacefake.New(time.Now())

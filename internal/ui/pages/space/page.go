@@ -117,7 +117,10 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 				return resultsView(cx, r, summary)
 			})
 		}),
-		kit.ActionBar{
+		// While the shell's toast shows, the action bar rises above it.
+		core.View{TestID: "space-action-bar", StyleFunc: func() core.Style {
+			return core.Style{AutoMargin: core.SideTop, Padding: core.Edges{Bottom: toastClearance(stores)}}
+		}, Children: []core.Node{kit.ActionBar{
 			Start: func() kit.Stat {
 				sum := summary()
 				return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
@@ -130,8 +133,19 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 				return kit.Stat{Label: "上次扫描", Value: when}
 			},
 			Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
-		},
+		}}},
 	}
+}
+
+// toastHeight is what the shell's toast takes at the bottom of the page area: 24 points below it, at least 44 for itself, and 12 to the action bar; the page's own bottom padding (24) is part of it.
+const toastHeight = 24 + 44 + 12 - 24
+
+// toastClearance is how far the action bar rises while the shell's toast shows (centred at the bottom of the page area, over the pages), so the toast does not cover the figures and 重新扫描; 0 without one. Reading it subscribes.
+func toastClearance(stores *store.Stores) core.Points {
+	if stores != nil && stores.Toasts.Current() != nil {
+		return toastHeight
+	}
+	return 0
 }
 
 // resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash that cannot be undone from Spruce (Windows).
@@ -193,8 +207,9 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 	children := func() []app.SpaceEntry { return listing().Children }
 	total := func() int64 { return listing().Entry.Size }
 	folderName := func() string { return listing().Entry.Name }
-	// The map and the list share one row that fills the window's height left by the header, the tabs and the action bar, never less than 340 points; the list scrolls inside it.
-	browserHeight := func() core.Points { return max(340, cx.Env().Window().Height-380) }
+	// The map and the list share one row that fills the window's height left by the header, the tabs and the action bar (raised over the toast while it shows), never less than 340 points; the list scrolls inside it.
+	stores := store.Use(cx)
+	browserHeight := func() core.Points { return max(340, cx.Env().Window().Height-380-toastClearance(stores)) }
 
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 12}, Children: []core.Node{
 		core.Show{When: has, Then: func(*core.Scope) core.Node { return breadcrumb(r, listing) }},
