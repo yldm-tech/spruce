@@ -234,7 +234,7 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 		progress = func(Progress) {}
 	}
 	trashOnly := req.Mode == ModeTrashOnly
-	onMoved := OnMoved(ctx)
+	onMoved, onRemoved := OnMoved(ctx), OnRemoved(ctx)
 	var exclusions []string
 	if e.opts.Exclusions != nil {
 		exclusions = e.opts.Exclusions()
@@ -326,6 +326,7 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 				res.Removed++
 				out.Removed++
 				gone = append(gone, j.item.ID)
+				onRemoved(Removed{ItemID: j.item.ID, Path: j.item.Path, Freed: rm.Freed})
 			}
 		case DeleteTrash:
 			to, err := e.del.Trash(ctx, j.item.Path, j.cat.Roots)

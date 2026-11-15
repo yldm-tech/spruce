@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,36 @@ func TestCleanTrashOnly(t *testing.T) {
 	}
 	if _, err := e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches"}, Mode: "shred"}, nil); !errors.Is(err, ErrBadMode) {
 		t.Errorf("unknown mode: %v", err)
+	}
+}
+
+func TestCleanReportsRemovalsBeforeProgress(t *testing.T) {
+	fx := newFixture(t)
+	e, _ := cleanFixture(t, fx, ExecutorOptions{}, nil)
+	var events []string
+	var removed []Removed
+	ctx := WithOnRemoved(t.Context(), func(r Removed) {
+		events = append(events, "removed:"+filepath.Base(r.Path))
+		removed = append(removed, r)
+	})
+	if _, err := e.Clean(ctx, CleanRequest{CategoryIDs: []string{"caches", "installers"}}, func(p Progress) {
+		events = append(events, "progress:"+filepath.Base(p.Path))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The three caches are deleted for good (fakeDeleter frees what it is told); the installers go to the Trash and are not reported here.
+	if len(removed) != 3 {
+		t.Fatalf("removed %+v", removed)
+	}
+	for _, r := range removed {
+		if r.ItemID != ItemID(r.Path) || filepath.Dir(r.Path) != filepath.Join(fx.dir, "caches") {
+			t.Errorf("removal %+v", r)
+		}
+	}
+	for i, ev := range events {
+		if strings.HasPrefix(ev, "removed:") && (i+1 == len(events) || !strings.HasPrefix(events[i+1], "progress:")) {
+			t.Errorf("a removal not followed by progress: %v", events)
+		}
 	}
 }
 

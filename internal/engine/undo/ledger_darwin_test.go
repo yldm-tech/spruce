@@ -394,6 +394,10 @@ func TestJournalRecoverAfterACrash(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	deleted := cleanup.Removed{ItemID: "gone", Path: filepath.Join(f.root, "gone"), Freed: 9}
+	if err := j.AddRemoved(deleted); err != nil {
+		t.Fatal(err)
+	}
 	// Spruce ends mid-write: the last line is cut short.
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
@@ -434,6 +438,9 @@ func TestJournalRecoverAfterACrash(t *testing.T) {
 	}
 	if len(r.Moves) != 2 || r.Kept != 1 || r.Ended.IsZero() {
 		t.Errorf("moves %d kept %d ended %v", len(r.Moves), r.Kept, r.Ended)
+	}
+	if len(r.Removed) != 1 || r.Removed[0] != deleted {
+		t.Errorf("removed %+v, want %+v", r.Removed, deleted)
 	}
 	if _, err := os.Stat(next.journalPath("crashed")); !os.IsNotExist(err) {
 		t.Errorf("the journal is still there: %v", err)

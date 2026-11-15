@@ -534,6 +534,85 @@ func TestRecoverInterruptedAddsTheMissingRun(t *testing.T) {
 	}
 }
 
+// TestRecoverInterruptedCountsPermanentDeletions: a clean that only deleted for good before Spruce ended still gets its history run; a mixed one counts both kinds.
+func TestRecoverInterruptedCountsPermanentDeletions(t *testing.T) {
+	home, bin, l := trashHome(t)
+	root := filepath.Join(home, "Library", "Caches")
+	started := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	only, err := l.Begin(undo.JournalMeta{RunID: "20261114T090000Z-0001", Kind: history.KindSystemJunk, Started: started})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if err := only.AddRemoved(cleanup.Removed{ItemID: name, Path: filepath.Join(root, name), Freed: 100}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	only.Close()
+	mixed, err := l.Begin(undo.JournalMeta{RunID: "20261114T090000Z-0002", Kind: history.KindSmartScan, Started: started})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, "com.example")
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	to, dev, ino, err := moveIntoBin(bin, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mixed.Add(cleanup.Moved{ItemID: cleanup.ItemID(p), Kind: cleanup.KindCache, Path: p, TrashedPath: to, Root: root, Size: 300, Dir: true, Dev: dev, Ino: ino}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mixed.AddRemoved(cleanup.Removed{ItemID: "c", Path: filepath.Join(root, "c"), Freed: 50}); err != nil {
+		t.Fatal(err)
+	}
+	mixed.Close()
+	next, _ := undo.Open(filepath.Join(filepath.Dir(home), "data", "undo"))
+	store := &fakeStore{}
+	RecoverInterrupted(t.Context(), next, store, schedule.NewActivity(nil), slog.New(slog.DiscardHandler))
+	if len(store.appended) != 2 {
+		t.Fatalf("history %+v", store.appended)
+	}
+	byID := map[string]history.Run{}
+	for _, r := range store.appended {
+		byID[r.ID] = r
+	}
+	r := byID["20261114T090000Z-0001"]
+	if r.Kind != history.KindSystemJunk || r.Summary == nil || r.Summary.Items != 2 || r.Summary.Freed != 200 || r.Summary.Trashed != 0 || r.Undo != nil {
+		t.Errorf("permanent-only run %+v %+v", r, r.Summary)
+	}
+	if !slices.Contains(r.Details, "已删除 2 项") || slices.ContainsFunc(r.Details, func(d string) bool { return strings.HasPrefix(d, "已移到") }) {
+		t.Errorf("permanent-only details %q", r.Details)
+	}
+	r = byID["20261114T090000Z-0002"]
+	if r.Summary == nil || r.Summary.Items != 2 || r.Summary.Freed != 50 || r.Summary.Trashed != 300 || r.Undo == nil || r.Undo.Items != 1 {
+		t.Errorf("mixed run %+v %+v", r, r.Summary)
+	}
+	if !slices.Contains(r.Details, "已移到废纸篓 1 项") || !slices.Contains(r.Details, "已删除 1 项") {
+		t.Errorf("mixed details %q", r.Details)
+	}
+}
+
+// TestBeginUndoJournalsRemovals: the clean's context journals what the executor deletes for good, ahead of the callback it already carried.
+func TestBeginUndoJournalsRemovals(t *testing.T) {
+	home, _, l := trashHome(t)
+	var passed []cleanup.Removed
+	ctx := cleanup.WithOnRemoved(t.Context(), func(r cleanup.Removed) { passed = append(passed, r) })
+	ctx, u := beginUndo(ctx, l, slog.New(slog.DiscardHandler), undo.JournalMeta{RunID: "20261114T090000Z-0003", Kind: history.KindSystemJunk, Started: time.Now()})
+	r := cleanup.Removed{ItemID: "a", Path: filepath.Join(home, "Library", "Caches", "a"), Freed: 10}
+	cleanup.OnRemoved(ctx)(r)
+	if len(passed) != 1 || passed[0] != r {
+		t.Errorf("passed on %+v", passed)
+	}
+	u.journal.Close()
+	next, _ := undo.Open(filepath.Join(filepath.Dir(home), "data", "undo"))
+	recs, err := next.Recover()
+	if err != nil || len(recs) != 1 || len(recs[0].Removed) != 1 || recs[0].Removed[0] != r {
+		t.Errorf("recovered %+v %v", recs, err)
+	}
+}
+
 func TestHistoryRestorable(t *testing.T) {
 	home, bin, l := trashHome(t)
 	root := filepath.Join(home, "Downloads")

@@ -21,6 +21,29 @@ func OnMoved(ctx context.Context) func(Moved) {
 	return func(Moved) {}
 }
 
+// Removed is an item a clean deleted for good, as the undo journal records it: nothing of it can come back, but an interrupted clean's history counts it.
+type Removed struct {
+	ItemID string `json:"itemId"`
+	Path   string `json:"path"`
+	Freed  int64  `json:"freed"`
+}
+
+// onRemovedKey carries the WithOnRemoved callback in a context.
+type onRemovedKey struct{}
+
+// WithOnRemoved returns ctx carrying fn, which the Executor calls with each item right after it deleted it for good, before it reports progress; the undo journal uses it so an interrupted clean's history counts what was deleted.
+func WithOnRemoved(ctx context.Context, fn func(Removed)) context.Context {
+	return context.WithValue(ctx, onRemovedKey{}, fn)
+}
+
+// OnRemoved returns the callback WithOnRemoved put on ctx, or one that does nothing.
+func OnRemoved(ctx context.Context) func(Removed) {
+	if fn, ok := ctx.Value(onRemovedKey{}).(func(Removed)); ok && fn != nil {
+		return fn
+	}
+	return func(Removed) {}
+}
+
 // Drop returns res without the items ids names, with the categories' and the result's sizes and counts recomputed; categories keep their place even when they end up empty. res is not changed. Pure.
 func Drop(res ScanResult, ids []string) ScanResult {
 	gone := make(map[string]bool, len(ids))
