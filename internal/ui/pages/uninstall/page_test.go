@@ -135,9 +135,19 @@ func TestListShowsTheStreamedDetailsSearchesAndSorts(t *testing.T) {
 	p.settle(func() bool { return p.Exists("id:app-list >> text:大小未知") })
 	p.Find("text:共 3 个应用")
 
-	p.Press("id:sort-size")
+	// The list is ordered by size until the user picks another order.
+	if !p.Find("id:sort-size").Props.Pressed || p.Find("id:sort-name").Props.Pressed {
+		t.Error("大小 is not the default order")
+	}
 	if got := p.rows(); !slices.Equal(got, []string{"Bar", "Foo", "Runner"}) {
 		t.Errorf("by size %v", got)
+	}
+	p.Press("id:sort-name")
+	if !p.Find("id:sort-name").Props.Pressed || p.Find("id:sort-size").Props.Pressed {
+		t.Error("名称 did not take over")
+	}
+	if got := p.rows(); !slices.Equal(got, []string{"Bar", "Foo", "Runner"}) {
+		t.Errorf("by name %v", got)
 	}
 	p.Type("id:search", "example.f")
 	p.WaitUntil(wait, func() bool { return len(p.rows()) == 1 })

@@ -50,7 +50,7 @@ func MergeDetails(known map[string]AppDetails, updates []app.UninstallAppDetails
 // SortKey is how the list is ordered. On Windows the third order is by install date, since Windows keeps no record of last use.
 type SortKey uint8
 
-// The orders: by name (the default), largest first, most recent first.
+// The orders: by name, largest first (the default), most recent first.
 const (
 	SortName SortKey = iota
 	SortSize
