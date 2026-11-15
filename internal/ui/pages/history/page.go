@@ -195,7 +195,7 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
 	if run.Kind == enginehist.KindMaintenance {
-		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title. Its cells are its direct children, made again when the catalog (the titles) arrives: a keyed list would put markers of its own among them.
+		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title. Its cells are its direct children, made again when the catalog (the titles) arrives. The cells align at the start, not on their baseline: baseline alignment in a grid misplaces whole rows when a cell's text can wrap (https://github.com/nsgo-dev/nsgo/issues/280), so taskLine sets the smaller status on the title's baseline itself.
 		grid := list
 		grid.Display, grid.GridTemplateColumns, grid.Gap, grid.ColumnGap, grid.RowGap, grid.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 0, 12, 8, core.AlignStart
 		body = core.Dynamic(func(*core.Scope) core.Node {
