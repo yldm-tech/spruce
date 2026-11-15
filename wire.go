@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/shirou/gopsutil/v4/disk"
@@ -76,38 +77,38 @@ const (
 // appID is nsgo.yaml's id: the login item's name.
 const appID = "ai.yldm.spruce"
 
-// env is what wire builds the app from: the user's home and data folders, the running executable, the command runner, the maintenance catalog and the log.
+// env is what wire builds the app from: the user's home and data folders, the running executable, the command runner, the maintenance catalog and the log; sources, for the command line, limits the merged scans to those sources (nil: all).
 type env struct {
 	home, dataDir, exe string
 	runner             execx.Runner
 	tasks              []maintenance.TaskImpl
 	log                *slog.Logger
+	sources            []string
 }
 
-// wire builds the engine and the controllers over it and returns what the shell and the pages read. Nothing reads or writes the user's data before first use, and nothing runs until the app starts Background.
-func wire(e env) (shell.Deps, error) {
-	permissions := app.Permissions{Runner: e.runner}
-	mEnv := maintenance.Env{Runner: e.runner, Permissions: permissions, HomeDir: e.home, Log: e.log}
-	svc, err := maintenance.NewService(e.tasks, mEnv, elevate.New(e.exe, elevate.NewLauncher(e.runner)))
-	if err != nil {
-		return shell.Deps{}, err
-	}
+// engine is what the app and the command line both run on: the history, the settings, the clean controller with 概览's two merged scans inside the activity gate and the undo ledger, 放回原处, the history controller, the read gate and the installed apps.
+type engine struct {
+	history       history.Store
+	settings      *settings.Store
+	activity      *schedule.Activity
+	ledger        *undo.Ledger
+	access        *folderaccess.Store
+	gate          *app.GateRecorder
+	cleanups      *app.Cleanup
+	restore       *app.Restore
+	historySvc    *app.History
+	installedApps func(ctx context.Context) ([]string, error)
+}
+
+// wireEngine builds the engine without touching any UI package and without starting anything; nothing reads or writes the user's data before first use. e.sources limits the merged scans to those sources (the command line's --source); nil keeps all three.
+func wireEngine(e env) (engine, error) {
 	historyStore, err := history.Open(filepath.Join(e.dataDir, historyFile))
 	if err != nil {
-		return shell.Deps{}, err
+		return engine{}, err
 	}
 	settingsStore, err := settings.Open(filepath.Join(e.dataDir, settingsFile), e.home, func() settings.AppSettings { return settings.Defaults(e.home) })
 	if err != nil {
-		return shell.Deps{}, err
-	}
-	// The monitor starts with the shipped defaults; FollowSettings applies the user's threshold, sustain and on/off, and again on every change.
-	monitor, err := health.New(health.DefaultConfig(), health.NewProcessSource())
-	if err != nil {
-		return shell.Deps{}, err
-	}
-	vitals, err := sysinfo.New(sysinfo.DefaultConfig(), sysinfo.NewSource(e.runner), e.log)
-	if err != nil {
-		return shell.Deps{}, err
+		return engine{}, err
 	}
 
 	// The cleaners 概览 combines. Each call builds a new instance: a scanner remembers its last scan for the clean that follows, so a page and each of 概览's two merged scans get their own (see internal/engine/smartscan). mayRead is the read gate of the instance's folder reads; nil reads everything.
@@ -121,16 +122,20 @@ func wire(e env) (shell.Deps, error) {
 		return installers.New(installers.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log, MayRead: mayRead})
 	}
 	merged := func(mayRead func(string) bool) *smartscan.Scanner {
-		return smartscan.New([]smartscan.Source{
+		sources := []smartscan.Source{
 			{ID: string(app.CleanerSystemJunk), New: func() cleanup.Scanner { return newSystemJunk(mayRead) }},
 			{ID: string(app.CleanerDevJunk), New: func() cleanup.Scanner { return newDevJunk(mayRead) }},
 			{ID: string(app.CleanerInstallers), New: func() cleanup.Scanner { return newInstallers(mayRead) }},
-		}, e.log)
+		}
+		if len(e.sources) > 0 {
+			sources = slices.DeleteFunc(sources, func(s smartscan.Source) bool { return !slices.Contains(e.sources, s.ID) })
+		}
+		return smartscan.New(sources, e.log)
 	}
 	activity := schedule.NewActivity(cleanLockFunc(filepath.Join(e.dataDir, cleanLock), e.log))
 	ledger, err := undo.Open(filepath.Join(e.dataDir, undoDir))
 	if err != nil {
-		return shell.Deps{}, err
+		return engine{}, err
 	}
 	// The read gate: background checks never enter a folder that prompts for access (macOS) until a check the user started has entered it, or Spruce holds Full Disk Access.
 	access := folderaccess.Open(filepath.Join(e.dataDir, folderAccessFile), e.home, func() bool { return fulldisk.Check() == fulldisk.Granted })
@@ -139,6 +144,63 @@ func wire(e env) (shell.Deps, error) {
 	app.SetLedger(cleanups, ledger)
 	app.RegisterCleaner(cleanups, app.CleanerSmartScan, merged(gate.Foreground))
 	app.RegisterCleaner(cleanups, app.CleanerSmartScanBackground, merged(gate.Background))
+
+	// The installed apps name the installers' apps on the cards; an engine of its own, since Apps replaces the list 应用卸载's engine remembers.
+	appList := uninstall.New(uninstall.Config{
+		Home:       e.home,
+		IconCache:  filepath.Join(e.dataDir, iconCache),
+		Runner:     e.runner,
+		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
+		Self:       e.exe,
+	})
+	installedApps := func(ctx context.Context) ([]string, error) {
+		apps, err := appList.Apps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(apps))
+		for _, a := range apps {
+			names = append(names, a.Name)
+		}
+		return names, nil
+	}
+
+	return engine{
+		history:       historyStore,
+		settings:      settingsStore,
+		activity:      activity,
+		ledger:        ledger,
+		access:        access,
+		gate:          gate,
+		cleanups:      cleanups,
+		restore:       app.NewRestore(ledger, trash.SystemRestorer(), historyStore, activity, e.home, e.log),
+		historySvc:    app.NewHistory(historyStore, ledger, e.log),
+		installedApps: installedApps,
+	}, nil
+}
+
+// wire builds the engine and the controllers over it and returns what the shell and the pages read. Nothing reads or writes the user's data before first use, and nothing runs until the app starts Background.
+func wire(e env) (shell.Deps, error) {
+	permissions := app.Permissions{Runner: e.runner}
+	mEnv := maintenance.Env{Runner: e.runner, Permissions: permissions, HomeDir: e.home, Log: e.log}
+	svc, err := maintenance.NewService(e.tasks, mEnv, elevate.New(e.exe, elevate.NewLauncher(e.runner)))
+	if err != nil {
+		return shell.Deps{}, err
+	}
+	eng, err := wireEngine(e)
+	if err != nil {
+		return shell.Deps{}, err
+	}
+	historyStore, settingsStore, activity, ledger := eng.history, eng.settings, eng.activity, eng.ledger
+	// The monitor starts with the shipped defaults; FollowSettings applies the user's threshold, sustain and on/off, and again on every change.
+	monitor, err := health.New(health.DefaultConfig(), health.NewProcessSource())
+	if err != nil {
+		return shell.Deps{}, err
+	}
+	vitals, err := sysinfo.New(sysinfo.DefaultConfig(), sysinfo.NewSource(e.runner), e.log)
+	if err != nil {
+		return shell.Deps{}, err
+	}
 
 	files := app.NewFiles(e.runner, trash.System(), e.log)
 	maint := app.NewMaintenance(svc, historyStore, e.log, activity)
@@ -153,10 +215,7 @@ func wire(e env) (shell.Deps, error) {
 	app.SetUninstallLedger(uninstaller, ledger)
 	spaceSvc := app.NewSpace(e.home, settingsStore.Get, trash.System(), historyStore, e.log, activity)
 	app.SetSpaceLedger(spaceSvc, ledger)
-	version := ""
-	if info := core.App(); !info.Development {
-		version = info.Version
-	}
+	version := appVersion()
 	settingsSvc := app.NewSettings(settingsStore, loginitem.New(appID), e.log, version, e.dataDir)
 
 	cache, err := scancache.Open(filepath.Join(e.dataDir, overviewCacheFile))
@@ -167,31 +226,23 @@ func wire(e env) (shell.Deps, error) {
 	if err != nil {
 		return shell.Deps{}, err
 	}
-	historySvc := app.NewHistory(historyStore, ledger, e.log)
+	historySvc := eng.historySvc
 	// 清空历史 also clears the cached check and the space snapshots.
 	app.OnClear(historySvc, cache.Clear)
 	app.OnClear(historySvc, snapshots.Clear)
-	// The installed apps name the installers' apps on the cards; an engine of its own, since Apps replaces the list 应用卸载's engine remembers.
-	appList := uninstall.New(uninstall.Config{
-		Home:       e.home,
-		IconCache:  filepath.Join(e.dataDir, iconCache),
-		Runner:     e.runner,
-		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
-		Self:       e.exe,
-	})
 	overview := app.NewOverview(app.OverviewConfig{
-		Cleanup:    cleanups,
+		Cleanup:    eng.cleanups,
 		Foreground: app.CleanerSmartScan,
 		Background: app.CleanerSmartScanBackground,
 		Cache:      cache,
-		Restore:    app.NewRestore(ledger, trash.SystemRestorer(), historyStore, activity, e.home, e.log),
+		Restore:    eng.restore,
 		Settings:   settingsStore,
 		Activity:   activity,
 		Policy:     schedule.DefaultPolicy(),
 		Conditions: schedule.SystemConditions(e.runner),
 		State:      schedule.OpenState(filepath.Join(e.dataDir, backgroundFile)),
-		Access:     access,
-		Gate:       gate,
+		Access:     eng.access,
+		Gate:       eng.gate,
 		Growth:     snapshots,
 		Watches: func(s settings.AppSettings) []growth.Watch {
 			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, s.Cleanup.DevProjectRoots)
@@ -207,24 +258,14 @@ func wire(e env) (shell.Deps, error) {
 			}
 			return d, nil
 		},
-		InstalledApps: func(ctx context.Context) ([]string, error) {
-			apps, err := appList.Apps(ctx)
-			if err != nil {
-				return nil, err
-			}
-			names := make([]string, 0, len(apps))
-			for _, a := range apps {
-				names = append(names, a.Name)
-			}
-			return names, nil
-		},
-		TrashSize:  files.TrashSize,
-		Ledger:     ledger,
-		History:    historyStore,
-		Home:       e.home,
-		AppVersion: version,
-		GOOS:       runtime.GOOS,
-		Log:        e.log,
+		InstalledApps: eng.installedApps,
+		TrashSize:     files.TrashSize,
+		Ledger:        ledger,
+		History:       historyStore,
+		Home:          e.home,
+		AppVersion:    version,
+		GOOS:          runtime.GOOS,
+		Log:           e.log,
 	})
 
 	return shell.Deps{
@@ -256,6 +297,14 @@ func wire(e env) (shell.Deps, error) {
 		Log:      e.log,
 		Activity: activity,
 	}, nil
+}
+
+// appVersion is the version of a released build, "" for a development one.
+func appVersion() string {
+	if info := core.App(); !info.Development {
+		return info.Version
+	}
+	return ""
 }
 
 // diskUsage is the size and free space of the volume holding path.
