@@ -63,6 +63,7 @@ func TestScreensSystemJunk(t *testing.T) {
 	ov := storefake.NewOverview(drillState("system-junk", junkCategories()...))
 	release := make(chan struct{})
 	ov.CleanRelease = release
+	ov.TrashInfoValue = app.TrashInfo{Items: 214, Bytes: 1_240_000_000, Restorable: 24}
 	ov.OnClean = func(_ context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
 		return app.OverviewOutcome{Result: cleanup.CleanResult{Freed: 2_390_000_000, Trashed: 24_000_000, Removed: 24}, RunID: "run-1", Undoable: true}, nil
 	}
@@ -83,6 +84,26 @@ func TestScreensSystemJunk(t *testing.T) {
 	close(release)
 	a.WaitFor("id:toast", wait)
 	a.Screenshot("system-junk-toast")
+
+	// Emptying the Trash asks with the Trash measured now.
+	a.Press("id:toast-close")
+	a.WaitForGone("id:toast", wait)
+	a.Press("id:select-none")
+	a.Press("id:check-system-junk:trash")
+	a.Press("id:clean")
+	a.WaitFor("id:confirm-trash", wait)
+	a.Screenshot("system-junk-trash-confirm")
+	a.Press("id:confirm-cancel")
+	a.WaitForGone("id:confirm", wait)
+
+	// A source that failed and found nothing is not called clean.
+	failed := drillState("system-junk")
+	failed.Result.Scan.Sources[0] = cleanup.SourceState{ID: "system-junk", Status: cleanup.SourceFailed, Error: "读取超时"}
+	fb := storefake.New(t.TempDir())
+	fb.Overview = storefake.NewOverview(failed)
+	b := screensApp(t, fb, shell.Deps{SystemJunk: systemjunk.Deps{Files: &cleanflowfake.Files{}}}, "system-junk")
+	b.WaitFor("id:drill-failed", wait)
+	b.Screenshot("system-junk-failed")
 }
 
 // TestScreensSystemJunkLongList expands a category of 3,000 items and scrolls through it: the design's largest list, for its look and, under -trace, its commit times.
