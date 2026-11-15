@@ -181,24 +181,40 @@ func TestOverviewCleanOutlivesThePage(t *testing.T) {
 	h.until(t, func() bool { return progressed })
 	page.Dispose()
 	h.drain()
+	// The page gone, the store still shows what runs and how far it got.
+	if o, ok := st.Overview.Running(); !ok || o.Recommendation != "app-caches" || st.Overview.CleanProgress().Done != 1 {
+		t.Errorf("running %+v %v, progress %+v", o, ok, st.Overview.CleanProgress())
+	}
 	close(f.release)
 	h.until(t, func() bool { return outcome != nil })
 	h.drain()
 	if outcome.RunID != "r1" || f.stopped != 0 || done != nil || st.Overview.Busy() {
 		t.Errorf("outcome %+v, stopped %d, done %+v, busy %v", outcome, f.stopped, done, st.Overview.Busy())
 	}
-	// 停止 ends it after the current item, and the outcome still comes.
-	f.mu.Lock()
-	f.release = make(chan struct{})
-	f.mu.Unlock()
-	outcome = nil
-	stop := st.Overview.Clean(h.root, cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{}, nil, nil,
-		func(o app.OverviewOutcome, _ error) { outcome = &o })
-	stop()
-	h.until(t, func() bool { return outcome != nil })
-	if !outcome.Result.Interrupted || f.stopped != 1 {
-		t.Errorf("stopped clean %+v, stopped %d", outcome, f.stopped)
+	if _, ok := st.Overview.Running(); ok || st.Overview.CleanProgress().Done != 0 {
+		t.Error("the store still shows a clean that ended")
 	}
+	// 停止 ends it after the current item, and the outcome still comes; the store's StopClean does the same as the function Clean returns.
+	for _, viaStore := range []bool{false, true} {
+		f.mu.Lock()
+		f.release = make(chan struct{})
+		stoppedBefore := f.stopped
+		f.mu.Unlock()
+		outcome = nil
+		stop := st.Overview.Clean(h.root, cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{}, nil, nil,
+			func(o app.OverviewOutcome, _ error) { outcome = &o })
+		if viaStore {
+			st.Overview.StopClean()
+		} else {
+			stop()
+		}
+		h.until(t, func() bool { return outcome != nil })
+		if !outcome.Result.Interrupted || f.stopped != stoppedBefore+1 {
+			t.Errorf("stopped clean %+v, stopped %d", outcome, f.stopped)
+		}
+	}
+	// With nothing running, StopClean does nothing.
+	st.Overview.StopClean()
 	// The same for an undo: its outcome is not lost with the page.
 	page = h.root.Child()
 	var undone, undoDone *app.RestoreOutcome

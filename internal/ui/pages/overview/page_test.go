@@ -674,6 +674,35 @@ func TestCardCleanOutlivesThePage(t *testing.T) {
 	}
 }
 
+// Back on 概览 while a card's clean still runs, the card shows it as its own, with its progress and 停止, which stops it.
+func TestCardCleanSeenAfterComingBack(t *testing.T) {
+	p := open(t, ready())
+	p.ov.CleanRelease = make(chan struct{})
+	stopped := make(chan bool, 1)
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		stopped <- ctx.Err() != nil
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Interrupted: true}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitUntil(wait, func() bool { return !p.Exists("id:rec-installers") })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitFor("id:rec-installers-progress", wait)
+	if l := p.Find("id:rec-app-caches-act").Props.Label; l != "正在清理另一项，完成后再试" || !p.disabled("id:rec-app-caches-act") {
+		t.Errorf("other card's label %q", l)
+	}
+	p.Press("id:rec-installers-stop")
+	if !<-stopped {
+		t.Fatal("停止 did not stop the clean")
+	}
+	p.ticking(func() bool { return !p.stores.Overview.Busy() })
+	p.WaitForGone("id:rec-installers-stop", wait)
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card stays disabled after the clean stopped")
+	}
+}
+
 // A clean that leaves items keeps the card with how many, and the toast offers 查看.
 func TestTrashCardPartlyFailed(t *testing.T) {
 	p := open(t, ready())

@@ -43,10 +43,8 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 	id := core.Untracked(cx, rec).ID
 	open := core.NewSignal(cx, false)
 	pick := core.NewSignalFunc(cx, DefaultPick(core.Untracked(cx, rec)), nil)
-	progress := core.NewSignalFunc(cx, cleanup.Progress{}, nil)
 	showProgress := core.NewSignal(cx, false)
 	failed := core.NewSignal(cx, 0)
-	var stop func()
 	ref := new(core.Ref)
 	// The card's context, taken as it is made: a handler's own ends with it.
 	cardCtx := cx.Context()
@@ -80,9 +78,12 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		})
 	})
 
-	// Past progressAfter a running action shows its progress; the timer goes with the effect when the action ends.
+	// The card's clean is the store's (store.Overview.Running), not the page's: it outlives 概览, so a page opened while it runs shows it as busy, with its progress and 停止.
+	busy := func() bool { o, ok := p.ov.Running(); return ok && o.Recommendation == id }
+	// Past progressAfter a running action shows its progress, at once when the card comes back to a clean that has run since; the timer goes with the effect when the action ends.
+	showProgress.Set(core.Untracked(cx, busy))
 	cx.Effect(func() {
-		if p.active.Get() != id {
+		if !busy() {
 			return
 		}
 		cx.AfterFunc(progressAfter, func() { showProgress.Set(true) })
@@ -98,7 +99,6 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 	})
 	bytes := core.NewMemo(cx, func() int64 { return Sum(scan(), refs()) })
 	partial := func() bool { n := len(refs()); return n > 0 && n < len(rec().Items) }
-	busy := func() bool { return p.active.Get() == id }
 	leaving := func() bool { return p.leaving(id) }
 	other := core.NewMemo(cx, func() bool { return !busy() && p.cleaning() })
 	canUndo := p.canUndo
@@ -116,7 +116,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			})
 	}
 
-	// run cleans req, the card r's items as the user saw them when acting: a newer result that lands while a confirmation is open changes neither what nor how. The clean runs on the app's context, so leaving 概览 does not stop it, and its toast (with 撤销) and the refreshed disks are shown from the app's scope; the page's bookkeeping (the one-at-a-time lock, the held card, the progress) belongs to the page, so a card that goes while it runs cannot leave the page locked.
+	// run cleans req, the card r's items as the user saw them when acting: a newer result that lands while a confirmation is open changes neither what nor how. The clean runs on the app's context, so leaving 概览 does not stop it, and its toast (with 撤销) and the refreshed disks are shown from the app's scope, its progress and 停止 from the store; the page's bookkeeping (the one-at-a-time lock, the held card) belongs to the page, so a card that goes while it runs cannot leave the page locked.
 	run := func(a advice.Action, r advice.Recommendation, req cleanup.CleanRequest) {
 		if len(req.ItemIDs) == 0 || !p.actionable() || p.cleaning() {
 			return
@@ -126,11 +126,9 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		p.active.Set(id)
 		p.hold(r, index())
 		failed.Set(0)
-		progress.Set(cleanup.Progress{})
 		showProgress.Set(a == advice.ActionDelete || a == advice.ActionCommand)
-		stop = p.ov.Clean(p.cx, req, app.CleanOrigin{Recommendation: r.ID}, func(pr cleanup.Progress) { progress.Set(pr) },
+		p.ov.Clean(p.cx, req, app.CleanOrigin{Recommendation: r.ID}, nil,
 			func(out app.OverviewOutcome, err error) {
-				stop = nil
 				p.active.Set("")
 				showProgress.Set(false)
 				if err == nil {
@@ -217,7 +215,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 	}}
 	actions := core.Dynamic(func(*core.Scope) core.Node {
 		if busy() && showProgress.Get() {
-			return core.Func(func(*core.Scope) core.Node { return progressRow(id, progress.Get, func() { stopRun(stop) }) })
+			return core.Func(func(*core.Scope) core.Node { return progressRow(id, p.ov.CleanProgress, p.ov.StopClean) })
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, ColumnGap: 12, RowGap: 6}, Children: []core.Node{
@@ -288,13 +286,6 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		}
 		return st
 	}, Children: []core.Node{card}}
-}
-
-// stopRun ends a card's action after the current item.
-func stopRun(stop func()) {
-	if stop != nil {
-		stop()
-	}
 }
 
 // confirmDialog is c as a confirmation; a command is drawn in the monospaced font.
