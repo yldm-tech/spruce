@@ -335,8 +335,8 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			d.Progress.Set(p)
 		}
 	})
-	// The clean runs on the app's context and its toast comes from the app's scope, so the view going away (it cannot while the cleaning overlay holds the sidebar) loses neither.
-	d.cancel = d.ov.Clean(d.cx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(app.OverviewOutcome, error) {
+	// The view going away stops its clean after the current item (the cleaning overlay holds the sidebar meanwhile, so only quitting does); the toast comes from the app's scope, so what was done is still shown.
+	stop := d.ov.Clean(d.cx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(app.OverviewOutcome, error) {
 		if mine != d.seq {
 			return
 		}
@@ -356,6 +356,8 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			stores.Toasts.Show(toast(action, out, undo))
 		}
 	})
+	d.cancel = stop
+	context.AfterFunc(d.ctx, stop)
 }
 
 // Stop ends the view's clean after the current item.
