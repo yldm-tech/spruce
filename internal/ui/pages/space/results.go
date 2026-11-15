@@ -57,9 +57,9 @@ type Results struct {
 	// Confirming is the entry the move to the Trash waits to be confirmed for, nil when none.
 	Confirming *core.Signal[*app.SpaceEntry]
 	// Trashing is set while a move to the Trash runs, confirmed or not.
-	Trashing *core.Signal[bool]
-	Notice   *core.Signal[Notice]
-	RevealErr  *core.Signal[string]
+	Trashing  *core.Signal[bool]
+	Notice    *core.Signal[Notice]
+	RevealErr *core.Signal[string]
 
 	listSeq, largeSeq int
 	// largeStale is set when a move to the Trash changed the large files while the 大文件 tab was not showing.

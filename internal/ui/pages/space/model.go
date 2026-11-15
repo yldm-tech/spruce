@@ -332,4 +332,6 @@ func (w GrowthWindow) Label() string {
 }
 
 // GrowthNone is what 最近变化 says when nothing grew enough over w.
-func GrowthNone(w GrowthWindow) string { return "最近 " + w.Label() + "没有明显变大的位置。" }
+func GrowthNone(w GrowthWindow) string {
+	return "最近 " + w.Label() + "没有明显变大的位置。"
+}
