@@ -33,5 +33,8 @@
 //	// Excluded reports whether path is one of exclusions or inside one. An exclusion is an absolute path (a leading "~" is the home folder), a name or pattern without a separator, matched against every component of path ("node_modules", "*.photoslibrary"), or an absolute pattern with * ? or [ ], matched against path and each of its parents ("~/Logs/*.log").
 //	func Excluded(path string, exclusions []string) bool
 //
+//	// ExcludedInside reports whether an exclusion that is an absolute path lies strictly inside dir (patterns are not looked at), so deleting dir would delete it.
+//	func ExcludedInside(dir string, exclusions []string) bool
+//
 // The walk uses the standard library (os.File.ReadDir with a bounded pool of goroutines) rather than github.com/karrick/godirwalk: godirwalk is single-threaded and has not been released since 2021, and on Go 1.16+ os.ReadDir already reads directory entries without a stat per entry where the platform allows, which was godirwalk's main advantage.
 package fsx

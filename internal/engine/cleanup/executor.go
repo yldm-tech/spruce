@@ -276,6 +276,10 @@ func (e *Executor) Clean(ctx context.Context, req CleanRequest, progress func(Pr
 		case len(exclusions) > 0 && fsx.Excluded(j.item.Path, exclusions):
 			fail(reasonExcluded, nil, false)
 			continue
+		case j.item.Dir && len(exclusions) > 0 && fsx.ExcludedInside(j.item.Path, exclusions):
+			// An exclusion added inside a folder since the scan: deleting the folder would delete it.
+			fail(reasonExcluded, nil, false)
+			continue
 		}
 
 		info, err := e.lstat(j.item.Path)

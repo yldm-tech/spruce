@@ -60,3 +60,32 @@ func excluded(path string, exclusions []string, home string) bool {
 	}
 	return false
 }
+
+// ExcludedInside reports whether one of exclusions that is an absolute path (a leading "~" is the home folder) lies strictly inside dir, so deleting dir would delete it. Patterns cannot be checked without walking dir and are not looked at here; the scans walk and leave out a folder holding an excluded path.
+func ExcludedInside(dir string, exclusions []string) bool {
+	return excludedInside(dir, exclusions, homeDir())
+}
+
+func excludedInside(dir string, exclusions []string, home string) bool {
+	if dir == "" {
+		return false
+	}
+	dir = filepath.Clean(dir)
+	for _, ex := range exclusions {
+		ex = strings.TrimSpace(ex)
+		if ex == "" {
+			continue
+		}
+		if home != "" && (ex == "~" || strings.HasPrefix(ex, "~/") || strings.HasPrefix(ex, `~\`)) {
+			ex = filepath.Join(home, ex[1:])
+		}
+		if !filepath.IsAbs(ex) || strings.ContainsAny(ex, "*?[") {
+			continue
+		}
+		ex = filepath.Clean(ex)
+		if !strings.EqualFold(ex, dir) && hasPathPrefix(ex, dir, true) {
+			return true
+		}
+	}
+	return false
+}

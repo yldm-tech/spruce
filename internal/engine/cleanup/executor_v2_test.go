@@ -98,6 +98,28 @@ func TestCleanRechecksExclusionsAddedAfterTheScan(t *testing.T) {
 	}
 }
 
+// TestCleanRefusesAFolderHoldingAnExclusion: an exclusion added inside a folder item after the scan keeps the whole folder, as the scans do.
+func TestCleanRefusesAFolderHoldingAnExclusion(t *testing.T) {
+	fx := newFixture(t)
+	var exclusions []string
+	e, del := cleanFixture(t, fx, ExecutorOptions{Exclusions: func() []string { return exclusions }}, nil)
+	exclusions = []string{filepath.Join(fx.paths["b"], "inner"), filepath.Join(fx.dir, "caches", "a", "*")}
+	res, err := e.Clean(t.Context(), CleanRequest{CategoryIDs: []string{"caches"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := failureOf(res, fx.paths["b"]); !ok || f.Reason != "已在设置中排除，已跳过" {
+		t.Errorf("folder holding an exclusion: %+v", res.Failed)
+	}
+	if slices.Contains(del.removed, fx.paths["b"]) {
+		t.Error("a folder holding an exclusion was deleted")
+	}
+	// A file is never refused for an exclusion below its path, nor for a pattern.
+	if res.Removed != 2 || !slices.Contains(del.removed, fx.paths["a"]) {
+		t.Errorf("removed %d %v, want a and c", res.Removed, del.removed)
+	}
+}
+
 func TestCleanTrashOnly(t *testing.T) {
 	fx := newFixture(t)
 	e, del := cleanFixture(t, fx, ExecutorOptions{}, func(s *ScanResult) {
