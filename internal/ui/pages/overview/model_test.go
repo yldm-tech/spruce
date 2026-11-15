@@ -114,6 +114,10 @@ func TestConclusion(t *testing.T) {
 			t.Errorf("%+v: %q", tc, got)
 		}
 	}
+	// A result that arrived after the page's clock last moved is 「刚刚」, not a date.
+	if got := CheckedAtText(now.Add(30*time.Second), false, false, now); got != "上次检查：刚刚" {
+		t.Errorf("a result later than the clock: %q", got)
+	}
 }
 
 // ReasonWith's time comes out in the page's words: relative for recent use, the date for the oldest log.
