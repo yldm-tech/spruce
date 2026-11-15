@@ -1,7 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
@@ -61,5 +68,68 @@ func TestCommandLineDetection(t *testing.T) {
 			t.Errorf("%q starts %d, want %d", c.args, got, c.want)
 		}
 	}
+}
 
+// interruptChildEnv makes TestInterruptChild act as the command line's process for TestInterruptContext.
+const interruptChildEnv = "SPRUCE_TEST_INTERRUPT_CHILD"
+
+// TestInterruptContext checks the command line's signals in a child process: the first SIGINT cancels the context without ending the process, a further one ends it.
+func TestInterruptContext(t *testing.T) {
+	if runtime.GOOS == "windows" || nsgotest.Target() != "" {
+		t.Skip("sends POSIX signals to a child test process")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestInterruptChild$", "-test.count=1")
+	cmd.Env = append(os.Environ(), interruptChildEnv+"=1")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	lines := bufio.NewScanner(out)
+	expect := func(want string) {
+		t.Helper()
+		for lines.Scan() {
+			if lines.Text() == want {
+				return
+			}
+		}
+		t.Fatalf("the child never printed %q", want)
+	}
+	expect("ready")
+	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	expect("cancelled")
+	// The default behaviour comes back in a goroutine right after the cancel, so keep interrupting until the child ends.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-done:
+			if cmd.ProcessState.ExitCode() != -1 {
+				t.Fatalf("the child exited by itself (%v): a further SIGINT was swallowed", err)
+			}
+			return
+		case <-tick.C:
+			_ = cmd.Process.Signal(syscall.SIGINT)
+		}
+	}
+}
+
+// TestInterruptChild is the child process of TestInterruptContext and does nothing in a normal run.
+func TestInterruptChild(t *testing.T) {
+	if os.Getenv(interruptChildEnv) != "1" {
+		t.Skip("child process of TestInterruptContext")
+	}
+	ctx, stop := interruptContext()
+	defer stop()
+	fmt.Println("ready")
+	<-ctx.Done()
+	fmt.Println("cancelled")
+	time.Sleep(10 * time.Second)
 }

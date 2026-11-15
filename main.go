@@ -166,10 +166,20 @@ func tracked(wg *sync.WaitGroup, work []func(ctx context.Context)) []func(ctx co
 	return out
 }
 
+// interruptContext is cancelled by the first Ctrl+C or SIGTERM, so a scan stops and a clean finishes its current item and records what it did. The signals then get their default behaviour back: a second one ends a command that does not stop (a scan stuck on a stalled network volume, a tool that ignores cancellation) instead of being swallowed.
+func interruptContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx, stop
+}
+
 // runCLI runs a command of the command line over the app's engine (wireEngine) and returns its exit code. Ctrl+C and SIGTERM cancel it: a scan stops, a clean stops after its current item and still records what it did. Logs go to stderr, warnings and errors only.
 func runCLI(args []string, log *slog.Logger, runner execx.Runner) int {
 	slog.SetDefault(log)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := interruptContext()
 	defer stop()
 	home, err := os.UserHomeDir()
 	if err != nil {
