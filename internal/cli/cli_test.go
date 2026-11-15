@@ -634,7 +634,7 @@ func TestProjects(t *testing.T) {
 	if !slices.Equal(h.sources[0], []string{"dev-junk"}) {
 		t.Fatalf("sources %q, want only dev-junk", h.sources[0])
 	}
-	for _, want := range []string{"项目", "api", "有未提交的改动", "web", "干净", "600 MB", "node_modules", "项目有未提交的改动"} {
+	for _, want := range []string{"项目", "api", "有未提交的改动", "web", "干净", "600 MB", "node_modules"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}

@@ -433,7 +433,12 @@ func (r *run) projects(args []string) int {
 	t := &table{right: map[int]bool{3: true}}
 	t.add("项目", "最后活动", "Git", "大小", "构建产物", "说明")
 	for _, p := range projects {
-		t.add(p.Label, format.RelativeTime(p.LastActive, now), gitText(p.Git), size(p.Size), strings.Join(p.Kinds, " · "), p.Hold)
+		// A dirty project's hold says what its Git column says already.
+		note := p.Hold
+		if p.Git == cleanup.GitDirty {
+			note = ""
+		}
+		t.add(p.Label, format.RelativeTime(p.LastActive, now), gitText(p.Git), size(p.Size), strings.Join(p.Kinds, " · "), note)
 	}
 	t.write(r.stdout)
 	return r.done(partial)
