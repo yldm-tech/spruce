@@ -3,20 +3,26 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/shirou/gopsutil/v4/disk"
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/devjunk"
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
+	"github.com/yldm-tech/spruce/internal/engine/growth"
 	"github.com/yldm-tech/spruce/internal/engine/health"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/installers"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/scancache"
 	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/smartscan"
@@ -25,6 +31,8 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/trash"
 	"github.com/yldm-tech/spruce/internal/engine/undo"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
+	"github.com/yldm-tech/spruce/internal/host/folderaccess"
+	"github.com/yldm-tech/spruce/internal/host/fulldisk"
 	"github.com/yldm-tech/spruce/internal/host/instance"
 	"github.com/yldm-tech/spruce/internal/host/loginitem"
 	uidevjunk "github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
@@ -55,6 +63,14 @@ const (
 	cleanLock = "clean.lock"
 	// undoDir is the undo ledger: what each clean moved to the Trash, for 撤销 and 放回原处.
 	undoDir = "undo"
+	// overviewCacheFile is 概览's last check, shown at the next launch until a new one ends.
+	overviewCacheFile = "overview-cache.json"
+	// growthDir holds the space snapshots.
+	growthDir = "growth"
+	// backgroundFile is what the scheduled work remembers: the rules' last runs, the weekly summary, the low-disk alert.
+	backgroundFile = "background.json"
+	// folderAccessFile lists the folders that prompt for access which a check the user started has entered.
+	folderAccessFile = "folder-access.json"
 )
 
 // appID is nsgo.yaml's id: the login item's name.
@@ -94,28 +110,35 @@ func wire(e env) (shell.Deps, error) {
 		return shell.Deps{}, err
 	}
 
-	// The cleaners 智能扫描 combines. Each call builds a new instance: a scanner remembers its last scan for the clean that follows, so a page and 智能扫描 each get their own (see internal/engine/smartscan).
-	newSystemJunk := func() cleanup.Scanner {
-		return systemjunk.New(systemjunk.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log})
+	// The cleaners 概览 combines. Each call builds a new instance: a scanner remembers its last scan for the clean that follows, so a page and each of 概览's two merged scans get their own (see internal/engine/smartscan). mayRead is the read gate of the instance's folder reads; nil reads everything.
+	newSystemJunk := func(mayRead func(string) bool) cleanup.Scanner {
+		return systemjunk.New(systemjunk.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log, MayRead: mayRead})
 	}
-	newDevJunk := func() cleanup.Scanner {
-		return devjunk.New(devjunk.Options{Home: e.home, Runner: e.runner, Settings: func() settings.CleanupSettings { return settingsStore.Get().Cleanup }, Log: e.log})
+	newDevJunk := func(mayRead func(string) bool) cleanup.Scanner {
+		return devjunk.New(devjunk.Options{Home: e.home, Runner: e.runner, Settings: func() settings.CleanupSettings { return settingsStore.Get().Cleanup }, Log: e.log, MayRead: mayRead})
 	}
-	newInstallers := func() cleanup.Scanner {
-		return installers.New(installers.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log})
+	newInstallers := func(mayRead func(string) bool) cleanup.Scanner {
+		return installers.New(installers.Env{Home: e.home, Runner: e.runner, Settings: settingsStore.Get, Log: e.log, MayRead: mayRead})
+	}
+	merged := func(mayRead func(string) bool) *smartscan.Scanner {
+		return smartscan.New([]smartscan.Source{
+			{ID: string(app.CleanerSystemJunk), New: func() cleanup.Scanner { return newSystemJunk(mayRead) }},
+			{ID: string(app.CleanerDevJunk), New: func() cleanup.Scanner { return newDevJunk(mayRead) }},
+			{ID: string(app.CleanerInstallers), New: func() cleanup.Scanner { return newInstallers(mayRead) }},
+		}, e.log)
 	}
 	activity := schedule.NewActivity(cleanLockFunc(filepath.Join(e.dataDir, cleanLock), e.log))
 	ledger, err := undo.Open(filepath.Join(e.dataDir, undoDir))
 	if err != nil {
 		return shell.Deps{}, err
 	}
+	// The read gate: background checks never enter a folder that prompts for access (macOS) until a check the user started has entered it, or Spruce holds Full Disk Access.
+	access := folderaccess.Open(filepath.Join(e.dataDir, folderAccessFile), e.home, func() bool { return fulldisk.Check() == fulldisk.Granted })
+	gate := app.NewGateRecorder(access)
 	cleanups := app.NewCleanup(historyStore, e.home, e.log, activity)
 	app.SetLedger(cleanups, ledger)
-	app.RegisterCleaner(cleanups, app.CleanerSmartScan, smartscan.New([]smartscan.Source{
-		{ID: string(app.CleanerSystemJunk), New: newSystemJunk},
-		{ID: string(app.CleanerDevJunk), New: newDevJunk},
-		{ID: string(app.CleanerInstallers), New: newInstallers},
-	}, e.log))
+	app.RegisterCleaner(cleanups, app.CleanerSmartScan, merged(gate.Foreground))
+	app.RegisterCleaner(cleanups, app.CleanerSmartScanBackground, merged(gate.Background))
 
 	files := app.NewFiles(e.runner, trash.System(), e.log)
 	maint := app.NewMaintenance(svc, historyStore, e.log, activity)
@@ -136,9 +159,77 @@ func wire(e env) (shell.Deps, error) {
 	}
 	settingsSvc := app.NewSettings(settingsStore, loginitem.New(appID), e.log, version, e.dataDir)
 
+	cache, err := scancache.Open(filepath.Join(e.dataDir, overviewCacheFile))
+	if err != nil {
+		return shell.Deps{}, err
+	}
+	snapshots, err := growth.Open(filepath.Join(e.dataDir, growthDir))
+	if err != nil {
+		return shell.Deps{}, err
+	}
+	historySvc := app.NewHistory(historyStore, ledger, e.log)
+	// 清空历史 also clears the cached check and the space snapshots.
+	app.OnClear(historySvc, cache.Clear)
+	app.OnClear(historySvc, snapshots.Clear)
+	// The installed apps name the installers' apps on the cards; an engine of its own, since Apps replaces the list 应用卸载's engine remembers.
+	appList := uninstall.New(uninstall.Config{
+		Home:       e.home,
+		IconCache:  filepath.Join(e.dataDir, iconCache),
+		Runner:     e.runner,
+		Exclusions: func() []string { return settingsStore.Get().Cleanup.Exclusions },
+		Self:       e.exe,
+	})
+	overview := app.NewOverview(app.OverviewConfig{
+		Cleanup:    cleanups,
+		Foreground: app.CleanerSmartScan,
+		Background: app.CleanerSmartScanBackground,
+		Cache:      cache,
+		Restore:    app.NewRestore(ledger, trash.SystemRestorer(), historyStore, activity, e.home, e.log),
+		Settings:   settingsStore,
+		Activity:   activity,
+		Policy:     schedule.DefaultPolicy(),
+		Conditions: schedule.SystemConditions(e.runner),
+		State:      schedule.OpenState(filepath.Join(e.dataDir, backgroundFile)),
+		Access:     access,
+		Gate:       gate,
+		Growth:     snapshots,
+		Watches: func(s settings.AppSettings) []growth.Watch {
+			return growth.DefaultWatches(runtime.GOOS, e.home, os.Getenv, s.Cleanup.DevProjectRoots)
+		},
+		GrowthOptions: growth.TakeOptions{
+			Usage:          diskUsage,
+			FullDiskAccess: func() bool { return fulldisk.Check() == fulldisk.Granted },
+		},
+		Disk: func(ctx context.Context) (app.DiskState, error) {
+			d, ok := app.SystemDisk(spaceSvc.Locations(ctx))
+			if !ok {
+				return app.DiskState{}, errors.New("no disk")
+			}
+			return d, nil
+		},
+		InstalledApps: func(ctx context.Context) ([]string, error) {
+			apps, err := appList.Apps(ctx)
+			if err != nil {
+				return nil, err
+			}
+			names := make([]string, 0, len(apps))
+			for _, a := range apps {
+				names = append(names, a.Name)
+			}
+			return names, nil
+		},
+		TrashSize:  files.TrashSize,
+		Ledger:     ledger,
+		History:    historyStore,
+		Home:       e.home,
+		AppVersion: version,
+		GOOS:       runtime.GOOS,
+		Log:        e.log,
+	})
+
 	return shell.Deps{
-		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: app.NewHistory(historyStore, ledger, e.log), Alerts: healthSvc,
-			Permissions: permissions, Locations: spaceSvc},
+		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: historySvc, Alerts: healthSvc,
+			Permissions: permissions, Locations: spaceSvc, Overview: overview},
 		Overview:    uioverview.Deps{Files: files, Home: e.home},
 		SystemJunk:  uisystemjunk.Deps{Files: files},
 		DevJunk:     uidevjunk.Deps{Files: files},
@@ -159,11 +250,21 @@ func wire(e env) (shell.Deps, error) {
 			func(ctx context.Context) {
 				app.FollowSettings(ctx, settingsStore, monitor, historyStore, ledger, e.log)
 			},
+			overview.Run,
 		},
 		DataDir:  e.dataDir,
 		Log:      e.log,
 		Activity: activity,
 	}, nil
+}
+
+// diskUsage is the size and free space of the volume holding path.
+func diskUsage(path string) (total, free int64, err error) {
+	u, err := disk.Usage(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int64(u.Total), int64(u.Free), nil
 }
 
 // cleanLockFunc takes the clean lock at path for schedule.Activity, logging where it is, why it failed and who owns the file when it cannot be used; Activity then refuses the clean rather than run without it.

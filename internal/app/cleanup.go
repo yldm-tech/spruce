@@ -90,8 +90,10 @@ type CleanOptions struct {
 	Kind history.Kind
 	// Rule is the automatic rule of a KindAuto clean.
 	Rule string
-	// Detail is a first Details line, e.g. 「Xcode 编译缓存：已清理 1 项，释放 17.2 GB」 or 「命令行」.
+	// Detail is a first Details line, e.g. 「命令行」.
 	Detail string
+	// DetailOf, when set, makes the first Details line from what the clean did instead of Detail, e.g. a card's 「Xcode 编译缓存：已清理 1 项，释放 17.2 GB」.
+	DetailOf func(cleanup.CleanResult) string
 }
 
 // CleanRun is a clean and the history run that records it ("" when nothing was recorded).
@@ -204,8 +206,12 @@ func (c *Cleanup) CleanWith(ctx context.Context, cleaner CleanerID, req cleanup.
 	out := CleanRun{Result: res, Undo: u.finish(res.StartedAt.Add(res.Duration), res.Moved)}
 	if res.Removed+len(res.Failed) > 0 {
 		details := c.details(res)
-		if opts.Detail != "" {
-			details = append([]string{opts.Detail}, details...)
+		first := opts.Detail
+		if opts.DetailOf != nil {
+			first = opts.DetailOf(res)
+		}
+		if first != "" {
+			details = append([]string{first}, details...)
 		}
 		if line := undoLine(out.Undo, res.Removed, len(res.Moved)); line != "" {
 			details = append(details, line)

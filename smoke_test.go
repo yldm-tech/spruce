@@ -32,11 +32,14 @@ func TestSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The background work (the CPU monitor) is not needed to look at the pages.
+	// 概览's controller is wired, but its loop is background work and does not start: no check reads anything (the sources run real tools), nothing is scheduled and the CPU monitor stays off.
+	if deps.Stores.Overview == nil {
+		t.Fatal("概览's controller is not wired")
+	}
 	deps.Background = nil
 	a := nsgotest.Start(t, core.AppRoot(shell.App(deps)), nsgotest.Size(1280, 820))
 	a.WaitFor("text:Spruce 会在后台定期检查，告诉你哪些空间可以放心释放", 10*time.Second)
-	// Until 概览's controller is wired, 概览 is stopped and offers 开始检查.
+	// Opening 概览 asks the controller for a check, which waits for the loop that is not running: 概览 shows it stopped and offers 开始检查.
 	a.WaitFor("id:overview-page >> id:check-start", 10*time.Second)
 	if got := len(a.Query("id:sidebar >> role:link")); got != 7 {
 		t.Errorf("the sidebar has %d entries, want 7", got)
