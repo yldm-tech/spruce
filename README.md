@@ -45,7 +45,7 @@ The pinned NSGo has no tray icon or extra windows on Windows, and moving to the 
 
 ## Data folder
 
-Spruce keeps its data in `~/Library/Application Support/Spruce` on macOS and `%AppData%\Spruce` on Windows. Every file is written atomically with mode 0600 (folders 0700); a damaged file or one of another version is ignored and replaced on the next save.
+Spruce keeps its data in `~/Library/Application Support/Spruce` on macOS and `%AppData%\Spruce` on Windows. Files are 0600 in 0700 folders. Settings, the cached result, snapshots and ledger entries are replaced atomically (a temporary file and a rename); `history.jsonl` and the undo journals are appended line by line, and a partial last line from a crash is skipped. A damaged file or one of another version is ignored and replaced on the next save.
 
 | File | What it holds | Limit |
 |---|---|---|
@@ -57,6 +57,7 @@ Spruce keeps its data in `~/Library/Application Support/Spruce` on macOS and `%A
 | `background.json` | When each automatic rule last ran, the last weekly summary, the low-disk alert state | small |
 | `folder-access.json` | The prompting folders a check you started has read | small |
 | `clean.lock` | The lock the app and the command line share while cleaning or checking | |
+| `instance.lock`, `instance.sock` | The single-instance lock and the socket a second launch uses to bring the running copy to the front | |
 | `window.json`, `app-icons/` | The window frame and cached app icons | |
 
 清空历史 in 操作历史 also deletes the undo ledger (not `restored.json`), the cached result and the snapshots.
