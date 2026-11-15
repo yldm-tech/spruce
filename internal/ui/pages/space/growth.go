@@ -101,7 +101,9 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 				return mutedLine("Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。", "growth-empty")
 			})
 		case g.err != nil:
-			return core.Func(func(*core.Scope) core.Node { return kit.ErrorLine{Text: func() string { return "无法读取空间变化的记录" }, TestID: "growth-error"} })
+			return core.Func(func(*core.Scope) core.Node {
+				return kit.ErrorLine{Text: func() string { return "无法读取空间变化的记录" }, TestID: "growth-error"}
+			})
 		case len(g.list) == 0:
 			return core.Func(func(*core.Scope) core.Node { return mutedLine(GrowthNone(g.window), "growth-empty") })
 		}
