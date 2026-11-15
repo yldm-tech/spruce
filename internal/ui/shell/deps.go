@@ -14,8 +14,8 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/pages/history"
 	"github.com/yldm-tech/spruce/internal/ui/pages/installers"
 	"github.com/yldm-tech/spruce/internal/ui/pages/maintenance"
+	"github.com/yldm-tech/spruce/internal/ui/pages/overview"
 	"github.com/yldm-tech/spruce/internal/ui/pages/settings"
-	"github.com/yldm-tech/spruce/internal/ui/pages/smartscan"
 	"github.com/yldm-tech/spruce/internal/ui/pages/space"
 	"github.com/yldm-tech/spruce/internal/ui/pages/systemjunk"
 	"github.com/yldm-tech/spruce/internal/ui/pages/uninstall"
@@ -26,7 +26,7 @@ import (
 type Deps struct {
 	Stores store.Deps
 
-	SmartScan   smartscan.Deps
+	Overview    overview.Deps
 	SystemJunk  systemjunk.Deps
 	DevJunk     devjunk.Deps
 	Installers  installers.Deps

@@ -1,4 +1,4 @@
-package smartscan
+package overview
 
 import (
 	"runtime"
@@ -6,10 +6,8 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
-	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
-	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/shared"
@@ -19,13 +17,13 @@ import (
 // historyLimit is how many runs the 维护 card reads: everything the store keeps (history.MaxRuns), as the history page does.
 const historyLimit = history.MaxRuns
 
-// statusCards are the informational cards of 智能扫描 (其他检查): free space on the system disk, the sustained high CPU alert, Full Disk Access (macOS) and when 维护 last ran. They clean nothing; each links to the page that acts on it.
+// statusCards are the informational cards of 概览's 其他检查: the sustained high CPU alert, Full Disk Access (macOS) and when 维护 last ran (free space is the disk row above). They clean nothing; each links to the page that acts on it.
 type statusCards struct{}
 
 // Render implements core.Node.
 func (statusCards) Render(cx *core.Scope) core.Node {
 	st := store.Use(cx)
-	cards := []core.Node{diskCard(cx, st), cpuCard(cx, st)}
+	cards := []core.Node{cpuCard(cx, st)}
 	if runtime.GOOS != "windows" {
 		cards = append(cards, fullDiskAccessCard(cx, st))
 	}
@@ -77,63 +75,6 @@ func (c statusCard) Render(*core.Scope) core.Node {
 		}
 	}
 	return core.View{Role: core.RoleRegion, Label: c.Title, TestID: c.TestID, Style: cardStyle(), Children: children}
-}
-
-// disk is what the disk card shows: the system disk, and whether the disks have been read.
-type disk struct {
-	volume      app.SpaceVolume
-	has, loaded bool
-}
-
-// diskCard is the free space of the system disk. Free space changes outside the app, so the disks are read again each time the card shows; what was read before stays until the new answer arrives.
-func diskCard(cx *core.Scope, st *store.Stores) core.Node {
-	if core.Untracked(cx, func() bool { _, ok := st.Locations.Get(); return ok }) {
-		st.Locations.Bump()
-	}
-	d := core.NewMemo(cx, func() disk {
-		l, loaded := st.Locations.Get()
-		if v := SystemVolume(l); v != nil {
-			return disk{volume: *v, has: true, loaded: loaded}
-		}
-		return disk{loaded: loaded}
-	})
-	low := func() bool { v := d.Get(); return v.has && DiskLow(v.volume) }
-	meta := nav.Space.Meta()
-	return statusCard{Title: "磁盘空间", Tone: meta.Tone, Glyph: meta.Glyph, TestID: "status-disk", Warning: low,
-		Value: func() string {
-			switch v := d.Get(); {
-			case v.has:
-				return "可用 " + format.Bytes(v.volume.Free)
-			case v.loaded:
-				return "无法读取"
-			}
-			return "正在读取…"
-		},
-		Note: func() string {
-			if v := d.Get(); v.has {
-				return DiskNote(v.volume)
-			}
-			return ""
-		},
-		Actions: []core.Node{
-			core.Show{When: func() bool { return d.Get().has }, Then: func(*core.Scope) core.Node {
-				return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, FlexBasis: core.Pct(100)}, Children: []core.Node{
-					kit.Meter{Value: func() float64 { return UsedFraction(d.Get().volume) }, Height: 6, Label: "已用空间", TestID: "disk-meter",
-						Level: func() kit.Level {
-							if low() {
-								return kit.LevelCritical
-							}
-							return kit.LevelNormal
-						}},
-				}}
-			}},
-			kit.Link{Start: true, To: to(nav.Space), TestID: "disk-link", Text: func() string {
-				if low() {
-					return "看看是什么占用了空间"
-				}
-				return "空间透视"
-			}},
-		}}
 }
 
 func cpuCard(cx *core.Scope, st *store.Stores) core.Node {
