@@ -106,6 +106,44 @@ func TestScreensSystemJunk(t *testing.T) {
 	b.Screenshot("system-junk-failed")
 }
 
+// TestScreensSystemJunkToastAtTheEnd cleans a long list scrolled to its end: the toast with 撤销 that follows must leave the action bar in view above it.
+func TestScreensSystemJunkToastAtTheEnd(t *testing.T) {
+	const wait = 10 * time.Second
+	cats := make([]cleanup.Category, 14)
+	for i := range cats {
+		p := fmt.Sprintf("/Users/me/Downloads/part-%02d.crdownload", i)
+		cats[i] = cleanup.Category{ID: fmt.Sprintf("downloads-%02d", i), Title: fmt.Sprintf("未完成的下载 %d", i+1), Description: "中断后留下的半截文件", Icon: "temp",
+			Kind: cleanup.KindCache, Deletion: cleanup.DeleteTrash, Selected: true, Size: 12_000_000,
+			Items: []cleanup.Item{{ID: cleanup.ItemID(p), Path: p, Size: 12_000_000, Selected: true, ModTime: time.Now().Add(-50 * time.Hour)}}}
+	}
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(drillState("system-junk", cats...))
+	ov.OnClean = func(_ context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Trashed: 168_000_000, Removed: 14}, RunID: "run-1", Undoable: true}, nil
+	}
+	fakes.Overview = ov
+	a := screensApp(t, fakes, shell.Deps{SystemJunk: systemjunk.Deps{Files: &cleanflowfake.Files{}}}, "system-junk")
+	a.WaitFor("id:clean", wait)
+	a.Scroll("id:drill-system-junk", 100000)
+	a.Settle()
+	// bottom is where 清理 ends in the window.
+	bottom := func() float32 {
+		v := a.Find("id:clean")
+		y := float32(v.Frame.Size.Height)
+		for ; v != nil; v = v.Parent {
+			y += float32(v.Frame.Origin.Y)
+			if v.Props.TestID == "drill-system-junk" {
+				y -= float32(v.Offset.Y)
+			}
+		}
+		return y
+	}
+	a.Press("id:clean")
+	a.WaitFor("id:toast", wait)
+	a.WaitUntil(wait, func() bool { return bottom() <= 820-24-44-12 })
+	a.Screenshot("system-junk-toast-end")
+}
+
 // TestScreensSystemJunkLongList expands a category of 3,000 items and scrolls through it: the design's largest list, for its look and, under -trace, its commit times.
 func TestScreensSystemJunkLongList(t *testing.T) {
 	if raceEnabled {

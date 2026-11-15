@@ -104,7 +104,7 @@ func DrillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func
 	})
 }
 
-// keepBarInView scrolls page to its end, once laid out, when raised turns true while bar shows in it. Rising grows the page under a long list, so on a page scrolled to the bottom (as after pressing 清理) the bar would otherwise slide under the window's edge with the toast over where it was.
+// keepBarInView scrolls page until bar ends inside it, once laid out, when raised turns true while bar shows in it. Rising grows the page under a long list, so on a page scrolled to the bottom (as after pressing 清理) the bar would otherwise slide under the window's edge with the toast over where it was. It measures again after each scroll, a few times at most, and does not animate: the content can still grow as it lays out (a long list's rows), and an animated scroll aims at the end as it was when it started.
 func keepBarInView(cx *core.Scope, page, bar *core.Ref, raised func() bool) {
 	was := false
 	cx.Effect(func() {
@@ -121,11 +121,18 @@ func keepBarInView(cx *core.Scope, page, bar *core.Ref, raised func() bool) {
 		if !ok || !ok2 || b.Origin.Y >= view.Origin.Y+view.Size.Height {
 			return
 		}
-		page.Measure(func(_, _ core.Bounds, ok bool) {
-			if ok {
-				page.ScrollToEnd(!cx.Env().ReduceMotion())
-			}
-		})
+		var settle func(tries int)
+		settle = func(tries int) {
+			bar.Measure(func(_, b core.Bounds, ok bool) {
+				view, ok2 := page.Bounds()
+				if !ok || !ok2 || tries == 0 || b.Origin.Y+b.Size.Height <= view.Origin.Y+view.Size.Height+0.5 {
+					return
+				}
+				page.ScrollToEnd(false)
+				settle(tries - 1)
+			})
+		}
+		settle(3)
 	})
 }
 
