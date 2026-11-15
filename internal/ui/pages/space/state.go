@@ -31,7 +31,7 @@ type ScanRequest struct {
 // progressEvery bounds how often the scan's progress reaches the page; only the latest counts matter (async.Feed).
 const progressEvery = 80 * time.Millisecond
 
-// State is the 空间透视 page's controller: the last scan, which the service keeps, and a scan while it runs. Make it in the page's component (NewState), whose scope stops a running scan when the page goes; its methods run on the engine goroutine.
+// State is the 空间透视 page's controller: the last scan, which the service keeps, a scan while it runs, and where its results were left. The shell makes one in the app's own scope (Provide), so a scan goes on while another page shows and coming back shows the page as it was; its methods run on the engine goroutine.
 type State struct {
 	cx  *core.Scope
 	ctx context.Context
@@ -55,8 +55,30 @@ type State struct {
 	// stopped is set by Stop, so a scan the user stopped goes back without an error.
 	stopped bool
 	cancel  context.CancelFunc
+	// seq counts the scans started, so a scan replaced by another (ScanPath) no longer reaches the page.
+	seq int
+	// place is where the results were left (the open folder and the tab), so the next showing of the same scan opens there.
+	place place
 	// undo is what of the page's moves to the Trash outlives the page, kept with the service (undoWatchFor).
 	undo *undoWatch
+}
+
+// place is where one scan's results were left.
+type place struct {
+	scanID string
+	folder int
+	tab    Tab
+}
+
+// stateKey provides the State that Provide makes.
+var stateKey = core.NewKey[*State]("spruce.space.state", nil)
+
+// Provide gives the page its Deps and makes, in cx (the app's own scope), the State every showing of the page shares.
+func Provide(cx *core.Scope, d Deps) {
+	DepsKey.Provide(cx, d)
+	if d.Space != nil {
+		stateKey.Provide(cx, NewState(cx, d.Space))
+	}
 }
 
 // undoWatch is what 空间透视 keeps of its moves to the Trash beyond one showing of the page: the shell makes a new page (and State) on every visit, while the scan the service keeps and the toast's 撤销 stay, so an undo can come while another page shows.
@@ -85,7 +107,7 @@ func undoWatchFor(svc Service) *undoWatch {
 	return w
 }
 
-// NewState makes the controller in cx, the page's scope, and asks the service for the scan it keeps.
+// NewState makes the controller in cx and asks the service for the scan it keeps. A scan lives as long as cx: the app's scope through Provide, the page's when the page has no State provided.
 func NewState(cx *core.Scope, svc Service) *State {
 	s := &State{cx: cx, ctx: cx.Context(), svc: svc,
 		Loaded:   core.NewSignal(cx, false),
@@ -127,11 +149,25 @@ func (s *State) Scan(req ScanRequest) {
 	if s.Scanning.GetUntracked() != nil {
 		return
 	}
+	s.start(req)
+}
+
+// start starts scanning req, stopping a scan that runs; that scan's progress and result no longer reach the page.
+func (s *State) start(req ScanRequest) {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.seq++
+	seq := s.seq
 	s.stopped = false
 	s.Err.Set("")
 	s.Progress.Set(nil)
 	s.Scanning.Set(&req)
-	feed := async.NewFeed(s.cx, progressEvery, func(p app.SpaceProgress) { s.Progress.Set(&p) })
+	feed := async.NewFeed(s.cx, progressEvery, func(p app.SpaceProgress) {
+		if seq == s.seq {
+			s.Progress.Set(&p)
+		}
+	})
 	run, cancel := context.WithCancel(s.ctx)
 	s.cancel = cancel
 	async.Do(s.cx, run, func(ctx context.Context) (app.SpaceSummary, error) {
@@ -139,6 +175,9 @@ func (s *State) Scan(req ScanRequest) {
 		return s.svc.Scan(ctx, req.Path, feed.Send)
 	}, func(sum app.SpaceSummary, err error) {
 		cancel()
+		if seq != s.seq {
+			return
+		}
 		s.cancel = nil
 		if err == nil {
 			s.Current.Set(&sum)
@@ -169,14 +208,14 @@ func (s *State) Rescan() {
 	}
 }
 
-// Choose opens the system's folder picker and scans the folder picked; cancelling it leaves the page as it is.
-func (s *State) Choose() {
+// Choose opens the system's folder picker over the page shown in cx (a picker needs the page's window, not the app's scope the State may live in) and scans the folder picked; cancelling it leaves the page as it is.
+func (s *State) Choose(cx *core.Scope) {
 	if s.Choosing.GetUntracked() {
 		return
 	}
 	s.Err.Set("")
 	s.Choosing.Set(true)
-	s.cx.PickDirectories(core.PickDirectoriesOptions{}, func(dirs []core.Directory, err error) {
+	cx.PickDirectories(core.PickDirectoriesOptions{}, func(dirs []core.Directory, err error) {
 		s.Choosing.Set(false)
 		if err != nil {
 			s.Err.Set("无法打开选择文件夹的窗口")
@@ -204,13 +243,16 @@ func (s *State) Return() {
 	s.rescanIfUndone()
 }
 
-// ScanPath scans the folder path, named after it (空间变化's 在空间透视中查看).
+// ScanPath scans the folder path, named after it (空间变化's 在空间透视中查看), in place of a scan that runs: the user asked for this folder.
 func (s *State) ScanPath(path string) {
 	name := format.BaseName(path)
 	if name == "" {
 		name = path
 	}
-	s.Scan(ScanRequest{Path: path, Name: name})
+	if r := s.Scanning.GetUntracked(); r != nil && r.Path == path {
+		return
+	}
+	s.start(ScanRequest{Path: path, Name: name})
 }
 
 // Moved remembers runID, the history run of a move to the Trash this page made, so its undo scans again.

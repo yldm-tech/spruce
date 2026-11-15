@@ -30,14 +30,14 @@ var pages = map[nav.Route]func(cx *core.Scope) core.Node{
 	nav.Settings:    settings.Page,
 }
 
-// providePages gives each page its Deps.
+// providePages gives each page its Deps, in cx, the app's own scope (空间透视 also its controller, which outlives the page).
 func providePages(cx *core.Scope, d Deps) {
 	overview.DepsKey.Provide(cx, d.Overview)
 	systemjunk.DepsKey.Provide(cx, d.SystemJunk)
 	devjunk.DepsKey.Provide(cx, d.DevJunk)
 	installers.DepsKey.Provide(cx, d.Installers)
 	uninstall.DepsKey.Provide(cx, d.Uninstall)
-	space.DepsKey.Provide(cx, d.Space)
+	space.Provide(cx, d.Space)
 	maintenance.DepsKey.Provide(cx, d.Maintenance)
 	health.DepsKey.Provide(cx, d.Health)
 	history.DepsKey.Provide(cx, d.History)

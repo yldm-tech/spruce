@@ -37,6 +37,8 @@ func startView(cx *core.Scope, s *State, files Files) core.Node {
 	if core.Untracked(cx, func() bool { _, ok := locs.Get(); return ok }) {
 		locs.Bump()
 	}
+	// The picker answers to this view's scope; once the view goes, an answer that did not come would leave 选择其他文件夹 disabled on the State, which outlives the page.
+	cx.Cleanup(func() { s.Choosing.Set(false) })
 	return core.View{TestID: "space-start", Busy: func() bool { _, ok := locs.Get(); return !ok }, Style: core.Style{Gap: 22},
 		Children: []core.Node{
 			kit.ErrorLine{Text: s.Err.Get, TestID: "space-error"},
@@ -60,7 +62,7 @@ func startView(cx *core.Scope, s *State, files Files) core.Node {
 				return core.Group(sections)
 			}),
 			core.View{Style: core.Style{Direction: core.Row}, Children: []core.Node{
-				kit.Button{Variant: kit.ButtonGhost, TestID: "choose-folder", Disabled: s.Choosing.Get, OnPress: s.Choose,
+				kit.Button{Variant: kit.ButtonGhost, TestID: "choose-folder", Disabled: s.Choosing.Get, OnPress: func() { s.Choose(cx) },
 					TextFunc: func() string {
 						if s.Choosing.Get() {
 							return "正在选择…"

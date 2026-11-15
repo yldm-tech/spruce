@@ -3,6 +3,7 @@ package space_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -50,7 +51,7 @@ func mount(t *testing.T, p *page, shown bool, opts ...nsgotest.Option) *page {
 		p.stores = storefake.Provide(cx, p.fakes.Deps())
 		p.nav = nav.NewNavigator(cx, nav.Space)
 		nav.Key.Provide(cx, p.nav)
-		space.DepsKey.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
+		space.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
 		p.shown = core.NewSignal(cx, shown)
 		return core.Show{When: p.shown.Get, Then: space.Page}
 	}, append([]nsgotest.Option{nsgotest.Size(1052, 820), wallNow}, opts...)...)
@@ -232,24 +233,107 @@ func TestFailedScanSaysWhy(t *testing.T) {
 	p.Find("id:volume-/")
 }
 
-func TestLeavingStopsTheScan(t *testing.T) {
+// leave hides the page and waits until it is gone; back shows it again.
+func (p *page) leave() {
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:space-page", wait)
+}
+
+func (p *page) back() {
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor("id:space-page", wait)
+}
+
+func TestLeavingKeepsTheScanGoing(t *testing.T) {
+	release := make(chan struct{})
 	ended := make(chan struct{})
 	svc := &spacefake.Service{Listings: spacefake.Listings(),
-		OnScan: func(ctx context.Context, _ string, _ func(app.SpaceProgress)) (app.SpaceSummary, error) {
-			<-ctx.Done()
-			close(ended)
-			return app.SpaceSummary{}, ctx.Err()
+		OnScan: func(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error) {
+			defer close(ended)
+			progress(app.SpaceProgress{Files: 1200, Bytes: 3e9, Path: path})
+			select {
+			case <-ctx.Done():
+				return app.SpaceSummary{}, ctx.Err()
+			case <-release:
+				return spacefake.Summary(time.Now()), nil
+			}
 		}}
 	p := start(t, svc, newFakes(t))
 	p.WaitFor("id:target-home", wait)
 	p.Press("id:target-home")
 	p.WaitFor("id:space-stop", wait)
-	p.Post(func() { p.shown.Set(false) })
-	p.WaitForGone("id:space-page", wait)
+	p.leave()
+	p.back()
+	// The page comes back to the scan that went on meanwhile, with its progress.
+	p.waitTicking("text:已扫描 1,200 个文件 · 3 GB")
+	p.Find("text:正在分析「个人文件夹」…")
 	select {
 	case <-ended:
-	case <-time.After(wait):
-		t.Fatal("the scan goes on after the page went")
+		t.Fatal("the scan ended while another page showed")
+	default:
+	}
+
+	// A scan that ends while another page shows has its results waiting.
+	p.leave()
+	close(release)
+	<-ended
+	p.back()
+	p.WaitFor(homeList, wait)
+	if got := svc.Scans(); len(got) != 1 {
+		t.Errorf("scans %v", got)
+	}
+}
+
+func TestComingBackOpensTheFolderAndTabLeftOpen(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	p := start(t, svc, newFakes(t))
+	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "Projects"`)
+	p.WaitFor(`role:group "Projects 的内容"`, wait)
+	p.leave()
+	p.back()
+	p.WaitFor(`role:group "Projects 的内容"`, wait)
+	if got := p.Find("id:space-path-current").Text; got != "Projects" {
+		t.Errorf("current %q", got)
+	}
+
+	p.Press("id:tab-large")
+	p.WaitUntil(wait, func() bool { return svc.LargeCalls() == 1 })
+	p.leave()
+	p.back()
+	p.WaitUntil(wait, func() bool { return svc.LargeCalls() == 2 })
+	if p.Exists(`role:group "Projects 的内容"`) {
+		t.Error("the 空间分布 tab shows after coming back to 大文件")
+	}
+	if len(svc.Scans()) != 0 {
+		t.Errorf("scans %v", svc.Scans())
+	}
+}
+
+func TestGoSpaceReplacesARunningScan(t *testing.T) {
+	svc := &spacefake.Service{Listings: spacefake.Listings()}
+	p := start(t, svc, newFakes(t))
+	p.WaitFor("id:target-home", wait)
+	p.Press("id:target-home")
+	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
+	p.leave()
+	caches := filepath.Join(spacefake.Home, "Library", "Caches")
+	p.Post(func() {
+		p.nav.GoSpace(caches)
+		p.shown.Set(true)
+	})
+	p.WaitFor("text:正在分析「Caches」…", wait)
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 2 })
+	if got := svc.Scans(); got[1] != caches {
+		t.Errorf("scans %v", got)
+	}
+	// The replaced scan's end (the fake answers 已取消) neither ends the new scan nor shows an error.
+	p.Advance(200 * time.Millisecond)
+	p.Find("text:正在分析「Caches」…")
+	if p.Exists("role:alert") {
+		t.Errorf("an alert shows: %v", p.Texts())
 	}
 }
 
