@@ -16,11 +16,23 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// Page is the 空间透视 page.
+// Page is the 空间透视 page. A link that asked it for a folder (空间变化's 在空间透视中查看, Navigator.GoSpace) starts scanning that folder as it opens; an undo of one of its moves scans its location again.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	s := NewState(cx, deps.Space)
 	phase := core.NewMemo(cx, s.Phase)
+	if n := nav.Use(cx); n != nil {
+		if path := n.TakeSpacePath(); path != "" {
+			s.ScanPath(path)
+		}
+	}
+	if stores := store.Use(cx); stores != nil {
+		// As the page opens and after every undo: an undo of one of its moves may have come while another page showed.
+		cx.Effect(func() {
+			stores.Overview.LastUndo()
+			cx.Untrack(func() { s.Undone(stores.Overview.Undid) })
+		})
+	}
 
 	actions := core.Dynamic(func(*core.Scope) core.Node {
 		switch phase.Get() {
@@ -37,7 +49,7 @@ func Page(cx *core.Scope) core.Node {
 	body := core.Dynamic(func(*core.Scope) core.Node {
 		switch phase.Get() {
 		case PhaseStart:
-			return core.Func(func(cx *core.Scope) core.Node { return startView(cx, s) })
+			return core.Func(func(cx *core.Scope) core.Node { return startView(cx, s, deps.Files) })
 		case PhaseScanning:
 			return core.Func(func(*core.Scope) core.Node { return scanningView(s) })
 		case PhaseResults:
@@ -80,7 +92,8 @@ func scanningView(s *State) core.Node {
 
 // resultsPhase is the page after a scan: why a scan failed, if one did, the scan's results (a new controller for every scan) and the action bar with 重新扫描.
 func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
-	bump := store.Use(cx).Trash.Bump
+	stores := store.Use(cx)
+	moves := Moves{Undo: func() bool { return stores.Overview.State().CanUndo }, Bump: stores.Trash.Bump, Toast: stores.Toasts.Show}
 	scanID := core.NewMemo(cx, func() string {
 		if sum := s.Current.Get(); sum != nil {
 			return sum.ScanID
@@ -100,11 +113,14 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 				return core.Group{}
 			}
 			return core.Func(func(cx *core.Scope) core.Node {
-				r := NewResults(cx, s, core.Untracked(cx, summary), files, bump)
+				r := NewResults(cx, s, core.Untracked(cx, summary), files, moves)
 				return resultsView(cx, r, summary)
 			})
 		}),
-		kit.ActionBar{
+		// While the shell's toast shows, the action bar rises above it.
+		core.View{TestID: "space-action-bar", StyleFunc: func() core.Style {
+			return core.Style{AutoMargin: core.SideTop, Padding: core.Edges{Bottom: toastClearance(stores)}}
+		}, Children: []core.Node{kit.ActionBar{
 			Start: func() kit.Stat {
 				sum := summary()
 				return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
@@ -117,11 +133,22 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 				return kit.Stat{Label: "上次扫描", Value: when}
 			},
 			Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
-		},
+		}}},
 	}
 }
 
-// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash.
+// toastHeight is what the shell's toast takes at the bottom of the page area: 24 points below it, at least 44 for itself, and 12 to the action bar; the page's own bottom padding (24) is part of it.
+const toastHeight = 24 + 44 + 12 - 24
+
+// toastClearance is how far the action bar rises while the shell's toast shows (centred at the bottom of the page area, over the pages), so the toast does not cover the figures and 重新扫描; 0 without one. Reading it subscribes.
+func toastClearance(stores *store.Stores) core.Points {
+	if stores != nil && stores.Toasts.Current() != nil {
+		return toastHeight
+	}
+	return 0
+}
+
+// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash that cannot be undone from Spruce (Windows).
 func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) core.Node {
 	// The confirmation gives the focus back to the 移到废纸篓 button that opened it, through this Ref pointed at that button.
 	opener := new(core.Ref)
@@ -136,10 +163,6 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 	tabs := kit.Tabs[Tab]{Label: "查看方式", Value: r.Tab.Get, OnChange: r.SetTab,
 		Options: []kit.Option[Tab]{{Value: TabMap, Label: "空间分布", TestID: "tab-map"}, {Value: TabLarge, Label: "大文件", TestID: "tab-large"}}}
 
-	notice := core.Show{When: func() bool { return r.Notice.Get().Kind == NoticeDone }, Then: func(*core.Scope) core.Node {
-		return core.Text{ContentFunc: func() string { return r.Notice.Get().Text }, Role: core.RoleText, LiveRegion: core.LiveRegionPolite, TestID: "space-notice",
-			Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}}
-	}}
 	noticeErr := kit.ErrorLine{TestID: "space-notice-error", Text: func() string {
 		if n := r.Notice.Get(); n.Kind == NoticeError {
 			return n.Text
@@ -166,9 +189,9 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 			return "将把「" + EntryLabel(*e) + "」（" + format.Bytes(e.Size) + "）移到" + trash + "。需要时可以从" + trash + "放回原处。"
 		}}}
 
-	return core.View{TestID: "space-results", Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
+	return core.View{TestID: "space-results", Busy: r.Trashing.Get, Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
 		core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
-		tabs, notice, noticeErr, revealErr, mapPanel, largePanel, confirm,
+		tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
 	}}
 }
 
@@ -184,8 +207,9 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 	children := func() []app.SpaceEntry { return listing().Children }
 	total := func() int64 { return listing().Entry.Size }
 	folderName := func() string { return listing().Entry.Name }
-	// The map and the list share one row that fills the window's height left by the header, the tabs and the action bar, never less than 340 points; the list scrolls inside it.
-	browserHeight := func() core.Points { return max(340, cx.Env().Window().Height-380) }
+	// The map and the list share one row that fills the window's height left by the header, the tabs and the action bar (raised over the toast while it shows), never less than 340 points; the list scrolls inside it.
+	stores := store.Use(cx)
+	browserHeight := func() core.Points { return max(340, cx.Env().Window().Height-380-toastClearance(stores)) }
 
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 12}, Children: []core.Node{
 		core.Show{When: has, Then: func(*core.Scope) core.Node { return breadcrumb(r, listing) }},

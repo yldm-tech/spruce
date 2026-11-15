@@ -13,6 +13,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/space"
 	"github.com/yldm-tech/spruce/internal/ui/pages/space/spacefake"
 	"github.com/yldm-tech/spruce/internal/ui/store"
@@ -27,7 +28,10 @@ type page struct {
 	files  *spacefake.Files
 	fakes  *storefake.Services
 	stores *store.Stores
+	nav    *nav.Navigator
 	shown  *core.Signal[bool]
+	// root is the test root's scope, for calls a store needs one for (an undo the shell's toast would start).
+	root *core.Scope
 }
 
 // start mounts the page on svc and store fakes holding the fixture's disks and folders. The page sits behind a switch (shown), so a test can leave it.
@@ -35,10 +39,19 @@ func start(t *testing.T, svc *spacefake.Service, fakes *storefake.Services, opts
 	t.Helper()
 	fakes.Locations = spacefake.Locations()
 	p := &page{svc: svc, files: &spacefake.Files{}, fakes: fakes}
+	return mount(t, p, true, opts...)
+}
+
+// mount starts p's app with the page shown or not.
+func mount(t *testing.T, p *page, shown bool, opts ...nsgotest.Option) *page {
+	t.Helper()
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
-		p.stores = storefake.Provide(cx, fakes.Deps())
-		space.DepsKey.Provide(cx, space.Deps{Space: svc, Files: p.files})
-		p.shown = core.NewSignal(cx, true)
+		p.root = cx
+		p.stores = storefake.Provide(cx, p.fakes.Deps())
+		p.nav = nav.NewNavigator(cx, nav.Space)
+		nav.Key.Provide(cx, p.nav)
+		space.DepsKey.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
+		p.shown = core.NewSignal(cx, shown)
 		return core.Show{When: p.shown.Get, Then: space.Page}
 	}, append([]nsgotest.Option{nsgotest.Size(1052, 820)}, opts...)...)
 	return p
@@ -55,6 +68,16 @@ func (p *page) waitTicking(selector string) {
 		p.Advance(20 * time.Millisecond)
 		return false
 	})
+}
+
+// waitToast waits for the stores' toast and returns it.
+func (p *page) waitToast() store.Toast {
+	var got *store.Toast
+	p.WaitUntil(wait, func() bool {
+		got = p.stores.Toasts.Current()
+		return got != nil
+	})
+	return *got
 }
 
 // actionStat is the figure beside the round button: start is the scanned location's, else 上次扫描.
@@ -286,8 +309,12 @@ func TestTrashAfterConfirming(t *testing.T) {
 	if got := svc.Trashes(); len(got) != 1 || len(got[0]) != 1 || got[0][0] != spacefake.ISO.Path {
 		t.Errorf("trashes %v", got)
 	}
-	if got := p.WaitFor("id:space-notice", wait).Text; got != "已把「big.iso」移到废纸篓，清倒废纸篓后可释放 3 GB" {
-		t.Errorf("notice %q", got)
+	// Without 概览's controller nothing can be undone from Spruce: the toast says where the item went, without 撤销.
+	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，需要时可以在废纸篓里还原" || got.UndoRun != "" || got.ViewRun != "" || got.Duration != 6*time.Second {
+		t.Errorf("toast %+v", got)
+	}
+	if p.Exists("id:space-notice") {
+		t.Error("a notice shows beside the toast")
 	}
 	if _, v := p.actionStat(true); v != "7 GB" {
 		t.Errorf("stat %q", v)
@@ -328,8 +355,8 @@ func TestEscapeWhileMovingKeepsTheConfirmation(t *testing.T) {
 	}
 	close(release)
 	p.WaitForGone("id:trash-confirm", wait)
-	if got := p.WaitFor("id:space-notice", wait).Text; got != "已把「big.iso」移到废纸篓，清倒废纸篓后可释放 3 GB" {
-		t.Errorf("notice %q", got)
+	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，需要时可以在废纸篓里还原" {
+		t.Errorf("toast %+v", got)
 	}
 	if p.stores.Block.Blocked() {
 		t.Error("the shell stays blocked")

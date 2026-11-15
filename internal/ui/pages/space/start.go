@@ -30,8 +30,8 @@ func cardGrid(label string, cards []core.Node) core.Node {
 		Children: cards}
 }
 
-// startView is the page before a scan: the disks with how full they are, the quick folders, and 选择其他文件夹. Choosing any of them starts a scan. The disks are read again each time it shows, since their free space changes outside the app.
-func startView(cx *core.Scope, s *State) core.Node {
+// startView is the page before a scan: the disks with how full they are, the quick folders, 选择其他文件夹 and 最近变化. Choosing any of them starts a scan. The disks are read again each time it shows, since their free space changes outside the app.
+func startView(cx *core.Scope, s *State, files Files) core.Node {
 	locs := store.Use(cx).Locations
 	// The first read starts loading them; a later one shows what was read before while they load again.
 	if core.Untracked(cx, func() bool { _, ok := locs.Get(); return ok }) {
@@ -68,6 +68,7 @@ func startView(cx *core.Scope, s *State) core.Node {
 						return "选择其他文件夹…"
 					}},
 			}},
+			growthView(cx, s, files),
 		}}
 }
 

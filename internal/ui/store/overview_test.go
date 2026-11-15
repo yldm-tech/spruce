@@ -130,9 +130,21 @@ func TestOverviewFollowsTheControllerAndCleans(t *testing.T) {
 	var info app.TrashInfo
 	st.Overview.TrashInfo(h.root, t.Context(), func(i app.TrashInfo, _ error) { info = i })
 	h.until(t, func() bool { return info.Items == 3 })
+	if u := st.Overview.LastUndo(); u != (Undone{}) {
+		t.Errorf("an undo before any: %+v", u)
+	}
 	var restored int
 	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored })
 	h.until(t, func() bool { return restored == 2 && !st.Overview.Busy() })
+	if u := st.Overview.LastUndo(); u != (Undone{RunID: "r1", Seq: 1}) {
+		t.Errorf("last undo %+v", u)
+	}
+	if !st.Overview.Undid("r1") || st.Overview.Undid("r2") {
+		t.Error("Undid does not follow the undos")
+	}
+	restored = 0
+	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored })
+	h.until(t, func() bool { return restored == 2 && st.Overview.LastUndo().Seq == 2 })
 }
 
 func TestToasts(t *testing.T) {
