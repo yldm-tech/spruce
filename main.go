@@ -5,11 +5,13 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"log"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -21,7 +23,16 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
 	"github.com/yldm-tech/spruce/internal/host/datadir"
 	"github.com/yldm-tech/spruce/internal/host/instance"
+	"github.com/yldm-tech/spruce/internal/host/loginitem"
 	"github.com/yldm-tech/spruce/internal/ui/shell"
+)
+
+// trayIcon and trayAlertIcon are the menu bar icon's template images (36 by 36 pixels, 18 points at 2x), the second for low space; they live here because go:embed cannot reach outside a package's folder.
+var (
+	//go:embed assets/tray.png
+	trayIcon []byte
+	//go:embed assets/tray-alert.png
+	trayAlertIcon []byte
 )
 
 // backgroundGrace is how long main waits for the background work to stop after the app quits; cleanGrace is how long it gives a running clean to finish its current item and record what it did.
@@ -79,6 +90,13 @@ func main() {
 	}
 	deps.Instance = inst
 	deps.SetMainView = nsgo.SetMainView
+	deps.TrayIcon, deps.TrayAlertIcon = trayIcon, trayAlertIcon
+	// The Apple event that says the system opened Spruce at login is read as the app finishes launching, so the observer goes in before nsgo.Run.
+	loginitem.WatchLaunch()
+	deps.LaunchedAtLogin = loginitem.LaunchedAtLogin
+	if err := loginitem.New(appID).Refresh(); err != nil {
+		logger.Warn("login item: rewrite the launch agent", "err", err)
+	}
 	var background sync.WaitGroup
 	deps.Background = tracked(&background, deps.Background)
 
@@ -89,6 +107,10 @@ func main() {
 	}
 	if frame, ok := shell.LoadFrame(dataDir); ok {
 		opts = append(opts, nsgo.WindowFrame(frame))
+	}
+	// Staying in the menu bar, Spruce starts out of the Dock, so its icon never flashes there at a login start; opening the window shows it.
+	if runtime.GOOS == "darwin" && deps.Stores.Settings.Get().General.KeepInTray {
+		opts = append(opts, nsgo.HideDock())
 	}
 	nsgo.Run(shell.App(deps), opts...)
 

@@ -2,10 +2,13 @@ package settings
 
 import (
 	"testing"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/rules"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/ui/format"
 )
 
 func TestParseWhole(t *testing.T) {
@@ -82,8 +85,78 @@ func TestFieldsWriteTheirOwnPart(t *testing.T) {
 		t.Error("exclusions")
 	}
 	got = FieldLaunchAtLogin.Put(base, true)
-	if !got.General.LaunchAtLogin || got.General.ConfirmBeforeClean != base.General.ConfirmBeforeClean {
+	if !got.General.LaunchAtLogin || got.General.ConfirmBeforeClean != base.General.ConfirmBeforeClean || got.General.KeepInTray != base.General.KeepInTray {
 		t.Error("launch at login")
+	}
+	got = FieldKeepInTray.Put(base, false)
+	if got.General.KeepInTray || !base.General.KeepInTray || got.General.LaunchAtLogin != base.General.LaunchAtLogin {
+		t.Error("keep in tray")
+	}
+	got = FieldBackgroundEnabled.Put(base, false)
+	if got.Background.Enabled || got.General != base.General {
+		t.Error("background")
+	}
+	got = FieldLowDiskAlert.Put(FieldLowDiskGB.Put(base, 50), true)
+	if !got.General.LowDiskAlert || got.General.LowDiskGB != 50 || FieldLowDiskGB.Get(got) != 50 || got.General.KeepInTray != base.General.KeepInTray {
+		t.Error("low disk")
+	}
+	got = FieldWeeklySummary.Put(base, false)
+	if got.Automation.WeeklySummary || got.Automation.AppCaches != base.Automation.AppCaches {
+		t.Error("weekly summary")
+	}
+	// Each rule's switch writes its own flag and nothing else.
+	for _, spec := range rules.Catalog() {
+		got := RuleField(spec.ID).Put(base, true)
+		on := rules.Enabled(got.Automation)
+		if len(on) != 1 || on[0] != spec.ID || !RuleField(spec.ID).Get(got) || got.Automation.WeeklySummary != base.Automation.WeeklySummary {
+			t.Errorf("rule %s turns on %v", spec.ID, on)
+		}
+		if RuleDescription(spec.ID) == "" {
+			t.Errorf("rule %s has no description", spec.ID)
+		}
+	}
+}
+
+func TestRuleStatusText(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.Local)
+	st := &app.RuleStatus{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30, LastRun: now.Add(-2 * time.Hour), LastTrashed: 1 << 30}
+	trash := format.TrashName()
+	lastRun := "上次运行：" + format.RelativeTime(st.LastRun, now) + "，移到" + trash + " " + format.Bytes(1<<30)
+	for _, c := range []struct {
+		on        bool
+		st        *app.RuleStatus
+		hasResult bool
+		want      string
+	}{
+		{false, nil, false, "检查后会显示符合条件的项目"},
+		{false, nil, true, "检查后会显示符合条件的项目"},
+		{false, st, false, "检查后会显示符合条件的项目"},
+		{false, st, true, "现在符合条件的：12 项，" + format.Bytes(3<<30)},
+		{true, nil, false, "还没有运行过，下次后台检查时运行"},
+		{true, &app.RuleStatus{ID: "app-caches", Matching: 3}, true, "还没有运行过，下次后台检查时运行"},
+		{true, st, true, lastRun},
+		{true, st, false, lastRun},
+	} {
+		if got := RuleStatusText(c.on, c.st, c.hasResult, now); got != c.want {
+			t.Errorf("RuleStatusText(%v, %+v, %v) = %q, want %q", c.on, c.st, c.hasResult, got, c.want)
+		}
+	}
+
+	// A rule that is on and has run shows its last run before any check result arrives (at startup, or with no readable cache).
+	state := app.OverviewState{Rules: []app.RuleStatus{*st}}
+	got := RuleStatusOf(state, rules.AppCaches)
+	if got == nil || got.Matching != 12 {
+		t.Fatalf("status without a result %+v", got)
+	}
+	if text := RuleStatusText(true, got, state.Result != nil, now); text != lastRun {
+		t.Errorf("on, run, no result: %q, want %q", text, lastRun)
+	}
+	state.Result = &app.OverviewResult{}
+	if got := RuleStatusOf(state, rules.AppCaches); got == nil || got.Matching != 12 {
+		t.Errorf("status %+v", got)
+	}
+	if RuleStatusOf(state, rules.Installers) != nil {
+		t.Error("a status of a rule the controller did not report")
 	}
 }
 

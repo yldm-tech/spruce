@@ -142,6 +142,38 @@ func (it *Item) OpenAtLogin() bool {
 	return on
 }
 
+// Refresh rewrites the launch agent of macOS 11 and 12 when an earlier build wrote it without LoginArg, so the next login start is told apart; it does nothing on macOS 13 and later, outside an app bundle, or when the agent is not there (starting at login is off).
+func (it *Item) Refresh() error {
+	if err := load(); err != nil {
+		return err
+	}
+	app, err := bundle()
+	if err != nil {
+		return nil
+	}
+	modern := false
+	withPool(func() { modern = mainAppService() != 0 })
+	if modern {
+		return nil
+	}
+	return refreshAgent(launchAgentPath(it.id), it.id, app)
+}
+
+// refreshAgent rewrites the launch agent at path for app when it exists and does not pass LoginArg.
+func refreshAgent(path, id, app string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("loginitem: %w", err)
+	}
+	if bytes.Contains(data, []byte("<string>"+LoginArg+"</string>")) {
+		return nil
+	}
+	return setLaunchAgent(path, id, app, true)
+}
+
 func launchAgentPath(id string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "LaunchAgents", id+".plist")
@@ -171,6 +203,8 @@ func setLaunchAgent(path, id, app string, open bool) error {
 		<string>/usr/bin/open</string>
 		<string>-a</string>
 		<string>` + esc(app) + `</string>
+		<string>--args</string>
+		<string>` + LoginArg + `</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
