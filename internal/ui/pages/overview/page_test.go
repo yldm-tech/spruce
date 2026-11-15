@@ -408,10 +408,24 @@ func TestEmpty(t *testing.T) {
 	p.WaitFor("id:overview-empty >> text:没有需要清理的内容", wait)
 	p.Find("id:overview-empty >> text:系统垃圾、开发者垃圾和安装包都很干净。Spruce 会定期再看看。")
 	p.waitText("id:checked-at", "上次检查：5分钟前")
-	if p.Exists("id:conclusion-value") || p.Exists("id:recs") || p.Exists("id:review") || p.Exists("id:trash-row") {
+	if p.Exists("id:conclusion-value") || p.Exists("id:recs") || p.Exists("id:review") || p.Exists("id:trash-row") || p.Exists("id:browse") {
 		t.Error("a part without content")
 	}
+	// Something found that no card takes (a running app's cache) brings 按类别查看 back, all three cards of it.
+	res = cleanup.NewResult([]cleanup.Category{category("system-junk:app-caches-running", "正在运行的应用的缓存", "这些应用正在运行", "cache", cleanup.DeletePermanent,
+		item(home+"/Library/Caches/com.running", 300*mb, false, time.Hour))}, now)
+	st.Result = result(res)
+	p.set(st)
 	p.WaitFor("id:browse", wait)
+	for _, id := range []string{"system-junk", "dev-junk", "installers"} {
+		p.Find("id:browse-" + id)
+	}
+	// So does a source that failed.
+	res = cleanup.NewResult([]cleanup.Category{}, now)
+	res.Sources = []cleanup.SourceState{{ID: "installers", Status: cleanup.SourceFailed, Error: "无法读取下载文件夹"}}
+	st.Result = result(res)
+	p.set(st)
+	p.waitText("id:browse-note-installers", "无法读取下载文件夹")
 }
 
 // State F: a failed check keeps the old result, outdated, with 重试; without one it is the error alone.
