@@ -393,3 +393,30 @@ func TestDenied(t *testing.T) {
 		t.Errorf("denied %q", got)
 	}
 }
+
+// A held project's disabled checkbox says why on hover. nsgotest starts in the phone idiom, where hover tooltips never mount (https://github.com/nsgo-dev/nsgo/issues/261), so this test starts the page in the desktop idiom.
+func TestHeldProjectTooltip(t *testing.T) {
+	p := startSized(t, ready(), roots, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}), func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	blog := p.project("/Users/me/Workspace/blog") + "-check"
+	p.WaitFor(blog, wait)
+	const tip = "有未提交的改动。提交或丢弃改动后才能清理。"
+	if p.Exists("text:" + tip) {
+		t.Fatal("the tooltip shows before the hover")
+	}
+	p.Hover(blog)
+	p.WaitUntil(wait, func() bool {
+		if p.Exists("text:" + tip) {
+			return true
+		}
+		p.Advance(100 * time.Millisecond)
+		return false
+	})
+	// A project that can be checked has none.
+	p.HoverOut()
+	p.Hover(p.project("/Users/me/Workspace/shop") + "-check")
+	p.Advance(time.Second)
+	p.Settle()
+	if p.Exists("text:" + tip) {
+		t.Error("the held project's tooltip stays on another row")
+	}
+}
