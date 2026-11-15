@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/ui/cleanflow/cleanflowfake"
 	"github.com/yldm-tech/spruce/internal/ui/pages/installers"
@@ -13,7 +11,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store/storefake"
 )
 
-// installerCategories is a 安装包 scan with the engine's categories (internal/engine/installers): old disk images, packages, archives and system images, checked, and recent or attached ones, unchecked.
+// installerCategories is a 安装包 check with the engine's categories (internal/engine/installers): old disk images, packages, archives and system images, checked, and recent or attached ones, unchecked.
 func installerCategories() []cleanup.Category {
 	now := time.Now()
 	cat := func(id, title, desc, icon string, selected bool, items ...cleanup.Item) cleanup.Category {
@@ -46,81 +44,23 @@ func installerCategories() []cleanup.Category {
 	}
 }
 
-// TestScreensInstallers shows the 安装包 page idle, scanning, with results, asking, cleaning and done, for comparison with the design.
+// TestScreensInstallers shows the 安装包 drill-down view with 概览's check, the recent ones expanded, and the view without folders to search, for comparison with the design.
 func TestScreensInstallers(t *testing.T) {
-	scanRelease, cleanRelease := make(chan struct{}), make(chan struct{})
-	result := cleanflowfake.Result(installerCategories()...)
-	c := &cleanflowfake.Cleaner{
-		OnScan: func(ctx context.Context, _ app.CleanerID, progress func(cleanup.Progress)) (cleanup.ScanResult, error) {
-			progress(cleanup.Progress{Phase: cleanup.PhaseScanning, Path: "/Users/me/Downloads/Installers", Done: 3, Total: 4, Bytes: 3_640_000_000})
-			select {
-			case <-scanRelease:
-			case <-ctx.Done():
-				return cleanup.ScanResult{}, ctx.Err()
-			}
-			return result, nil
-		},
-		OnClean: func(ctx context.Context, _ app.CleanerID, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
-			progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Path: "/Users/me/Downloads/Docker.dmg", Done: 2, Total: 6, Bytes: 750_000_000})
-			select {
-			case <-cleanRelease:
-			case <-ctx.Done():
-			}
-			return cleanup.CleanResult{Trashed: 7_250_000_000, Removed: 6, Categories: []cleanup.CategoryOutcome{
-				{CategoryID: "disk-images", Title: "磁盘映像", Removed: 2, Trashed: 750_000_000},
-				{CategoryID: "installer-packages", Title: "安装器", Removed: 2, Trashed: 200_000_000},
-				{CategoryID: "archives", Title: "压缩包", Removed: 1, Trashed: 3_400_000_000},
-				{CategoryID: "system-images", Title: "系统映像", Removed: 1, Trashed: 2_900_000_000},
-			}}, nil
-		}}
+	const wait = 10 * time.Second
 	fakes := storefake.New(t.TempDir())
 	fakes.Settings.Cleanup.InstallerRoots = []string{"/Users/me/Downloads", "/Users/me/Desktop"}
-	a := screensApp(t, fakes, shell.Deps{Installers: installers.Deps{Cleanup: c, Files: &cleanflowfake.Files{}}}, "installers")
-	a.WaitFor("role:group 查找的文件夹", 10*time.Second)
-	a.Screenshot("installers-idle")
+	fakes.Overview = storefake.NewOverview(drillState("installers", installerCategories()...))
+	a := screensApp(t, fakes, shell.Deps{Installers: installers.Deps{Files: &cleanflowfake.Files{}}}, "installers")
+	a.WaitFor("id:category-list", wait)
+	a.Screenshot("installers")
+	a.Press("id:expand-installers:recent-installers")
+	a.WaitFor("id:items-installers:recent-installers", wait)
+	a.Screenshot("installers-expanded")
 
-	a.Press("id:scan")
-	a.WaitFor("text:已找到 3.6 GB", 10*time.Second)
-	a.Screenshot("installers-scanning")
-
-	close(scanRelease)
-	a.WaitFor("id:category-list", 10*time.Second)
-	a.Screenshot("installers-results")
-	a.Press("id:expand-recent-installers")
-	a.WaitFor("id:items-recent-installers", 10*time.Second)
-	a.Screenshot("installers-results-expanded")
-
-	a.Press("id:clean")
-	a.WaitFor("id:confirm", 10*time.Second)
-	a.Screenshot("installers-confirm")
-
-	a.Press("id:confirm-ok")
-	a.WaitFor("id:clean-overlay >> text:已处理 2/6 · 已释放 750 MB", 10*time.Second)
-	a.Screenshot("installers-cleaning")
-
-	close(cleanRelease)
-	a.WaitFor("id:done", 10*time.Second)
-	a.Screenshot("installers-done")
-	a.Press("id:done-close")
-	a.WaitForGone("id:done", 10*time.Second)
-}
-
-// TestScreensInstallersNoFolders shows the 安装包 page when 设置 lists no folders to search: 扫描 is disabled.
-func TestScreensInstallersNoFolders(t *testing.T) {
-	fakes := storefake.New(t.TempDir())
-	fakes.Settings.Cleanup.InstallerRoots = []string{}
-	a := screensApp(t, fakes, shell.Deps{Installers: installers.Deps{Cleanup: &cleanflowfake.Cleaner{}, Files: &cleanflowfake.Files{}}}, "installers")
-	a.WaitFor("id:no-folders", 10*time.Second)
-	a.Screenshot("installers-no-folders")
-}
-
-// TestScreensInstallersEmpty shows the 安装包 page after a scan that found nothing.
-func TestScreensInstallersEmpty(t *testing.T) {
-	fakes := storefake.New(t.TempDir())
-	fakes.Settings.Cleanup.InstallerRoots = []string{"/Users/me/Downloads", "/Users/me/Desktop"}
-	a := screensApp(t, fakes, shell.Deps{Installers: installers.Deps{Cleanup: &cleanflowfake.Cleaner{}, Files: &cleanflowfake.Files{}}}, "installers")
-	a.WaitFor("id:scan", 10*time.Second)
-	a.Press("id:scan")
-	a.WaitFor("id:empty", 10*time.Second)
-	a.Screenshot("installers-empty")
+	none := storefake.New(t.TempDir())
+	none.Settings.Cleanup.InstallerRoots = []string{}
+	none.Overview = storefake.NewOverview(drillState("installers"))
+	b := screensApp(t, none, shell.Deps{Installers: installers.Deps{Files: &cleanflowfake.Files{}}}, "installers")
+	b.WaitFor("id:drill-settings-link", wait)
+	b.Screenshot("installers-no-folders")
 }

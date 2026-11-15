@@ -1,4 +1,4 @@
-// Package systemjunk is the 系统垃圾 page: it scans with the system-junk cleaner and cleans what the user checks, through the shared cleaner flow (package cleanflow).
+// Package systemjunk is the 系统垃圾 drill-down view of 概览: the system-junk categories of 概览's latest check, to look through and clean in part. It never scans; its list, its clean and its toast are the shared drill-down view's (cleanflow.DrillPage) over store.Overview.
 package systemjunk
 
 import (
@@ -6,14 +6,12 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
-	"github.com/yldm-tech/spruce/internal/app"
-	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/ui/cleanflow"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
-	"github.com/yldm-tech/spruce/internal/ui/shared"
+	"github.com/yldm-tech/spruce/internal/ui/pages/overview"
 )
 
-// ScanDescription is what the scan looks at, as the engine (internal/engine/systemjunk) lists its categories on each system.
+// ScanDescription is what the check looks at, as the engine (internal/engine/systemjunk) lists its categories on each system.
 func ScanDescription(windows bool) string {
 	if windows {
 		return "检查临时文件、应用缓存、浏览器缓存、错误报告、未完成的下载和回收站。只看你自己的用户文件夹，不需要管理员权限。"
@@ -21,27 +19,18 @@ func ScanDescription(windows bool) string {
 	return "检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓。只看你自己的用户文件夹，不需要管理员权限。"
 }
 
-// Page is the 系统垃圾 page.
+// Page is the 系统垃圾 view.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
-	f := cleanflow.NewFlow(cx, deps.Cleanup, app.CleanerSystemJunk)
-	return cleanflow.View(cx, f, cleanflow.ViewConfig{
-		Page:            nav.SystemJunk,
-		IdleTitle:       "扫描系统垃圾",
-		IdleDescription: ScanDescription(runtime.GOOS == "windows"),
-		IdleDetails: func(cx *core.Scope) core.Node {
-			last := shared.LastClean(cx, history.KindSystemJunk)
-			return cleanflow.IdleDetails(func() []string {
-				if run := last(); run != nil {
-					return []string{shared.LastCleanText(*run, timeNow())}
-				}
-				return nil
-			})
-		},
+	description := ScanDescription(runtime.GOOS == "windows")
+	return cleanflow.DrillPage{
+		Route:            nav.SystemJunk,
+		Toast:            overview.CleanToast,
+		Notice:           func() string { return description },
 		ListLabel:        "可以清理的系统垃圾",
 		SizeLabel:        "可释放",
 		EmptyTitle:       "没有找到系统垃圾",
 		EmptyDescription: "缓存、日志和临时文件都很干净，过段时间再来看看。",
 		Reveal:           revealer(deps.Files),
-	})
+	}
 }

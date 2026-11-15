@@ -1,8 +1,7 @@
 package devjunk_test
 
 import (
-	"context"
-	"errors"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
+	engdev "github.com/yldm-tech/spruce/internal/engine/devjunk"
 	"github.com/yldm-tech/spruce/internal/ui/cleanflow/cleanflowfake"
 	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
@@ -21,100 +21,116 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store/storefake"
 )
 
-const wait = 5 * time.Second
+// wait is real time; the race detector on a loaded machine slows every frame.
+const wait = 20 * time.Second
 
-var modTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+var now = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 
-// entry is one item of a test category: its name, size, note and whether it starts checked on its own.
-type entry struct {
-	name     string
-	size     int64
-	note     string
-	selected bool
-}
-
-// category is DevJunkPage.test.tsx's.
-func category(id, title string, kind cleanup.CategoryKind, deletion cleanup.DeletionMode, items ...entry) cleanup.Category {
-	c := cleanup.Category{ID: id, Title: title, Description: title + "的说明", Icon: "cache", Kind: kind, Deletion: deletion}
-	for _, e := range items {
-		c.Items = append(c.Items, cleanup.Item{ID: e.name, Path: "/Users/u/x/" + e.name, Size: e.size, ModTime: modTime, Note: e.note, Selected: e.selected})
-		c.Size += e.size
+// tools are the check's tool caches: npm cleaned by its command (checked), Xcode archives that go to the Trash (unchecked) and device support checked in part.
+func tools() []cleanup.Category {
+	item := func(path string, size int64, selected bool) cleanup.Item {
+		return cleanup.Item{ID: cleanup.ItemID(path), Path: path, Size: size, ModTime: now.Add(-3 * 24 * time.Hour), Selected: selected, Dir: true}
 	}
-	return c
+	npm := cleanup.Category{ID: "dev-junk:tool-npm", Source: "dev-junk", Title: "npm 缓存", Description: "运行 npm cache clean --force，清空 npm 下载的包", Icon: "node",
+		Kind: cleanup.KindDevCache, Deletion: cleanup.DeletePermanent, Command: "npm cache clean --force", Items: []cleanup.Item{item("/Users/me/.npm/_cacache", 1000, true)}}
+	archives := cleanup.Category{ID: "dev-junk:tool-xcode-archives", Source: "dev-junk", Title: "Xcode 归档", Description: "Xcode 打包时留下的归档", Icon: "archive",
+		Kind: cleanup.KindDevCache, Deletion: cleanup.DeleteTrash, Warning: "包含已发布版本的符号文件", Items: []cleanup.Item{item("/Users/me/Library/Developer/Xcode/Archives/a", 500, false)}}
+	support := cleanup.Category{ID: "dev-junk:tool-xcode-device-support", Source: "dev-junk", Title: "设备支持文件", Description: "连接真机调试时复制的系统符号", Icon: "simulator",
+		Kind: cleanup.KindDevCache, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{
+			item("/Users/me/Library/Developer/Xcode/iOS DeviceSupport/18.2", 3000, false), item("/Users/me/Library/Developer/Xcode/iOS DeviceSupport/17.5", 2000, true)}}
+	return []cleanup.Category{npm, archives, support}
 }
 
-// scan is DevJunkPage.test.tsx's SCAN.
-func scan() cleanup.ScanResult {
-	npm := category("tool-npm", "npm 缓存", cleanup.KindDevCache, cleanup.DeletePermanent, entry{name: "npm", size: 1000})
-	npm.Selected, npm.Description, npm.Command = true, "运行 npm cache clean --force，清空 npm 下载的包", "npm cache clean --force"
-	archives := category("tool-xcode-archives", "Xcode 归档", cleanup.KindDevCache, cleanup.DeleteTrash, entry{name: "arch", size: 500})
-	archives.Warning = "包含已发布版本的符号文件"
-	r := cleanflowfake.Result(
-		npm,
-		category("tool-xcode-device-support", "设备支持文件", cleanup.KindDevCache, cleanup.DeletePermanent,
-			entry{name: "ios17", size: 3000, note: "这个平台最新的版本，默认保留"}, entry{name: "ios16", size: 2000, selected: true}),
-		archives,
-		category("artifact-node-modules", "node_modules", cleanup.KindProjectArtifact, cleanup.DeletePermanent,
-			entry{name: "nm-new", size: 5000, note: "new · 最近 30 天内有改动"}, entry{name: "nm-old", size: 4000, note: "old", selected: true}),
-	)
-	return r
+// artifacts are four projects' build output: shop (clean, idle, two folders, checked), blog (dirty, held), tool (Git unknown, recent, unchecked) and lib (tracked files, held).
+func artifacts() []cleanup.Category {
+	day := 24 * time.Hour
+	art := func(project, name string, size int64, git cleanup.GitState, hold string, idle time.Duration, selected bool) cleanup.Item {
+		p := project + "/" + name
+		return cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: size, ModTime: now.Add(-idle), Project: project, Git: git, Hold: hold, Selected: selected, Dir: true,
+			Note: strings.TrimPrefix(project, "/Users/me/Workspace/")}
+	}
+	nm := cleanup.Category{ID: "dev-junk:artifact-node-modules", Source: "dev-junk", Title: "node_modules", Description: "安装的 npm 依赖", Icon: "node",
+		Kind: cleanup.KindProjectArtifact, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{
+			art("/Users/me/Workspace/shop", "node_modules", 5000, cleanup.GitClean, "", 100*day, true),
+			art("/Users/me/Workspace/blog", "node_modules", 4000, cleanup.GitDirty, "项目有未提交的改动", 100*day, false),
+			art("/Users/me/Workspace/tool", "node_modules", 3000, cleanup.GitUnknown, "", 5*day, false),
+			art("/Users/me/Workspace/lib", "node_modules", 800, cleanup.GitClean, "构建产物文件夹里有纳入版本控制的文件", 200*day, false),
+		}}
+	next := cleanup.Category{ID: "dev-junk:artifact-next", Source: "dev-junk", Title: ".next", Description: "Next.js 的构建输出", Icon: "build",
+		Kind: cleanup.KindProjectArtifact, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{
+			art("/Users/me/Workspace/shop", ".next", 2000, cleanup.GitClean, "", 100*day, true),
+		}}
+	return []cleanup.Category{nm, next}
 }
 
-func cleanResult() cleanup.CleanResult {
-	return cleanup.CleanResult{Freed: 7000, Removed: 3, Categories: []cleanup.CategoryOutcome{
-		{CategoryID: "tool-npm", Title: "npm 缓存", Removed: 1, Freed: 1000},
-		{CategoryID: "tool-xcode-device-support", Title: "设备支持文件", Removed: 1, Freed: 2000},
-		{CategoryID: "artifact-node-modules", Title: "node_modules", Removed: 1, Freed: 4000},
-	}}
+// stateOf is an actionable check over cats, with its projects grouped as 概览's controller does.
+func stateOf(cats ...cleanup.Category) app.OverviewState {
+	res := cleanflowfake.Result(cats...)
+	res.Sources = []cleanup.SourceState{{ID: "dev-junk", Status: cleanup.SourceDone}}
+	return app.OverviewState{Phase: app.OverviewIdle, CanUndo: true,
+		Result: &app.OverviewResult{CheckedAt: now, Mode: app.CheckForeground, Actionable: true, Scan: res, Projects: engdev.GroupProjects(res)}}
 }
+
+func ready() app.OverviewState { return stateOf(append(tools(), artifacts()...)...) }
+
+func id(path string) string { return cleanup.ItemID(path) }
 
 type page struct {
 	*nsgotest.App
-	c      *cleanflowfake.Cleaner
+	ov     *storefake.Overview
 	files  *cleanflowfake.Files
 	stores *store.Stores
 	nav    *nav.Navigator
+	tb     testing.TB
 }
 
-func newFakes(t *testing.T, roots ...string) *storefake.Services {
-	f := storefake.New(t.TempDir())
-	f.Settings.Cleanup.DevProjectRoots = append([]string{}, roots...)
-	return f
+// start opens 开发者 on st with the project folders roots.
+func start(t *testing.T, st app.OverviewState, roots []string, before ...func(*nav.Navigator)) *page {
+	t.Helper()
+	return startSized(t, st, roots, nsgotest.Size(1052, 1200), before...)
 }
 
-func start(t *testing.T, c *cleanflowfake.Cleaner, fakes *storefake.Services) *page {
+// startSized is start in a window of size.
+func startSized(t *testing.T, st app.OverviewState, roots []string, size nsgotest.Option, before ...func(*nav.Navigator)) *page {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("expectations use the macOS wording and SI sizes")
 	}
-	p := &page{c: c, files: &cleanflowfake.Files{}}
+	t.Cleanup(devjunk.SetNow(now))
+	fakes := storefake.New(t.TempDir())
+	fakes.Settings.Cleanup.DevProjectRoots = roots
+	fakes.Settings.Cleanup.DevArtifactMinAgeDays = 30
+	ov := storefake.NewOverview(st)
+	fakes.Overview = ov
+	p := &page{ov: ov, files: &cleanflowfake.Files{}, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
-		p.nav = nav.NewNavigator(cx, nav.DevJunk)
+		p.nav = nav.NewNavigator(cx, nav.Overview)
 		nav.Key.Provide(cx, p.nav)
-		devjunk.DepsKey.Provide(cx, devjunk.Deps{Cleanup: c, Files: p.files})
-		return devjunk.Page(cx)
-	}, nsgotest.Size(1052, 820))
-	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
+		for _, f := range before {
+			f(p.nav)
+		}
+		devjunk.DepsKey.Provide(cx, devjunk.Deps{Files: p.files})
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if p.nav.Current() != nav.DevJunk {
+				return core.Group{}
+			}
+			return core.Func(devjunk.Page)
+		})
+	}, size)
+	p.WaitUntil(wait, func() bool {
+		return p.stores.Settings.Loaded() && reflect.DeepEqual(p.stores.Overview.State(), ov.State())
+	})
 	return p
 }
 
-func scanning(r cleanup.ScanResult) *cleanflowfake.Cleaner {
-	return &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
-		return r, nil
-	}}
-}
+var roots = []string{"/Users/me/Workspace"}
 
-// ticking settles until selector matches one view, moving the manual clock so throttled progress comes through.
-func (p *page) ticking(selector string) {
-	p.WaitUntil(wait, func() bool {
-		if len(p.Query(selector)) == 1 {
-			return true
-		}
-		p.Advance(20 * time.Millisecond)
-		return false
-	})
-}
+func (p *page) checked(selector string) bool { return p.Find(selector).Props.Checked }
+
+func (p *page) disabled(selector string) bool { return p.Find(selector).Props.Disabled }
+
+func (p *page) cleans() []storefake.CleanCall { _, _, c, _, _ := p.ov.Calls(); return c }
 
 // stat returns the figure beside 清理 under label.
 func (p *page) stat(label string) string {
@@ -129,292 +145,251 @@ func (p *page) stat(label string) string {
 	return ""
 }
 
-// scanToResults scans and waits for the two sections with the scan's default selection: some categories are checked in part.
-func (p *page) scanToResults(t *testing.T) {
-	t.Helper()
-	p.Press("id:scan")
-	p.WaitFor("id:list-tools", wait)
-	if got := p.stat("已选择"); got != "3 项" {
-		t.Fatalf("已选择 %q", got)
+func (p *page) project(path string) string { return "id:project-" + id(path) }
+
+// textOf is a view's text: its own, else its descendants' in order.
+func textOf(v *nsgotest.View) string {
+	if v.Text != "" {
+		return v.Text
 	}
+	var b strings.Builder
+	for _, c := range v.Children {
+		b.WriteString(textOf(c))
+	}
+	return b.String()
 }
 
-func (p *page) checked(selector string) bool { return p.Find(selector).Props.Checked }
-
-// texts returns the texts inside v, depth first.
-func texts(v *nsgotest.View) []string {
-	var out []string
-	var walk func(*nsgotest.View)
-	walk = func(v *nsgotest.View) {
-		if v.Text != "" {
-			out = append(out, v.Text)
-		}
-		for _, k := range v.Children {
-			walk(k)
-		}
-	}
-	walk(v)
-	return out
-}
-
-// Ported from DevJunkPage.test.tsx: lists the project folders it will search before a scan, with a link to 设置.
-func TestIdleListsProjectFolders(t *testing.T) {
-	p := start(t, &cleanflowfake.Cleaner{}, newFakes(t, "/Users/u/Workspace", "/Users/u/Projects"))
+// 项目 is the first tab: the projects largest first, each with its Git status, the defaults of the check, held projects disabled and one of unknown Git state left to the user.
+func TestProjectsTab(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.Find("id:drill-dev-junk")
 	p.Find("role:header 开发者")
-	p.Find("text:开发工具的缓存和项目里的构建产物，大多会在需要时重新下载或生成")
-	p.Find("text:查找开发者垃圾")
-	p.Find("text:会在这些文件夹里查找项目：")
-	if got := texts(p.Find("role:group 项目文件夹")); !reflect.DeepEqual(got, []string{"/Users/u/Workspace", "/Users/u/Projects"}) {
-		t.Errorf("folders %q", got)
+	p.Find("id:back")
+	if !p.Find("id:tab-projects").Props.Selected {
+		t.Error("项目 is not the first tab")
 	}
-	p.Press("role:link 更改文件夹")
-	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
-	if got := p.nav.TakeSettingsTab(); got != nav.SettingsCleanup {
-		t.Errorf("设置 opens on %q", got)
-	}
-}
-
-// Ported from DevJunkPage.test.tsx: says only tool caches are scanned when no project folder is set.
-func TestIdleWithoutProjectFolders(t *testing.T) {
-	p := start(t, &cleanflowfake.Cleaner{}, newFakes(t))
-	p.Find("text:还没有设置项目文件夹，这次只扫描开发工具的缓存。")
-	if p.Exists("role:group 项目文件夹") {
-		t.Error("an empty folder list shows")
-	}
-	p.Press("role:link 去设置")
-	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
-	if got := p.nav.TakeSettingsTab(); got != nav.SettingsCleanup {
-		t.Errorf("设置 opens on %q", got)
-	}
-}
-
-// Ported from DevJunkPage.test.tsx: shows scan progress and stops the scan.
-func TestScanProgressAndStop(t *testing.T) {
-	progress := make(chan cleanup.Progress)
-	stopped := make(chan struct{})
-	c := &cleanflowfake.Cleaner{OnScan: func(ctx context.Context, _ app.CleanerID, send func(cleanup.Progress)) (cleanup.ScanResult, error) {
-		for {
-			select {
-			case ev := <-progress:
-				send(ev)
-			case <-ctx.Done():
-				close(stopped)
-				return cleanup.ScanResult{}, ctx.Err()
-			}
+	rows := p.Query("id:projects >> role:group")
+	var order []string
+	for _, r := range rows {
+		if strings.HasPrefix(r.Props.TestID, "project-") && !strings.HasSuffix(r.Props.TestID, "-items") {
+			order = append(order, r.Props.Label)
 		}
-	}}
-	p := start(t, c, newFakes(t, "/Users/u/Workspace"))
-	p.Press("id:scan")
-	p.WaitFor("id:scan-progress", wait)
-	progress <- cleanup.Progress{Phase: cleanup.PhaseScanning, Path: "/Users/u/Workspace/app", Done: 3, Total: 10, Bytes: 2000}
-	p.ticking(`text:"/Users/u/Workspace/app"`)
-	p.Find("text:已找到 2 KB")
-	p.Press("id:scan-stop")
-	select {
-	case <-stopped:
-	case <-time.After(wait):
-		t.Fatal("the scan was not stopped")
 	}
-	p.WaitFor("id:scan", wait)
-	if p.Exists("role:alert") {
-		t.Error("a stopped scan shows an alert")
+	if !reflect.DeepEqual(order, []string{"shop", "blog", "tool", "lib"}) {
+		t.Errorf("order %v", order)
 	}
-}
-
-// Ported from DevJunkPage.test.tsx: shows the two sections with the scan's default selection, confirms commands, deletions and the Trash apart, and cleans.
-func TestSectionsConfirmAndClean(t *testing.T) {
-	c := scanning(scan())
-	c.OnClean = func(context.Context, app.CleanerID, cleanup.CleanRequest, func(cleanup.Progress)) (cleanup.CleanResult, error) {
-		return cleanResult(), nil
+	shop, blog, tool, lib := "/Users/me/Workspace/shop", "/Users/me/Workspace/blog", "/Users/me/Workspace/tool", "/Users/me/Workspace/lib"
+	p.Find(p.project(shop) + " >> text:node_modules · .next")
+	p.Find(p.project(shop) + " >> text:7 KB")
+	if p.Exists(p.project(shop) + "-git") {
+		t.Error("a clean project shows a Git status")
 	}
-	p := start(t, c, newFakes(t, "/Users/u/Workspace"))
-	p.scanToResults(t)
-	if got := c.Scans(); !reflect.DeepEqual(got, []app.CleanerID{app.CleanerDevJunk}) {
-		t.Errorf("scans %v", got)
+	if got := textOf(p.Find(p.project(blog) + "-git")); got != "有未提交的改动" {
+		t.Errorf("blog git %q", got)
 	}
-
-	p.Find("role:region 工具缓存")
-	p.Find("role:region 项目构建产物")
-	if got := []string{p.Find("id:heading-tools").Text, p.Find("id:heading-projects").Text}; !reflect.DeepEqual(got, []string{"工具缓存", "项目构建产物"}) {
-		t.Errorf("headings %q", got)
+	if got := p.Find(p.project(tool) + "-git").Text; got != "无法确定 Git 状态" {
+		t.Errorf("tool git %q", got)
 	}
-	if hs := p.Query("role:header"); len(hs) != 3 {
-		t.Errorf("%d headings, want the page's and the two sections'", len(hs))
+	if got := p.Find(p.project(lib) + "-git").Text; got != "构建产物里有纳入版本控制的文件" {
+		t.Errorf("lib git %q", got)
 	}
-	p.Find("id:list-tools >> text:已选 1/2 项")
-	p.Find("id:list-tools >> text:包含已发布版本的符号文件")
-	p.Find("id:list-projects >> text:已选 1/2 项")
+	if !p.checked(p.project(shop)+"-check") || p.checked(p.project(tool)+"-check") {
+		t.Error("defaults")
+	}
+	if !p.disabled(p.project(blog)+"-check") || !p.disabled(p.project(lib)+"-check") || p.disabled(p.project(tool)+"-check") {
+		t.Error("held projects can be checked, or the unknown one cannot")
+	}
+	if got := p.stat("已选择"); got != "1 个项目" {
+		t.Errorf("已选择 %q", got)
+	}
 	if got := p.stat("已选大小"); got != "7 KB" {
 		t.Errorf("已选大小 %q", got)
 	}
-
-	// Expanding node_modules shows each project with its note; the recent one is not checked.
-	p.Press("id:list-projects >> role:button 展开node_modules")
-	p.Find("id:list-projects >> text:/最近 30 天内有改动/")
-	if p.checked("id:item-nm-new") || !p.checked("id:item-nm-old") {
-		t.Error("node_modules defaults")
+	// Git state unknown: never checked by default, but the user may.
+	p.Press(p.project(tool) + "-check")
+	if !p.checked(p.project(tool)+"-check") || p.stat("已选择") != "2 个项目" {
+		t.Error("the unknown project could not be checked")
 	}
+	// 全选 leaves held projects alone.
+	p.Press("id:select-none")
+	p.Press("id:select-all")
+	if p.checked(p.project(blog)+"-check") || p.checked(p.project(lib)+"-check") || p.stat("已选择") != "2 个项目" {
+		t.Error("全选 checked a held project")
+	}
+	// Expanding shows each folder, held ones disabled.
+	p.Press(p.project(blog) + "-expand")
+	p.WaitFor(p.project(blog)+"-items", wait)
+	if !p.disabled("id:item-" + id(blog+"/node_modules")) {
+		t.Error("a held folder can be checked")
+	}
+	p.Press(p.project(shop) + "-reveal")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 1 })
+	if got := p.files.Revealed()[0]; got != shop {
+		t.Errorf("revealed %q", got)
+	}
+}
 
+// The chips filter the projects: idle at least the setting's days, or with uncommitted changes.
+func TestProjectFilters(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	if got := textOf(p.Find("id:projects-filter-idle")); got != "闲置超过 30 天" {
+		t.Errorf("idle chip %q", got)
+	}
+	p.Find("text:按大小排序")
+	count := func() int { return len(p.Query("id:projects >> role:checkbox")) }
+	p.Press("id:projects-filter-idle")
+	p.WaitUntil(wait, func() bool { return count() == 3 })
+	if p.Exists(p.project("/Users/me/Workspace/tool")) {
+		t.Error("a recent project shows among the idle ones")
+	}
+	p.Press("id:projects-filter-dirty")
+	p.WaitUntil(wait, func() bool { return count() == 1 })
+	p.Find(p.project("/Users/me/Workspace/blog"))
+	p.Press("id:projects-filter-all")
+	p.WaitUntil(wait, func() bool { return count() == 4 })
+}
+
+// 清理 on 项目 asks with the lines of the plan and cleans only the checked build output, as 开发者's clean.
+func TestProjectsClean(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
 	p.Press("id:clean")
 	p.WaitFor("id:confirm", wait)
-	if got := p.Find("id:confirm-summary").Text; got != "将清理 3 项，共 7 KB。" {
+	if got := p.Find("id:confirm-summary").Text; got != "将清理 2 项，共 7 KB。" {
 		t.Errorf("summary %q", got)
 	}
-	var lines []string
-	for _, v := range p.Query("id:confirm-lines >> text:/./") {
-		if v.Text != "•" {
-			lines = append(lines, v.Text)
-		}
-	}
-	if want := []string{"运行 1 个清理命令：npm cache clean --force", "永久删除 2 项，无法恢复"}; !reflect.DeepEqual(lines, want) {
-		t.Errorf("lines %q", lines)
-	}
-	// A command or a permanent deletion is the danger kind: 取消 has the focus first.
-	if !p.Find("id:confirm-cancel").Focused {
-		t.Error("取消 does not have the focus")
-	}
-	if len(c.Cleans()) != 0 {
-		t.Error("cleaned before the answer")
+	if got := textOf(p.Find("id:confirm-line-0")); got != "•永久删除 2 项，无法恢复" {
+		t.Errorf("line %q", got)
 	}
 	p.Press("id:confirm-ok")
-
-	p.WaitFor("id:done", wait)
-	p.Find("id:done >> text:清理完成")
-	p.WaitUntil(wait, func() bool { return len(c.Cleans()) == 1 })
-	want := cleanup.CleanRequest{CategoryIDs: []string{"tool-npm", "tool-xcode-device-support", "artifact-node-modules"}, ItemIDs: []string{"npm", "ios16", "nm-old"}}
-	if got := c.Cleans()[0]; got.ID != app.CleanerDevJunk || !reflect.DeepEqual(got.Req, want) {
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := storefake.CleanCall{Req: cleanup.CleanRequest{CategoryIDs: []string{"dev-junk:artifact-node-modules", "dev-junk:artifact-next"},
+		ItemIDs: []string{id("/Users/me/Workspace/shop/node_modules"), id("/Users/me/Workspace/shop/.next")}}, Origin: app.CleanOrigin{Source: "dev-junk"}}
+	if got := p.cleans()[0]; !reflect.DeepEqual(got, want) {
 		t.Errorf("clean %+v", got)
 	}
-	p.Press("id:done-close")
-	p.WaitFor("id:scan", wait)
-	if p.stores.Block.Blocked() {
-		t.Error("the shell is still blocked")
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if got := p.stores.Toasts.Current().Text; got != "已释放 0 B" {
+		t.Errorf("toast %q", got)
 	}
 }
 
-// The cleaning overlay says that a running command finishes before a stop takes effect.
-func TestCleaningOverlayWithACommand(t *testing.T) {
-	release := make(chan struct{})
-	c := scanning(scan())
-	c.OnClean = func(ctx context.Context, _ app.CleanerID, _ cleanup.CleanRequest, _ func(cleanup.Progress)) (cleanup.CleanResult, error) {
-		select {
-		case <-release:
-		case <-ctx.Done():
-		}
-		return cleanResult(), nil
-	}
-	fakes := newFakes(t, "/Users/u/Workspace")
-	fakes.Settings.General.ConfirmBeforeClean = false
-	p := start(t, c, fakes)
-	p.scanToResults(t)
-	p.Press("id:clean")
-	p.WaitFor("id:clean-overlay", wait)
-	p.Find("id:clean-overlay >> text:共 3 项；停止后，正在运行的命令会先完成")
-	close(release)
-	p.WaitFor("id:done", wait)
-	p.Press("id:done-close")
-	p.WaitFor("id:scan", wait)
-
-	// Without the command checked, the line is only the count.
-	release = make(chan struct{})
-	p.Press("id:scan")
+// 工具缓存 lists the tools' caches; its 全选 and 全不选 leave the projects' checks alone, and a command's clean says it finishes first.
+func TestToolsTab(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.Press("id:tab-tools")
 	p.WaitFor("id:list-tools", wait)
-	p.Press("id:check-tool-npm")
-	p.Press("id:clean")
-	p.WaitFor("id:clean-overlay", wait)
-	p.Find("id:clean-overlay >> text:共 2 项")
-	close(release)
-	p.WaitFor("id:done", wait)
-}
-
-// Ported from DevJunkPage.test.tsx: selects within one section only.
-func TestSelectWithinOneSection(t *testing.T) {
-	p := start(t, scanning(scan()), newFakes(t, "/Users/u/Workspace"))
-	p.scanToResults(t)
-	p.Press("id:list-projects >> id:select-none")
+	p.Find("id:section-tools")
+	p.Find("id:heading-tools")
+	if p.Exists("id:projects") {
+		t.Error("the projects show on 工具缓存")
+	}
+	if !p.checked("id:check-dev-junk:tool-npm") || p.checked("id:check-dev-junk:tool-xcode-archives") ||
+		!p.Find("id:check-dev-junk:tool-xcode-device-support").Props.Indeterminate {
+		t.Error("defaults")
+	}
 	if got := p.stat("已选择"); got != "2 项" {
-		t.Errorf("after 全不选 in the projects %q", got)
+		t.Errorf("已选择 %q", got)
 	}
-	p.Press("id:list-tools >> id:select-all")
-	if got := p.stat("已选择"); got != "4 项" {
-		t.Errorf("after 全选 in the tools %q", got)
+	p.Press("id:select-none")
+	p.Press("id:tab-projects")
+	p.WaitFor("id:projects", wait)
+	if !p.checked(p.project("/Users/me/Workspace/shop") + "-check") {
+		t.Error("全不选 on 工具缓存 unchecked a project")
 	}
-	p.Find("id:category-artifact-node-modules >> text:2 项")
-	if p.checked("id:check-artifact-node-modules") {
-		t.Error("全选 in the tools checked the projects")
-	}
-}
-
-// Ported from DevJunkPage.test.tsx: says when nothing was found.
-func TestNothingFound(t *testing.T) {
-	p := start(t, scanning(cleanflowfake.Result()), newFakes(t, "/Users/u/Workspace"))
-	p.Press("id:scan")
-	p.WaitFor("text:没有找到开发者垃圾", wait)
-	p.Find("text:开发工具的缓存和项目里的构建产物都已经很干净了。")
-	if p.Exists("text:/没有权限读取/") {
-		t.Error("the unreadable places are named though every place was read")
-	}
-	if p.Exists("id:clean") {
-		t.Error("清理 shows without results")
+	p.Press("id:tab-tools")
+	p.WaitFor("id:list-tools", wait)
+	p.Press("id:check-dev-junk:tool-npm")
+	p.ov.CleanRelease = make(chan struct{})
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	p.Find("text:运行 1 个清理命令：npm cache clean --force")
+	p.Press("id:confirm-ok")
+	p.WaitFor("id:clean-overlay >> text:共 1 项；停止后，正在运行的命令会先完成", wait)
+	p.Press("id:overlay-cancel")
+	p.WaitForGone("id:clean-overlay", wait)
+	if got := p.cleans(); len(got) != 1 || !reflect.DeepEqual(got[0].Req.CategoryIDs, []string{"dev-junk:tool-npm"}) {
+		t.Errorf("cleans %+v", got)
 	}
 }
 
-// A scan that found nothing but could not read some places says so above the empty state, as the old page did.
-func TestNothingFoundWithUnreadablePlaces(t *testing.T) {
-	r := cleanflowfake.Result()
-	r.Denied = 2
-	p := start(t, scanning(r), newFakes(t, "/Users/u/Workspace"))
-	p.Press("id:scan")
-	p.WaitFor("text:没有找到开发者垃圾", wait)
-	p.Find("text:有 2 个位置没有权限读取，结果可能不完整。")
+// Links open the tab they ask for: GoDevTab, or a tool's category to reveal, expanded.
+func TestLinksOpenTheirTab(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.GoDevTab(nav.DevTools) })
+	p.WaitFor("id:list-tools", wait)
+
+	q := start(t, ready(), roots, func(n *nav.Navigator) { n.GoDrill(nav.DevJunk, "dev-junk:tool-xcode-archives") })
+	q.WaitFor("id:items-dev-junk:tool-xcode-archives", wait)
+
+	r := start(t, ready(), roots, func(n *nav.Navigator) { n.GoDrill(nav.DevJunk, "dev-junk:artifact-node-modules") })
+	r.WaitFor("id:projects", wait)
+	r.Press("id:back")
+	r.WaitUntil(wait, func() bool { return r.nav.Current() == nav.Overview })
 }
 
-// Ported from DevJunkPage.test.tsx: shows a scan that failed and lets the user try again.
-func TestScanFailure(t *testing.T) {
-	c := &cleanflowfake.Cleaner{OnScan: func(context.Context, app.CleanerID, func(cleanup.Progress)) (cleanup.ScanResult, error) {
-		return cleanup.ScanResult{}, errors.New("扫描没能完成，详情已记录到日志")
-	}}
-	p := start(t, c, newFakes(t, "/Users/u/Workspace"))
-	p.Press("id:scan")
-	p.WaitFor("role:alert", wait)
-	if got := p.Find("role:alert").Text; got != "扫描没能完成，详情已记录到日志" {
-		t.Errorf("alert %q", got)
+// GoDrill on a tool's category below the fold opens 工具缓存 scrolled to it.
+func TestOpenedOnAToolScrollsToIt(t *testing.T) {
+	cats := make([]cleanup.Category, 16)
+	for i := range cats {
+		path := fmt.Sprintf("/Users/me/.cache/tool-%02d", i)
+		cats[i] = cleanup.Category{ID: fmt.Sprintf("dev-junk:tool-t%02d", i), Source: "dev-junk", Title: fmt.Sprintf("工具 %02d", i), Icon: "build",
+			Kind: cleanup.KindDevCache, Deletion: cleanup.DeleteTrash, Items: []cleanup.Item{{ID: id(path), Path: path, Size: int64(100 + i), ModTime: now, Dir: true}}}
 	}
-	if !p.Enabled("id:scan") {
-		t.Error("扫描 is disabled")
+	const last = "dev-junk:tool-t15"
+	p := startSized(t, stateOf(cats...), roots, nsgotest.Size(1052, 600), func(n *nav.Navigator) { n.GoDrill(nav.DevJunk, last) })
+	p.WaitFor("id:items-"+last, wait)
+	p.WaitUntil(wait, func() bool { return p.Find("id:drill-dev-junk").Offset.Y > 0 })
+	page := p.Find("id:drill-dev-junk")
+	var y float32
+	for v := p.Find("id:category-" + last); v != nil && v != page; v = v.Parent {
+		y += float32(v.Frame.Origin.Y)
 	}
-}
-
-// Ported from DevJunkPage.test.tsx: notes when the projects held no build output.
-func TestNoBuildOutput(t *testing.T) {
-	r := scan()
-	r = cleanflowfake.Result(r.Categories[0])
-	r.Denied = 2
-	p := start(t, scanning(r), newFakes(t, "/Users/u/Workspace"))
-	p.Press("id:scan")
-	p.WaitFor("text:项目文件夹里没有找到构建产物。", wait)
-	p.Find("text:有 2 个位置没有权限读取，结果可能不完整。")
-	if p.Exists("id:list-projects") {
-		t.Error("an empty projects section shows")
+	if top := y - float32(page.Offset.Y); top < 0 || top > float32(page.Frame.Size.Height) {
+		t.Errorf("the category is at %v of a page %v tall, scrolled %v", top, page.Frame.Size.Height, page.Offset.Y)
 	}
 }
 
-// Without a project folder set, the note says there was nowhere to look.
-func TestNoBuildOutputWithoutFolders(t *testing.T) {
-	r := scan()
-	p := start(t, scanning(cleanflowfake.Result(r.Categories[0])), newFakes(t))
-	p.Press("id:scan")
-	p.WaitFor("text:没有设置项目文件夹，所以没有查找项目的构建产物。", wait)
+// A failed check of the source found nothing because it read nothing: neither tab says it is clean, and 重新检查 checks again.
+func TestFailedSource(t *testing.T) {
+	st := stateOf()
+	st.Result.Scan.Sources = []cleanup.SourceState{{ID: "dev-junk", Status: cleanup.SourceFailed, Error: "读取超时"}}
+	p := start(t, st, roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	if got := p.Find("id:source-failed-dev-junk").Text; got != "开发者没能检查完成：读取超时" {
+		t.Errorf("failed %q", got)
+	}
+	p.Find("id:drill-failed >> text:暂时没有结果")
+	if p.Exists("id:projects-empty") {
+		t.Error("项目 says nothing was found")
+	}
+	p.Press("id:tab-tools")
+	p.WaitFor("id:drill-failed", wait)
+	if p.Exists("id:drill-empty") {
+		t.Error("工具缓存 says the caches are clean")
+	}
+	p.Press("id:drill-retry")
+	p.WaitUntil(wait, func() bool { c, _, _, _, _ := p.ov.Calls(); return c == 1 })
 }
 
-// Reveals an item of a section in Finder.
-func TestReveal(t *testing.T) {
-	p := start(t, scanning(scan()), newFakes(t, "/Users/u/Workspace"))
-	p.scanToResults(t)
-	p.Press("id:expand-artifact-node-modules")
-	p.Press("id:reveal-nm-old")
-	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 1 })
-	if got := p.files.Revealed()[0]; !strings.HasSuffix(got, "/x/nm-old") {
-		t.Errorf("revealed %q", got)
+// Without projects: no project folder set leads to 设置; folders set but nothing found says so; no tool caches is the empty state.
+func TestNoProjectsAndNoTools(t *testing.T) {
+	p := start(t, stateOf(tools()...), nil, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.Find("id:projects-roots >> text:还没有设置项目文件夹，这次只扫描开发工具的缓存。")
+	p.Press("role:link 去设置")
+	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
+
+	q := start(t, stateOf(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	if got := q.Find("id:projects-empty").Text; got != "项目文件夹里没有找到构建产物。" {
+		t.Errorf("empty %q", got)
+	}
+	q.Press("id:tab-tools")
+	q.Find("id:drill-empty >> text:没有找到开发工具的缓存")
+}
+
+// The places the check could not read are told above the tabs.
+func TestDenied(t *testing.T) {
+	st := ready()
+	st.Result.Scan.Sources[0].Denied = 2
+	p := start(t, st, roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	if got := p.Find("id:denied-notice").Text; got != "有 2 个位置没有权限读取，结果可能不完整。" {
+		t.Errorf("denied %q", got)
 	}
 }

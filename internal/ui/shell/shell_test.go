@@ -24,7 +24,7 @@ const wait = 5 * time.Second
 
 func startShell(t *testing.T, fakes *storefake.Services, start nav.Route) (*nsgotest.App, *showing) {
 	t.Helper()
-	d := shell.Deps{Stores: fakes.Deps(), Start: start, SystemJunk: systemjunk.Deps{Cleanup: &cleanflowfake.Cleaner{}, Files: &cleanflowfake.Files{}},
+	d := shell.Deps{Stores: fakes.Deps(), Start: start, SystemJunk: systemjunk.Deps{Files: &cleanflowfake.Files{}},
 		History: history.Deps{Catalog: historyfake.Catalog(maintenancefake.MacCatalog())}}
 	stores := &showing{}
 	a := nsgotest.Start(t, core.AppRoot(func(cx *core.Scope) {

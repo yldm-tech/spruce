@@ -4,8 +4,10 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
+	engdev "github.com/yldm-tech/spruce/internal/engine/devjunk"
 	"github.com/yldm-tech/spruce/internal/ui/cleanflow"
 	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
@@ -174,5 +176,108 @@ func TestDeniedNotice(t *testing.T) {
 	}
 	if got := devjunk.DeniedNotice(2); got != "有 2 个位置没有权限读取，结果可能不完整。" {
 		t.Errorf("two denied: %q", got)
+	}
+}
+
+// projectScan is build output of four projects, as a merged scan holds it: clean and idle, dirty (held), unknown, and one whose output holds tracked files (held), the first two with two folders.
+func projectScan(now time.Time) cleanup.ScanResult {
+	art := func(project, name string, size int64, git cleanup.GitState, hold string, idle time.Duration) cleanup.Item {
+		p := project + "/" + name
+		return cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: size, ModTime: now.Add(-idle), Project: project, Git: git, Hold: hold, Selected: hold == "" && git != cleanup.GitUnknown,
+			Note: projectNote(project)}
+	}
+	day := 24 * time.Hour
+	nm := cleanup.Category{ID: "dev-junk:artifact-node-modules", Source: "dev-junk", Title: "node_modules", Kind: cleanup.KindProjectArtifact, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{
+		art("/w/shop", "node_modules", 500, cleanup.GitClean, "", 100*day),
+		art("/w/blog", "node_modules", 400, cleanup.GitDirty, "项目有未提交的改动", 100*day),
+		art("/w/tool", "node_modules", 300, cleanup.GitUnknown, "", 5*day),
+		art("/w/lib", "node_modules", 50, cleanup.GitClean, "构建产物文件夹里有纳入版本控制的文件", 200*day),
+	}}
+	next := cleanup.Category{ID: "dev-junk:artifact-next", Source: "dev-junk", Title: ".next", Kind: cleanup.KindProjectArtifact, Deletion: cleanup.DeletePermanent, Items: []cleanup.Item{
+		art("/w/shop", ".next", 200, cleanup.GitClean, "", 100*day),
+		art("/w/blog", ".next", 100, cleanup.GitDirty, "项目有未提交的改动", 100*day),
+	}}
+	return cleanup.NewResult([]cleanup.Category{nm, next}, now)
+}
+
+func projectNote(project string) string {
+	if project == "/w/lib" {
+		return "packages/lib"
+	}
+	return project[len("/w/"):]
+}
+
+// The 项目 helpers: filters, the Git line, why a project is held, its check state, and checking projects never checks held output.
+func TestProjects(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	res := projectScan(now)
+	ps := engdev.GroupProjects(res)
+	byPath := map[string]engdev.Project{}
+	for _, p := range ps {
+		byPath[p.Path] = p
+	}
+	names := func(list []engdev.Project) []string {
+		var out []string
+		for _, p := range list {
+			out = append(out, p.Path)
+		}
+		return out
+	}
+	if got := names(devjunk.FilterProjects(ps, devjunk.FilterAll, 30, now)); !reflect.DeepEqual(got, []string{"/w/shop", "/w/blog", "/w/tool", "/w/lib"}) {
+		t.Errorf("all %v", got)
+	}
+	if got := names(devjunk.FilterProjects(ps, devjunk.FilterIdle, 30, now)); !reflect.DeepEqual(got, []string{"/w/shop", "/w/blog", "/w/lib"}) {
+		t.Errorf("idle %v", got)
+	}
+	if got := names(devjunk.FilterProjects(ps, devjunk.FilterDirty, 30, now)); !reflect.DeepEqual(got, []string{"/w/blog"}) {
+		t.Errorf("dirty %v", got)
+	}
+	if devjunk.IdleLabel(30) != "闲置超过 30 天" || devjunk.Idle(engdev.Project{}, 0, now) {
+		t.Error("idle label or a project without activity")
+	}
+	for path, want := range map[string]devjunk.GitLabel{
+		"/w/shop": {}, "/w/blog": {Text: "有未提交的改动", Badge: true}, "/w/tool": {Text: "无法确定 Git 状态"}, "/w/lib": {Text: "构建产物里有纳入版本控制的文件"},
+	} {
+		if got := devjunk.GitLabelOf(byPath[path]); got != want {
+			t.Errorf("%s git %+v", path, got)
+		}
+	}
+	if got := devjunk.GitLabelOf(engdev.Project{Git: cleanup.GitNone}); got.Text != "不是 Git 仓库" {
+		t.Errorf("none %+v", got)
+	}
+	if devjunk.HoldTip(byPath["/w/blog"]) != "有未提交的改动。提交或丢弃改动后才能清理。" ||
+		devjunk.HoldTip(byPath["/w/lib"]) != "构建产物文件夹里有纳入版本控制的文件，删除后仓库会出现改动。" || devjunk.HoldTip(byPath["/w/tool"]) != "" {
+		t.Error("hold tips")
+	}
+	if devjunk.Checkable(byPath["/w/blog"], res.Categories) || !devjunk.Checkable(byPath["/w/tool"], res.Categories) {
+		t.Error("checkable")
+	}
+
+	sel := cleanflow.DefaultSelection(res.Categories)
+	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, sel) != cleanflow.CheckAll || devjunk.ProjectState(byPath["/w/tool"], res.Categories, sel) != cleanflow.CheckNone {
+		t.Error("default states")
+	}
+	if devjunk.SelectedProjects(ps, sel) != 1 {
+		t.Errorf("selected %d", devjunk.SelectedProjects(ps, sel))
+	}
+	all := devjunk.SetProjects(sel, ps, res.Categories, true)
+	if devjunk.SelectedProjects(ps, all) != 2 || devjunk.ProjectState(byPath["/w/blog"], res.Categories, all) != cleanflow.CheckNone {
+		t.Errorf("checking every project checked held output: %v", all)
+	}
+	part := cleanflow.SetItem(all, res.Categories[1], cleanup.ItemID("/w/shop/.next"), false)
+	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, part) != cleanflow.CheckSome {
+		t.Error("part of a project")
+	}
+	if got := devjunk.SetProjects(all, ps, res.Categories, false); len(got) != 0 {
+		t.Errorf("unchecking every project %v", got)
+	}
+	if got := devjunk.ProjectSub(byPath["/w/shop"]); got != "node_modules · .next" {
+		t.Errorf("sub %q", got)
+	}
+	if got := devjunk.ProjectSub(byPath["/w/lib"]); got != "packages/lib · node_modules" {
+		t.Errorf("sub of a nested project %q", got)
+	}
+	if got := devjunk.ProjectItems(byPath["/w/shop"], res.Categories[:1]); len(got) != 1 || got[0].Item.Path != "/w/shop/node_modules" {
+		t.Errorf("items %+v", got)
 	}
 }
