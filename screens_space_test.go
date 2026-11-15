@@ -149,7 +149,9 @@ func TestScreensSpaceGrowth(t *testing.T) {
 
 	svc.SetListing(0, listing)
 	a.Press("id:toast-undo")
-	a.WaitUntil(wait, func() bool { return a.Exists("id:toast-text") && a.Find("id:toast-text").Text == "已放回原处 1 项" })
+	a.WaitUntil(wait, func() bool {
+		return a.Exists("id:toast-text") && a.Find("id:toast-text").Text == "已放回原处 1 项"
+	})
 	a.WaitFor(`id:space-list >> text:big.iso`, wait)
 	a.Screenshot("space-undo-done")
 }
