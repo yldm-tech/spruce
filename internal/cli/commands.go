@@ -277,6 +277,11 @@ func (r *run) clean(args []string) int {
 		return r.done(partial || (yes && held))
 	}
 
+	if !r.json {
+		// The plan comes first, so the terminal shows what is about to be deleted or moved, and how, before anything happens; it also lists the held items.
+		r.printPlan(plan)
+		fmt.Fprintln(r.stdout)
+	}
 	p := r.newProgress()
 	p.show("正在清理…")
 	run, err := eng.Clean(r.ctx, plan.Request, app.CleanOptions{Detail: cliDetail}, func(ev cleanup.Progress) {
@@ -292,9 +297,6 @@ func (r *run) clean(args []string) int {
 	if r.json {
 		r.writeJSON(output{Scan: &res, Recommendations: recs, Plan: &plan, Result: &out})
 	} else {
-		if held {
-			r.printHeld(plan.Held)
-		}
 		r.printResult(out)
 	}
 	return r.done(partial || held || len(run.Result.Failed) > 0 || run.Result.Interrupted)

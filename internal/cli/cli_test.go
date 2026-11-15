@@ -482,6 +482,11 @@ func TestCleanYes(t *testing.T) {
 	if strings.Contains(errOut, "--yes") {
 		t.Errorf("stderr %q", errOut)
 	}
+	// The plan, with how each category goes, is printed before the result.
+	planAt, doneAt := strings.Index(out, "将清理 5 项"), strings.Index(out, "已清理 5 项")
+	if planAt < 0 || doneAt < planAt || !strings.Contains(out, "移到废纸篓") || !strings.Contains(out, "~/Downloads/Tool.dmg") {
+		t.Errorf("stdout lacks the plan before the result:\n%s", out)
+	}
 }
 
 func TestCleanNamed(t *testing.T) {
@@ -514,7 +519,7 @@ func TestCleanNamed(t *testing.T) {
 		if !slices.Equal(req.ItemIDs, []string{cleanup.ItemID(path("code/web/node_modules"))}) {
 			t.Fatalf("items %q: the held item was asked for", req.ItemIDs)
 		}
-		if !strings.Contains(out, "1 项不会清理") || !strings.Contains(out, "~/code/api/node_modules：项目有未提交的改动") {
+		if strings.Count(out, "1 项不会清理") != 1 || !strings.Contains(out, "~/code/api/node_modules：项目有未提交的改动") {
 			t.Errorf("stdout:\n%s", out)
 		}
 	})
