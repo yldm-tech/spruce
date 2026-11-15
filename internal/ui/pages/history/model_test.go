@@ -174,7 +174,7 @@ func TestTaskLines(t *testing.T) {
 	}
 	want := []string{
 		"重建图标缓存|部分完成|注销后生效|!",
-		"优化应用数据库|已跳过|Safari 仍在运行，已跳过|!",
+		"优化应用数据库|已跳过|Safari 仍在运行|!",
 		"gone|不可用|这台电脑上没有这项|!",
 		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
 	}

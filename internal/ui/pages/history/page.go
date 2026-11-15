@@ -195,7 +195,10 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
 	if run.Kind == enginehist.KindMaintenance {
-		body = core.View{Style: list, TestID: "run-tasks", Children: []core.Node{
+		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title.
+		grid := list
+		grid.Display, grid.GridTemplateColumns, grid.ColumnGap, grid.RowGap, grid.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 12, 8, core.AlignBaseline
+		body = core.View{Style: grid, TestID: "run-tasks", Children: []core.Node{
 			core.Each(func() []TaskLine { return TaskLines(run.Results, s.Catalog.Get()) }, func(l TaskLine) string { return l.TaskID },
 				func(_ *core.Scope, l func() TaskLine, _ func() int) core.Node { return taskLine(l) }),
 		}}
@@ -215,10 +218,11 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
 }
 
-// taskLine is one task of a maintenance run: its title, how it ended (in the warning color when it needs attention) and its message.
+// taskLine is one task of a maintenance run, three cells of the run's task grid: its title (TestID task-<id>), how it ended (in the warning color when it needs attention; task-<id>-status) and its message (task-<id>-message).
 func taskLine(l func() TaskLine) core.Node {
-	text := func(fn func() string, size core.Points, weight core.FontWeight, color func() core.Color, st core.Style) core.Node {
-		t := core.Text{ContentFunc: fn, StyleFunc: func() core.Style {
+	id := "task-" + l().TaskID
+	text := func(fn func() string, size core.Points, weight core.FontWeight, color func() core.Color, st core.Style, testID string) core.Node {
+		t := core.Text{ContentFunc: fn, TestID: testID, StyleFunc: func() core.Style {
 			s := st
 			s.FontFamily, s.FontWeight, s.FontSize, s.LineHeightMultiple, s.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color()
 			return s
@@ -226,14 +230,14 @@ func taskLine(l func() TaskLine) core.Node {
 		return t
 	}
 	fixed := func(c core.Color) func() core.Color { return func() core.Color { return c } }
-	return core.View{TestID: "task-" + l().TaskID, Style: core.Style{Direction: core.Row, AlignItems: core.AlignBaseline, Gap: 12}, Children: []core.Node{
-		text(func() string { return l().Title }, kit.FontBody, kit.Semibold, fixed(kit.ColorText), core.Style{MinWidth: core.Pt(120), FlexShrink: 0}),
+	return core.Group{
+		text(func() string { return l().Title }, kit.FontBody, kit.Semibold, fixed(kit.ColorText), core.Style{}, id),
 		text(func() string { return l().Status }, kit.FontSmall, kit.Regular, func() core.Color {
 			if l().Attention {
 				return kit.ColorWarning
 			}
 			return kit.ColorTextMuted
-		}, core.Style{FlexShrink: 0}),
-		text(func() string { return l().Message }, kit.FontBody, kit.Regular, fixed(kit.ColorTextSecondary), core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)}),
-	}}
+		}, core.Style{}, id+"-status"),
+		text(func() string { return l().Message }, kit.FontBody, kit.Regular, fixed(kit.ColorTextSecondary), core.Style{MinWidth: core.Pt(0)}, id+"-message"),
+	}
 }
