@@ -94,11 +94,46 @@ func DeniedText(denied int64) string {
 // toastClearance is what the shell's toast takes at the bottom of the page area while it shows: 24 points below it, at least 44 for itself and 12 to the action bar, less the page's own bottom padding (24); as 空间透视's action bar does.
 const toastClearance = 24 + 44 + 12 - 24
 
-// DrillBar is a drill-down view's action bar: the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait). While the shell's toast shows, the bar rises above it, so the toast never covers 清理 or that line.
+// DrillBar is a drill-down view's action bar: the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait). While the shell's toast shows, the bar rises above it, so the toast never covers 清理 or that line; a bar in view when the toast comes stays in view (keepBarInView).
 func DrillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref *core.Ref) core.Node {
-	return core.View{TestID: "drill-action-bar", StyleFunc: func() core.Style {
+	return core.Func(func(cx *core.Scope) core.Node {
+		raised := func() bool { return d.stores.Toasts.Current() != nil }
+		bar := new(core.Ref)
+		keepBarInView(cx, d.Page, bar, raised)
+		return drillBar(d, start, end, count, clean, ref, bar, raised)
+	})
+}
+
+// keepBarInView scrolls page to its end, once laid out, when raised turns true while bar shows in it. Rising grows the page under a long list, so on a page scrolled to the bottom (as after pressing 清理) the bar would otherwise slide under the window's edge with the toast over where it was.
+func keepBarInView(cx *core.Scope, page, bar *core.Ref, raised func() bool) {
+	was := false
+	cx.Effect(func() {
+		on := raised()
+		if on == was {
+			return
+		}
+		was = on
+		if !on {
+			return
+		}
+		view, ok := page.Bounds()
+		b, ok2 := bar.Bounds()
+		if !ok || !ok2 || b.Origin.Y >= view.Origin.Y+view.Size.Height {
+			return
+		}
+		page.Measure(func(_, _ core.Bounds, ok bool) {
+			if ok {
+				page.ScrollToEnd(!cx.Env().ReduceMotion())
+			}
+		})
+	})
+}
+
+// drillBar is DrillBar's view, with bar on it and the bottom padding while raised.
+func drillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref, bar *core.Ref, raised func() bool) core.Node {
+	return core.View{TestID: "drill-action-bar", Ref: bar, StyleFunc: func() core.Style {
 		var bottom core.Points
-		if d.stores.Toasts.Current() != nil {
+		if raised() {
 			bottom = toastClearance
 		}
 		return core.Style{AutoMargin: core.SideTop, FlexShrink: 0, Padding: core.Edges{Bottom: bottom}}
