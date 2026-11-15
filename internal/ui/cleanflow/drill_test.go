@@ -566,6 +566,13 @@ func inPage(page, v *nsgotest.View) float32 {
 	return y
 }
 
+// undoToast shows a toast that offers 撤销, on the engine goroutine.
+func (p *page) undoToast() {
+	p.Post(func() {
+		p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour})
+	})
+}
+
 // trash is the Trash as the check measured it: one item, deleted for good, unchecked.
 func trash() cleanup.Category {
 	return cleanup.Category{ID: "system-junk:trash", Source: "system-junk", Title: "废纸篓", Description: "废纸篓里的全部项目", Icon: "trash", Kind: cleanup.KindTrash,
@@ -576,7 +583,7 @@ func trash() cleanup.Category {
 // Emptying the Trash waits while the toast offers 撤销, which it would destroy, and asks with the Trash measured now: the check's size is older than the moves since.
 func TestEmptyingTheTrash(t *testing.T) {
 	p := start(t, stateOf(append(junk(), trash())...))
-	p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour})
+	p.undoToast()
 	p.Press("id:select-none")
 	p.Press("id:check-system-junk:trash")
 	p.WaitUntil(wait, func() bool { return !p.Enabled("id:clean") })
@@ -594,7 +601,7 @@ func TestEmptyingTheTrash(t *testing.T) {
 	p.Press("id:check-system-junk:trash")
 	p.WaitUntil(wait, func() bool { return !p.Enabled("id:clean") })
 
-	p.stores.Toasts.Dismiss()
+	p.Post(p.stores.Toasts.Dismiss)
 	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
 	p.WaitForGone("id:drill-trash-wait", wait)
 	p.ov.TrashInfoValue = app.TrashInfo{Items: 42, Bytes: 5_000_000, Restorable: 3}
@@ -640,7 +647,7 @@ func TestActionBarRisesOverTheToast(t *testing.T) {
 		return y
 	}
 	without := bottom()
-	p.Post(func() { p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour}) })
+	p.undoToast()
 	p.Settle()
 	if got := bottom(); got > 1200-24-44-12 || got >= without {
 		t.Errorf("清理 ends at %v with the toast, %v without it", got, without)
@@ -659,7 +666,7 @@ func TestEmptyingTheTrashRefusedUnderUndo(t *testing.T) {
 	p.Press("id:check-system-junk:trash")
 	p.Press("id:clean")
 	p.WaitFor("id:confirm", wait)
-	p.stores.Toasts.Show(store.Toast{Text: "已移到废纸篓 10 MB", UndoRun: "run-1", Duration: time.Hour})
+	p.undoToast()
 	p.WaitFor("id:drill-trash-wait", wait)
 	p.Press("id:confirm-ok")
 	p.WaitForGone("id:confirm", wait)
