@@ -16,7 +16,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/engine/undo"
 )
 
-// SetLedger makes c journal every clean's moves to the Trash and record them in l, so they can be put back (macOS); nil records nothing. It is a function rather than a method so the page cannot call it.
+// SetLedger makes c journal every clean's moves to the Trash and deletions for good, so a clean Spruce does not finish still gets its history run (RecoverInterrupted), and record the moves in l, so they can be put back (macOS; on Windows the ledger keeps none, undo.Keepable); nil records nothing. It is a function rather than a method so the page cannot call it.
 func SetLedger(c *Cleanup, l *undo.Ledger) { c.ledger = l }
 
 // SetSpaceLedger makes s record its moves to the Trash in l, with each entry's parent folder as the root it may come back into.
@@ -33,10 +33,10 @@ type undoRun struct {
 	log     *slog.Logger
 }
 
-// beginUndo starts the journal of meta.RunID when l is set and this platform can put items back, and returns ctx with the journal ahead of the OnMoved callback ctx carries. A journal that cannot start or be written is logged; the clean goes on.
+// beginUndo starts the journal of meta.RunID when l is set, and returns ctx with the journal ahead of the OnMoved and OnRemoved callbacks ctx carries. It journals on every platform, so RecoverInterrupted can count what a clean Spruce did not finish moved and deleted; where items cannot be put back (Windows) the ledger keeps none of the moves (undo.Keepable), so nothing is offered for 撤销. A journal that cannot start or be written is logged; the clean goes on.
 func beginUndo(ctx context.Context, l *undo.Ledger, log *slog.Logger, meta undo.JournalMeta) (context.Context, *undoRun) {
 	u := &undoRun{runID: meta.RunID, log: log}
-	if l == nil || !trash.CanRestore() {
+	if l == nil {
 		return ctx, u
 	}
 	u.ledger = l
