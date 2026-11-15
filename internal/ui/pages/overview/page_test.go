@@ -969,11 +969,21 @@ func TestGrowth(t *testing.T) {
 	q := open(t, ready())
 	r := start(t, newFakes(t), func() *storefake.Overview {
 		o := storefake.NewOverview(ready())
-		o.GrowthErr = errors.New("too few snapshots")
+		o.GrowthErr = growth.ErrNoHistory
 		return o
 	}())
 	r.waitText("id:growth-empty", "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。")
 	q.waitText("id:growth-empty", "最近 7 天没有明显变大的位置。")
+	// Snapshots that cannot be read are said to be so, not to be coming.
+	u := start(t, newFakes(t), func() *storefake.Overview {
+		o := storefake.NewOverview(ready())
+		o.GrowthErr = errors.New("read growth: permission denied")
+		return o
+	}())
+	u.waitText("id:growth-error", "无法读取空间变化的记录")
+	if got := len(u.Query("id:growth-empty")); got != 0 {
+		t.Error("unreadable snapshots read as too few")
+	}
 }
 
 // GoOverviewCard opens 概览 with the card shown and expanded, also past the first five.

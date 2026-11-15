@@ -2,6 +2,7 @@ package overview
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -232,9 +233,14 @@ func growthCard(cx *core.Scope, p *page) core.Node {
 	body := core.Dynamic(func(*core.Scope) core.Node {
 		g := s.Get()
 		switch {
-		case g.err != nil:
+		// Fewer than two snapshots, or no controller to keep them; any other error is records that cannot be read, as 空间透视's 最近变化 says.
+		case errors.Is(g.err, growth.ErrNoHistory), g.err != nil && !p.ov.Connected():
 			return core.Func(func(*core.Scope) core.Node {
 				return bodyText(fixed("Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。"), kit.ColorTextMuted, "growth-empty")
+			})
+		case g.err != nil:
+			return core.Func(func(*core.Scope) core.Node {
+				return kit.ErrorLine{Text: fixed("无法读取空间变化的记录"), TestID: "growth-error"}
 			})
 		case len(g.list) == 0:
 			return core.Func(func(*core.Scope) core.Node {
