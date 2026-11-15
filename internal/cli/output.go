@@ -81,9 +81,9 @@ func (r *run) writeJSON(o output) {
 	r.encode(o)
 }
 
-// writeError writes {"version":1,"error":…}.
-func (r *run) writeError(err error) {
-	r.encode(output{Version: jsonVersion, Error: err.Error()})
+// writeError writes {"version":1,"error":msg}.
+func (r *run) writeError(msg string) {
+	r.encode(output{Version: jsonVersion, Error: msg})
 }
 
 func (r *run) encode(o output) {

@@ -119,7 +119,7 @@ func (r *run) scan(args []string) int {
 	fs := newFlags("scan")
 	var sources list
 	fs.Var(&sources, "source", "")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -160,7 +160,7 @@ func (r *run) scan(args []string) int {
 
 func (r *run) recommendations(args []string) int {
 	fs := newFlags("recommendations")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -223,7 +223,7 @@ func (r *run) clean(args []string) int {
 	fs.Var(&older, "older-than", "")
 	fs.BoolVar(&yes, "yes", false, "")
 	fs.BoolVar(&dryRun, "dry-run", false, "")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -397,7 +397,7 @@ func (r *run) printResult(out CleanResult) {
 
 func (r *run) projects(args []string) int {
 	fs := newFlags("projects")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -460,7 +460,7 @@ func gitText(g cleanup.GitState) string {
 func (r *run) history(args []string) int {
 	fs := newFlags("history")
 	limit := fs.Int("limit", 20, "")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -574,7 +574,7 @@ func (r *run) restore(args []string) int {
 	fs := newFlags("restore")
 	var yes bool
 	fs.BoolVar(&yes, "yes", false, "")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code
@@ -666,7 +666,7 @@ func (r *run) putBack(eng Engine, runID string) int {
 
 func (r *run) version(args []string) int {
 	fs := newFlags("version")
-	fs.BoolVar(&r.json, "json", false, "")
+	fs.BoolVar(&r.json, "json", r.json, "")
 	pos, err := parse(fs, args)
 	if code, stop := r.flagsDone(err); stop {
 		return code

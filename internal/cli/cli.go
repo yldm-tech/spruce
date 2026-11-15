@@ -145,7 +145,7 @@ type run struct {
 // usage reports a usage error and returns ExitUsage; command names the help to point at ("" for the general one).
 func (r *run) usage(err error, command string) int {
 	if r.json {
-		r.writeError(err)
+		r.writeError(err.Error())
 		return ExitUsage
 	}
 	hint := "spruce help"
@@ -158,17 +158,17 @@ func (r *run) usage(err error, command string) int {
 
 // fail reports err and returns the exit code it stands for: ExitInterrupted once ctx ended, ExitBusy for another clean, ExitFailed otherwise.
 func (r *run) fail(err error) int {
-	code := ExitFailed
+	code, msg := ExitFailed, err.Error()
 	switch {
 	case r.ctx.Err() != nil:
-		code, err = ExitInterrupted, errors.New("已中断")
+		code, msg = ExitInterrupted, "已中断"
 	case errors.Is(err, schedule.ErrBusyElsewhere), errors.Is(err, schedule.ErrBusy), errors.Is(err, cleanup.ErrBusy):
-		code, err = ExitBusy, errors.New("Spruce 正在清理，请稍后再试")
+		code, msg = ExitBusy, "Spruce 正在清理，请稍后再试"
 	}
 	if r.json {
-		r.writeError(err)
+		r.writeError(msg)
 	} else {
-		fmt.Fprintf(r.stderr, "spruce：%v\n", err)
+		fmt.Fprintf(r.stderr, "spruce：%s\n", msg)
 	}
 	return code
 }

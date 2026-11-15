@@ -434,13 +434,16 @@ func TestCleanUsage(t *testing.T) {
 }
 
 func TestCleanUsageJSON(t *testing.T) {
-	h := newHarness()
-	code, out, _ := h.run(t, "clean", "--json", "--yes", "--dry-run")
-	if code != ExitUsage {
-		t.Fatalf("code %d", code)
-	}
-	if m := decode(t, out); !slices.Equal(keys(m), []string{"error", "version"}) {
-		t.Fatalf("error object %v", m)
+	// A usage error is a JSON error even when the bad flag comes before --json.
+	for _, args := range [][]string{{"clean", "--json", "--yes", "--dry-run"}, {"clean", "--force", "--json"}, {"history", "--limit", "0", "--json"}} {
+		h := newHarness()
+		code, out, errOut := h.run(t, args...)
+		if code != ExitUsage || errOut != "" {
+			t.Fatalf("%q: code %d, stderr %q", args, code, errOut)
+		}
+		if m := decode(t, out); !slices.Equal(keys(m), []string{"error", "version"}) {
+			t.Fatalf("%q: error object %v", args, m)
+		}
 	}
 }
 
