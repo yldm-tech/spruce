@@ -196,15 +196,9 @@ func (o *Overview) poke() {
 
 // Run is the controller's loop, until ctx ends: it shows the cached result, then every Policy.Tick, on every settings change, after CheckNow and after a clean it reads free space (every Policy.DiskEvery), runs the foreground check asked for, the scheduled check when it is due and allowed (then the due automatic rules and a space snapshot, inside the background slot) and the weekly summary. It runs once; a second call returns at once.
 func (o *Overview) Run(ctx context.Context) {
-	o.mu.Lock()
-	if o.running {
-		o.mu.Unlock()
+	if !o.begin() {
 		return
 	}
-	o.running = true
-	o.launched = o.now()
-	o.mu.Unlock()
-	o.load()
 	changes, unsubscribe := o.cfg.Settings.Subscribe()
 	defer unsubscribe()
 	// The subscription starts with the settings as they are, which the first turn reads anyway.
@@ -227,6 +221,20 @@ func (o *Overview) Run(ctx context.Context) {
 			o.mu.Unlock()
 		}
 	}
+}
+
+// begin is what Run does before its loop: it marks the controller running, records the launch and loads what the last launch left. It reports false, doing nothing, when the controller runs already.
+func (o *Overview) begin() bool {
+	o.mu.Lock()
+	if o.running {
+		o.mu.Unlock()
+		return false
+	}
+	o.running = true
+	o.launched = o.now()
+	o.mu.Unlock()
+	o.load()
+	return true
 }
 
 // load reads what the last launch left: the cached result, background.json and the automatic runs in the history.
@@ -341,16 +349,20 @@ func (o *Overview) askForegroundLocked() {
 	}
 }
 
-// StopCheck stops the check that runs; a scheduled one waits Policy.Retry before it is tried again.
+// StopCheck stops the check that runs, or the one asked for; a scheduled check then waits Policy.Retry before it is tried, so stopping a check does not start the next one.
 func (o *Overview) StopCheck() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	stopped := o.wantForeground || o.fg != nil
 	o.wantForeground = false
 	if o.fg != nil {
 		o.fg()
 	}
 	if o.bg != nil && o.scanning != "" {
 		o.bg()
+		stopped = true
+	}
+	if stopped {
 		o.retryAt = o.now().Add(o.cfg.Policy.Retry)
 	}
 }
@@ -476,6 +488,11 @@ func (o *Overview) save() {
 func (o *Overview) background(ctx context.Context, s settings.AppSettings) {
 	now := o.now()
 	o.mu.Lock()
+	// A foreground check asked for goes first: it runs on the next turn (whoever asked woke the loop) or, while a clean runs, once the clean ends.
+	if o.wantForeground {
+		o.mu.Unlock()
+		return
+	}
 	// A result checked under other settings is due at once, but never within LaunchDelay of launch (a cached result of an older key).
 	keyChanged := o.result != nil && o.result.SettingsKey != scancache.Key(s) && schedule.Due(o.cfg.Policy, now, time.Time{}, o.launched)
 	due := s.Background.Enabled && (schedule.Due(o.cfg.Policy, now, o.lastCheck, o.launched) || keyChanged)
@@ -495,6 +512,11 @@ func (o *Overview) background(ctx context.Context, s settings.AppSettings) {
 	slot, cancel := context.WithCancel(ctx)
 	defer cancel()
 	o.mu.Lock()
+	if o.wantForeground {
+		// Asked for since the check above: the slot is not taken, the foreground check runs on the next turn.
+		o.mu.Unlock()
+		return
+	}
 	o.bg = cancel
 	o.mu.Unlock()
 	defer func() {
@@ -534,7 +556,7 @@ func (o *Overview) background(ctx context.Context, s settings.AppSettings) {
 		}
 		return
 	}
-	o.autoRules(run, s)
+	o.autoRules(run)
 	o.snapshot(run, s)
 }
 
@@ -548,20 +570,21 @@ func (o *Overview) setWaiting(reason string, retryAt time.Time) {
 	}
 }
 
-// autoRules runs the due automatic rules over the scheduled check that just completed, each as a clean of its own inside the background slot (schedule.Activity.BeginAutoClean, CleanWith with KindAuto, which only moves to the Trash). A rule with nothing to take counts as run. A clean the user starts stops them after the current item. macOS only.
-func (o *Overview) autoRules(run context.Context, s settings.AppSettings) {
+// autoRules runs the due automatic rules over the scheduled check that just completed, each as a clean of its own inside the background slot (schedule.Activity.BeginAutoClean, CleanWith with KindAuto, which only moves to the Trash). They follow the settings as they are now, not as they were when the check started: with scheduled checks turned off, or with the exclusions, project roots or other scan settings changed since (the result's SettingsKey), nothing runs and the rules stay due; a rule turned off while an earlier one runs is skipped. A rule with nothing to take counts as run. A clean the user starts stops them after the current item. macOS only.
+func (o *Overview) autoRules(run context.Context) {
 	if o.cfg.GOOS != "darwin" {
 		return
 	}
+	s := o.cfg.Settings.Get()
 	enabled := rules.Enabled(s.Automation)
-	if len(enabled) == 0 || o.pending(o.cfg.Background) {
+	if !s.Background.Enabled || len(enabled) == 0 || o.pending(o.cfg.Background) {
 		return
 	}
 	now := o.now()
 	o.mu.Lock()
 	due := rules.Due(enabled, o.state.RuleRuns, now)
 	var scan cleanup.ScanResult
-	if o.result != nil && o.from == o.cfg.Background {
+	if o.result != nil && o.from == o.cfg.Background && o.result.SettingsKey == scancache.Key(s) {
 		scan = o.result.Scan
 	}
 	apps := o.apps
@@ -582,6 +605,9 @@ func (o *Overview) autoRules(run context.Context, s settings.AppSettings) {
 	for _, spec := range due {
 		if run.Err() != nil {
 			break
+		}
+		if !o.ruleStillOn(spec.ID, scancache.Key(s)) {
+			continue
 		}
 		p, ok := plans[spec.ID]
 		if !ok {
@@ -624,6 +650,12 @@ func (o *Overview) autoRules(run context.Context, s settings.AppSettings) {
 	o.saveState(st)
 	o.save()
 	o.publish()
+}
+
+// ruleStillOn reports whether rule may still run over a result checked under key: scheduled checks are on, the rule is enabled and the scan settings are those of key, as the settings are now.
+func (o *Overview) ruleStillOn(rule rules.ID, key string) bool {
+	s := o.cfg.Settings.Get()
+	return s.Background.Enabled && slices.Contains(rules.Enabled(s.Automation), rule) && scancache.Key(s) == key
 }
 
 // autoClean runs one rule's plan as an automatic clean.
@@ -695,6 +727,8 @@ func (o *Overview) snapshot(run context.Context, s settings.AppSettings) {
 		}
 		return
 	}
+	// Stamped with the controller's clock, which decides when the next one is due and what Prune keeps.
+	snap.At = now
 	if err := o.cfg.Growth.Save(snap); err != nil {
 		o.log.Warn("save a space snapshot", "err", err)
 		return
@@ -901,7 +935,7 @@ func (o *Overview) staleLocked(r *OverviewResult, s settings.AppSettings, now ti
 	return scancache.Stale(scancache.File{SavedAt: r.CheckedAt, SettingsKey: r.SettingsKey, AppVersion: o.version}, scancache.Key(s), o.cfg.AppVersion, now)
 }
 
-// Undo puts back what the run runID moved to the Trash, then checks again in the foreground (the cards are not pieced back together).
+// Undo puts back what the run runID moved to the Trash, then checks again in the foreground (the cards are not pieced back together). A foreground check that runs meanwhile may have passed the restored items already, so it is stopped and run again.
 func (o *Overview) Undo(ctx context.Context, runID string) (RestoreOutcome, error) {
 	if o.cfg.Restore == nil {
 		return RestoreOutcome{}, errors.New("这台电脑上不能放回原处")
@@ -910,7 +944,12 @@ func (o *Overview) Undo(ctx context.Context, runID string) (RestoreOutcome, erro
 	if err == nil && out.Restored > 0 {
 		o.mu.Lock()
 		o.diskDue = true
-		o.askForegroundLocked()
+		if o.fg != nil {
+			o.wantForeground = true
+			o.fg()
+		} else {
+			o.askForegroundLocked()
+		}
 		o.mu.Unlock()
 		o.poke()
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yldm-tech/spruce/internal/engine/growth"
 	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/rules"
 	"github.com/yldm-tech/spruce/internal/engine/schedule"
@@ -117,6 +118,49 @@ func TestOverviewRulesRunOnlyWhenDue(t *testing.T) {
 	}
 }
 
+// TestOverviewRulesFollowTheSettingsOfNow: the rules run under the settings as they are once the scheduled check ends, not as they were when it started.
+func TestOverviewRulesFollowTheSettingsOfNow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*settings.AppSettings, string)
+	}{
+		{"rule turned off", func(s *settings.AppSettings, _ string) { s.Automation.AppCaches = false }},
+		{"scheduled checks turned off", func(s *settings.AppSettings, _ string) { s.Background.Enabled = false }},
+		{"exclusion added", func(s *settings.AppSettings, home string) {
+			s.Cleanup.Exclusions = append(s.Cleanup.Exclusions, filepath.Join(home, "Library", "Caches", "com.example.cache"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _ := newTrashFixture(t)
+			f.update(func(s *settings.AppSettings) { s.Automation.AppCaches = true })
+			o := f.start()
+			f.bgCaches.hold, f.bgCaches.started = make(chan struct{}), make(chan struct{}, 1)
+			f.clock.Add(3 * time.Minute)
+			stepped := make(chan struct{})
+			go func() {
+				defer close(stepped)
+				f.step()
+			}()
+			<-f.bgCaches.started
+			f.update(func(s *settings.AppSettings) { tc.change(s, f.home) })
+			close(f.bgCaches.hold)
+			<-stepped
+			if got := autoRuns(f.runs()); len(got) != 0 {
+				t.Errorf("automatic runs %+v", got)
+			}
+			if _, err := os.Stat(filepath.Join(f.home, "Library", "Caches", "com.example.cache")); err != nil {
+				t.Errorf("the cache was moved: %v", err)
+			}
+			// The rule did not run, so it stays due.
+			for _, r := range o.State().Rules {
+				if r.ID == string(rules.AppCaches) && !r.LastRun.IsZero() {
+					t.Errorf("recorded as run: %+v", r)
+				}
+			}
+		})
+	}
+}
+
 func TestOverviewRulesOnlyOnMacOS(t *testing.T) {
 	home, bin, l := trashHome(t)
 	f := newOvFixture(t, ovOptions{home: home, deleter: &binDeleter{bin: bin}, goos: "windows"})
@@ -180,6 +224,132 @@ func TestOverviewUndoPutsBackAndChecksAgain(t *testing.T) {
 	}
 	if st := o.State(); st.Result.Mode != CheckForeground || len(st.Result.Recommendations) != 2 {
 		t.Errorf("after the check: %+v", st.Result.Recommendations)
+	}
+}
+
+// TestOverviewUndoDuringACheckChecksAgain: an undo that ends while a foreground check runs stops that check, which may have passed the restored items, and runs it again; no scheduled check takes its place in between.
+func TestOverviewUndoDuringACheckChecksAgain(t *testing.T) {
+	f, _, _ := newTrashFixture(t)
+	o := f.start()
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	out, err := o.Clean(t.Context(), rec(t, o.State(), "installers").req, CleanOrigin{Recommendation: "installers"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A 重新检查 is held inside its scan; a scheduled check is due too.
+	f.clock.Add(7 * time.Hour)
+	f.fgInst.hold, f.fgInst.started = make(chan struct{}), make(chan struct{}, 1)
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	stepped := make(chan struct{})
+	go func() {
+		defer close(stepped)
+		f.step()
+	}()
+	<-f.fgInst.started
+	scans := f.fgInst.count()
+	if _, err := o.Undo(t.Context(), out.RunID); err != nil {
+		t.Fatal(err)
+	}
+	<-stepped
+	f.fgInst.hold, f.fgInst.started = nil, nil
+	if f.bgInst.count() != 0 {
+		t.Fatal("a scheduled check ran before the asked one")
+	}
+	if st := o.State(); st.Phase != OverviewChecking {
+		t.Errorf("phase %q, want the check asked for again", st.Phase)
+	}
+	f.step()
+	if f.fgInst.count() != scans+1 {
+		t.Fatalf("foreground scans %d, want %d", f.fgInst.count(), scans+1)
+	}
+	if st := o.State(); st.Result.Mode != CheckForeground || len(st.Result.Recommendations) != 2 {
+		t.Errorf("after the check: %+v", st.Result.Recommendations)
+	}
+}
+
+// TestOverviewSnapshots: after a scheduled check comes a space snapshot a day at most, read through the read gate (a prompting folder no check of the user entered is skipped), and the old ones are pruned.
+func TestOverviewSnapshots(t *testing.T) {
+	f := newOvFixture(t, ovOptions{})
+	store, err := growth.Open(filepath.Join(f.data, "growth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := folderaccess.Open(filepath.Join(f.data, "folder-access.json"), f.home, func() bool { return false })
+	gate := NewGateRecorder(access)
+	downloads := filepath.Join(f.home, "Downloads")
+	f.fgInst.mayRead, f.fgInst.reads = gate.Foreground, []string{downloads}
+	f.bgInst.mayRead, f.bgInst.reads = gate.Background, []string{downloads}
+	f.cfg.Access, f.cfg.Gate, f.cfg.Growth = access, gate, store
+	f.cfg.Watches = func(settings.AppSettings) []growth.Watch {
+		return []growth.Watch{
+			{ID: "library-caches", Path: filepath.Join(f.home, "Library", "Caches"), Children: true},
+			{ID: "downloads", Path: downloads, Children: true},
+		}
+	}
+	// A snapshot of long ago, which the first prune drops.
+	old := f.clock.Now().AddDate(0, -6, 0)
+	if err := store.Save(growth.Snapshot{At: old, Locations: []growth.Location{}}); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := func() []time.Time {
+		t.Helper()
+		times, err := store.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return times
+	}
+	location := func(at time.Time, id string) growth.Location {
+		t.Helper()
+		snap, err := store.Load(at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range snap.Locations {
+			if l.ID == id {
+				return l
+			}
+		}
+		t.Fatalf("no %s in %+v", id, snap.Locations)
+		return growth.Location{}
+	}
+	o := f.start()
+	f.clock.Add(3 * time.Minute)
+	f.step()
+	times := snapshots()
+	if len(times) != 1 || !times[0].Equal(f.clock.Now().Truncate(time.Second)) {
+		t.Fatalf("snapshots %v, want one at %v (the old one pruned)", times, f.clock.Now())
+	}
+	if l := location(times[0], "downloads"); !l.Skipped {
+		t.Errorf("a background snapshot read Downloads: %+v", l)
+	}
+	if l := location(times[0], "library-caches"); l.Skipped || l.Bytes == 0 {
+		t.Errorf("caches %+v", l)
+	}
+	// Within a day the next scheduled check takes none.
+	f.clock.Add(7 * time.Hour)
+	f.step()
+	if got := snapshots(); len(got) != 1 {
+		t.Fatalf("a second snapshot within a day: %v", got)
+	}
+	// A check the user started enters Downloads; the next day's snapshot measures it.
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	f.clock.Add(20 * time.Hour)
+	f.step()
+	times = snapshots()
+	if len(times) != 2 {
+		t.Fatalf("snapshots %v, want a second one", times)
+	}
+	if l := location(times[1], "downloads"); l.Skipped || l.Bytes == 0 {
+		t.Errorf("Downloads after the user's check: %+v", l)
 	}
 }
 

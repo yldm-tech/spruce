@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -285,10 +286,9 @@ func (f *ovFixture) writeCache(name string, age time.Duration) {
 // start builds the controller and does what Run does before its loop.
 func (f *ovFixture) start() *Overview {
 	f.o = NewOverview(f.cfg)
-	f.o.mu.Lock()
-	f.o.running, f.o.launched = true, f.clock.Now()
-	f.o.mu.Unlock()
-	f.o.load()
+	if !f.o.begin() {
+		f.t.Fatal("a new controller is running already")
+	}
 	return f.o
 }
 
@@ -753,6 +753,8 @@ func TestOverviewWeeklySummary(t *testing.T) {
 func TestOverviewStopCheck(t *testing.T) {
 	f := newOvFixture(t, ovOptions{})
 	o := f.start()
+	// Past the launch delay a scheduled check is due; stopping the foreground check must not start it.
+	f.clock.Add(3 * time.Minute)
 	f.fgCaches.hold, f.fgCaches.started = make(chan struct{}), make(chan struct{}, 1)
 	if err := o.CheckNow(); err != nil {
 		t.Fatal(err)
@@ -776,6 +778,89 @@ func TestOverviewStopCheck(t *testing.T) {
 	if !f.o.pending(CleanerSmartScan) {
 		t.Error("the stopped instance is not pending")
 	}
+	if f.bgCaches.count() != 0 {
+		t.Fatal("a scheduled check started in the turn the user stopped the check")
+	}
+	// It waits Retry, as after a stopped scheduled check.
+	f.clock.Add(5 * time.Minute)
+	f.step()
+	if f.bgCaches.count() != 0 || o.State().Phase != OverviewIdle {
+		t.Fatal("a scheduled check started right after the user stopped the check")
+	}
+	if want := f.clock.Now().Add(-5 * time.Minute).Add(f.cfg.Policy.Retry); !o.State().Next.Equal(want) {
+		t.Errorf("next %v, want %v", o.State().Next, want)
+	}
+	f.clock.Add(f.cfg.Policy.Retry)
+	f.step()
+	if f.bgCaches.count() != 1 {
+		t.Error("no scheduled check after Retry")
+	}
+}
+
+// TestOverviewRun drives the real loop: CheckNow wakes it, a settings change makes it look at the rules and the disk again, and a second Run returns at once.
+func TestOverviewRun(t *testing.T) {
+	f := newOvFixture(t, ovOptions{})
+	f.cfg.Policy.Tick = time.Hour
+	var reads sync.Mutex
+	disks := 0
+	disk := f.cfg.Disk
+	f.cfg.Disk = func(ctx context.Context) (DiskState, error) {
+		reads.Lock()
+		disks++
+		reads.Unlock()
+		return disk(ctx)
+	}
+	diskReads := func() int {
+		reads.Lock()
+		defer reads.Unlock()
+		return disks
+	}
+	o := NewOverview(f.cfg)
+	f.o = o
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		o.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	waitUntil(t, "the first turn", func() bool { return o.State().Loaded && diskReads() == 1 })
+	// A second Run returns at once.
+	second := make(chan struct{})
+	go func() {
+		defer close(second)
+		o.Run(ctx)
+	}()
+	select {
+	case <-second:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second Run did not return")
+	}
+	// CheckNow alone starts the check, an hour before the next tick.
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the foreground check", func() bool {
+		st := o.State()
+		return f.fgCaches.count() == 1 && st.Result != nil && st.Result.Mode == CheckForeground && st.Phase == OverviewIdle
+	})
+	// A settings change is a turn of its own, which reads the disk again (it is not yet DiskEvery old) and the rules.
+	before := diskReads()
+	f.update(func(s *settings.AppSettings) { s.Automation.AppCaches = true })
+	waitUntil(t, "the turn after the settings change", func() bool {
+		if diskReads() <= before {
+			return false
+		}
+		for _, r := range o.State().Rules {
+			if r.ID == "app-caches" {
+				return r.Enabled
+			}
+		}
+		return false
+	})
 }
 
 // TestOverviewCleanWaitsForAnAskedCheck: between CheckNow and the loop starting the check, 概览 already shows it as checking and refuses a clean; a check asked for while a clean runs waits until the clean ends (one thing at a time).
@@ -835,6 +920,64 @@ func TestOverviewCleanWaitsForAnAskedCheck(t *testing.T) {
 	f.step()
 	if st := o.State(); f.fgCaches.count() != 3 || st.Phase != OverviewIdle || !st.Result.Actionable {
 		t.Errorf("stopped before it started: scans %d phase %q", f.fgCaches.count(), st.Phase)
+	}
+}
+
+// TestOverviewCleanFromADrillDownView: a drill-down view's clean is recorded with its source's kind, without a card's line, and a category cleaned by its command leaves the result once the command ran, while an emptied category of items stays.
+func TestOverviewCleanFromADrillDownView(t *testing.T) {
+	f := newOvFixture(t, ovOptions{})
+	caches := filepath.Join(f.home, "Library", "Caches")
+	if err := os.MkdirAll(filepath.Join(caches, "tool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.fgCaches.cats = append(f.fgCaches.cats, testCategory{
+		cat:  cleanup.Category{ID: "tool-cache", Title: "工具缓存", Icon: "cache", Kind: cleanup.KindDevCache, Deletion: cleanup.DeletePermanent, Command: "tool cache clean", Selected: true},
+		root: caches, names: []string{"tool"}, size: 1 << 20,
+	})
+	o := f.start()
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	categoryOf := func(kind cleanup.CategoryKind) (cleanup.Category, bool) {
+		for _, c := range o.State().Result.Scan.Categories {
+			if c.Kind == kind {
+				return c, true
+			}
+		}
+		return cleanup.Category{}, false
+	}
+	inst, ok := categoryOf(cleanup.KindInstaller)
+	if !ok {
+		t.Fatal("no installers category")
+	}
+	if _, err := o.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: []string{inst.ID}}, CleanOrigin{Source: string(CleanerInstallers)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	runs := f.runs()
+	if len(runs) != 1 || runs[0].Kind != history.KindInstallers {
+		t.Fatalf("history %+v", runs)
+	}
+	for _, d := range runs[0].Details {
+		if strings.Contains(d, "：已清理") {
+			t.Errorf("a card's line in a drill-down view's clean: %q", d)
+		}
+	}
+	if c, ok := categoryOf(cleanup.KindInstaller); !ok || len(c.Items) != 0 {
+		t.Errorf("the emptied installers category: %+v %v", c, ok)
+	}
+	tool, ok := categoryOf(cleanup.KindDevCache)
+	if !ok || len(tool.Items) != 1 {
+		t.Fatalf("the command category: %+v %v", tool, ok)
+	}
+	if _, err := o.Clean(t.Context(), cleanup.CleanRequest{CategoryIDs: []string{tool.ID}}, CleanOrigin{Source: string(CleanerSystemJunk)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if runs := f.runs(); len(runs) != 2 || runs[0].Kind != history.KindSystemJunk {
+		t.Errorf("history %+v", runs)
+	}
+	if c, ok := categoryOf(cleanup.KindDevCache); ok {
+		t.Errorf("the command category stayed after its command ran: %+v", c)
 	}
 }
 
