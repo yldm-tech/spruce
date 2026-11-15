@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/yldm-tech/spruce/internal/engine/gitstate"
 )
 
 // maxProjectDepth is how deep below a project root the walk reads folders; build output is found in the folders it reads.
@@ -271,7 +273,7 @@ func (w *projectWalk) record(rule artifactRule, path, project string, siblings [
 	w.mu.Unlock()
 }
 
-// lastActivity is the newest modification time of project's top-level files and of .git/HEAD and .git/index, computed once per project. entries are the project folder's entries when the caller has them.
+// lastActivity is the project's last activity (projectActivity), computed once per project. entries are the project folder's entries when the caller has them.
 func (w *projectWalk) lastActivity(project string, entries []fs.DirEntry) time.Time {
 	w.mu.Lock()
 	t, ok := w.activity[project]
@@ -286,26 +288,106 @@ func (w *projectWalk) lastActivity(project string, entries []fs.DirEntry) time.T
 	return t
 }
 
-// projectActivity reads the times lastActivity combines; entries nil reads the folder.
+// maxActivityFolders bounds how many top-level folders of a project outside a repository projectActivity reads.
+const maxActivityFolders = 64
+
+// projectActivity is the newest modification time of what shows that someone works on project, without running git: its top-level files, and in the repository holding it (the project itself, a monorepo above it, or a worktree whose .git file names its git folder) the git folder's index, HEAD and logs/HEAD, which every commit, checkout and staged change touches; outside a repository, the files and folders one level below its top-level folders instead, build output and dependency folders left out. Any activity in the repository keeps all its projects active, which errs on the safe side. entries nil reads the folder.
 func projectActivity(project string, entries []fs.DirEntry) time.Time {
 	if entries == nil {
 		entries, _ = os.ReadDir(project)
 	}
 	var newest time.Time
+	see := func(t time.Time) {
+		if t.After(newest) {
+			newest = t
+		}
+	}
 	for _, de := range entries {
 		if !de.Type().IsRegular() {
 			continue
 		}
-		if info, err := de.Info(); err == nil && info.ModTime().After(newest) {
-			newest = info.ModTime()
+		if info, err := de.Info(); err == nil {
+			see(info.ModTime())
 		}
 	}
-	for _, name := range []string{"HEAD", "index"} {
-		if info, err := os.Lstat(filepath.Join(project, ".git", name)); err == nil && info.ModTime().After(newest) {
-			newest = info.ModTime()
+	if repo, ok := gitstate.RepoOf(project); ok {
+		if dir, ok := gitDir(repo); ok {
+			for _, name := range []string{"HEAD", "index", filepath.Join("logs", "HEAD")} {
+				if info, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+					see(info.ModTime())
+				}
+			}
+		}
+		return newest
+	}
+	read := 0
+	for _, de := range entries {
+		if !de.IsDir() || skipActivity(de.Name()) {
+			continue
+		}
+		if read == maxActivityFolders {
+			break
+		}
+		read++
+		dir := filepath.Join(project, de.Name())
+		if info, err := os.Lstat(dir); err == nil {
+			see(info.ModTime())
+		}
+		inner, _ := os.ReadDir(dir)
+		for _, e := range inner {
+			if (!e.Type().IsRegular() && !e.IsDir()) || (e.IsDir() && skipActivity(e.Name())) {
+				continue
+			}
+			if info, err := e.Info(); err == nil {
+				see(info.ModTime())
+			}
 		}
 	}
 	return newest
+}
+
+// skipActivity reports the folder names whose times say nothing about the user's work: build output, dependency trees and .git.
+func skipActivity(name string) bool {
+	if name == ".git" || neverDescend[name] {
+		return true
+	}
+	for _, r := range artifactRules {
+		if r.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// maxGitFile bounds what gitDir reads of a .git file, which holds one short line.
+const maxGitFile = 4 << 10
+
+// gitDir returns the git folder of the repository at repo: repo/.git when it is a folder, or the folder the "gitdir:" line of a .git file names (a worktree's <main>/.git/worktrees/<name>, a submodule's folder), relative to repo when it is not absolute.
+func gitDir(repo string) (string, bool) {
+	dotgit := filepath.Join(repo, ".git")
+	info, err := os.Lstat(dotgit)
+	switch {
+	case err != nil:
+		return "", false
+	case info.IsDir():
+		return dotgit, true
+	case !info.Mode().IsRegular() || info.Size() > maxGitFile:
+		return "", false
+	}
+	b, err := os.ReadFile(dotgit)
+	if err != nil {
+		return "", false
+	}
+	line, _, _ := strings.Cut(string(b), "\n")
+	dir, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	dir = strings.TrimSpace(dir)
+	if !ok || dir == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repo, dir)
+	}
+	return filepath.Clean(dir), true
 }
 
 // spawn walks dir on a spare worker, or inline when every worker is busy, so goroutines stay bounded without a queue.
