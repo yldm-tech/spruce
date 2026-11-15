@@ -252,6 +252,13 @@ func TestRestoreReportsEachFailure(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.root, "app 2.dmg")); err != nil {
 		t.Errorf("the installer did not come back as app 2.dmg: %v", err)
 	}
+	// Both its old path and the one it came back to are in the restored set, so an automatic rule skips the copy under its new name.
+	restored := f.l.Restored(time.Now())
+	for _, p := range []string{installer.Path, filepath.Join(f.root, "app 2.dmg")} {
+		if _, ok := restored[cleanup.ItemID(p)]; !ok {
+			t.Errorf("%s is not in the restored set", p)
+		}
+	}
 	// Every item was tried: 放回原处 no longer offers the run, though the failures stay in the entry, marked.
 	if items, _, ok := f.l.Restorable("run2", time.Now()); ok || items != 0 {
 		t.Errorf("Restorable %d %v after a restore that tried everything", items, ok)
