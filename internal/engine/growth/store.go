@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// ErrNoHistory is what Changes returns while fewer than two snapshots are kept: nothing can be compared yet.
+// ErrNoHistory is what Changes returns while fewer than two snapshots are kept (that load): nothing can be compared yet.
 var ErrNoHistory = errors.New("growth: fewer than two snapshots")
 
 // fileLayout is a snapshot file's name without the extension: its time in UTC.
@@ -214,24 +214,26 @@ func (s *Store) Clear() error {
 	return nil
 }
 
-// Changes is what grew over window up to the newest snapshot: Diff of the newest against Baseline(window) among the older ones, at most n rows (n ≤ 0 for all). ErrNoHistory while fewer than two snapshots are kept. app.Overview.Growth answers with it.
+// Changes is what grew over window up to the newest snapshot: Diff of the newest against Baseline(window) among the older ones, at most n rows (n ≤ 0 for all). A snapshot that cannot be loaded (damaged, of another version) is passed over, so one bad file does not hide the list: the newest that loads is compared with the baseline among the older ones that load. ErrNoHistory while fewer than two snapshots load; other errors are the folder's. app.Overview.Growth answers with it.
 func (s *Store) Changes(now time.Time, window time.Duration, n int) ([]Growth, error) {
 	times, err := s.List()
 	if err != nil {
 		return nil, err
 	}
-	if len(times) < 2 {
-		return nil, ErrNoHistory
+	var cur Snapshot
+	found := false
+	for len(times) > 0 && !found {
+		newest := times[len(times)-1]
+		times = times[:len(times)-1]
+		cur, err = s.Load(newest)
+		found = err == nil
 	}
-	newest := times[len(times)-1]
-	base, _ := Baseline(times[:len(times)-1], now, window)
-	cur, err := s.Load(newest)
-	if err != nil {
-		return nil, err
+	for found && len(times) > 0 {
+		base, _ := Baseline(times, now, window)
+		if old, lerr := s.Load(base); lerr == nil {
+			return Diff(old, cur, n), nil
+		}
+		times = slices.DeleteFunc(times, func(t time.Time) bool { return t.Equal(base) })
 	}
-	old, err := s.Load(base)
-	if err != nil {
-		return nil, err
-	}
-	return Diff(old, cur, n), nil
+	return nil, ErrNoHistory
 }

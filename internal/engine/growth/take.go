@@ -22,7 +22,7 @@ const (
 	defaultBudget  = 10 * time.Minute
 )
 
-// Take measures watches with fsx.DirSize (allocated blocks on macOS, hard links once, no symlinks followed, no other volumes entered): the total of each, and each child of those with Children. A watch that does not exist, or is not a folder, is left out; one the read gate refuses (MayRead on the location or on any of its children, or an app-data watch without Full Disk Access) is kept as Skipped, without sizes; what cannot be read for lack of permission counts in Denied and asks nothing. Past the budget it returns ErrBudget, when ctx ends ctx's error, and nothing else.
+// Take measures watches with fsx.DirSize (allocated blocks on macOS, hard links once, no symlinks followed, no other volumes entered): the total of each, and each child folder of those with Children (files directly inside count in Rest). A watch that does not exist, or is not a folder, is left out; one the read gate refuses (MayRead on the location or on any of its children, or an app-data watch without Full Disk Access) is kept as Skipped, without sizes; what cannot be read for lack of permission counts in Denied and asks nothing. Past the budget it returns ErrBudget, when ctx ends ctx's error, and nothing else.
 func Take(ctx context.Context, watches []Watch, opts TakeOptions) (Snapshot, error) {
 	if opts.Workers <= 0 {
 		opts.Workers = defaultWorkers
@@ -125,7 +125,8 @@ func measure(ctx context.Context, w Watch, opts TakeOptions) (Location, bool) {
 		if err != nil && ctx.Err() == nil && errors.Is(err, fs.ErrPermission) {
 			loc.Denied++
 		}
-		if r.Bytes >= ChildMin {
+		// Only folders list as children: a row of 最近变化 opens its path in 空间透视, which scans folders, so a file that grew counts in its location's Rest and shows as the location.
+		if e.IsDir() && r.Bytes >= ChildMin {
 			children = append(children, Entry{Name: e.Name(), Bytes: r.Bytes})
 		}
 	}

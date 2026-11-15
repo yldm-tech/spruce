@@ -36,6 +36,8 @@ func TestTakeMeasuresLocationsAndChildren(t *testing.T) {
 	write(t, filepath.Join(caches, "big", "blob"), ChildMin+1<<20)
 	write(t, filepath.Join(caches, "small", "a"), 4096)
 	write(t, filepath.Join(caches, "loose.bin"), 8192)
+	// A file as large as a child counts in Rest and never lists: 空间透视 only scans folders.
+	write(t, filepath.Join(caches, "film.mov"), ChildMin+1<<20)
 	// A symlink is not followed, neither as a child nor as a location.
 	if err := os.Symlink(filepath.Join(caches, "big"), filepath.Join(caches, "link")); err != nil {
 		t.Fatal(err)
@@ -65,7 +67,7 @@ func TestTakeMeasuresLocationsAndChildren(t *testing.T) {
 	if len(c.Children) != 1 || c.Children[0].Name != "big" || c.Children[0].Bytes < ChildMin {
 		t.Fatalf("children %+v", c.Children)
 	}
-	if c.Bytes <= c.Children[0].Bytes || c.Rest != c.Bytes-c.Children[0].Bytes || c.Rest < 4096+8192 || c.Skipped || c.Denied != 0 {
+	if c.Bytes <= c.Children[0].Bytes || c.Rest != c.Bytes-c.Children[0].Bytes || c.Rest < 4096+8192+ChildMin+1<<20 || c.Skipped || c.Denied != 0 {
 		t.Errorf("caches %+v", c)
 	}
 	m, _ := findLoc(snap, "music")

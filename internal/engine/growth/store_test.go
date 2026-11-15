@@ -197,4 +197,26 @@ func TestStoreChanges(t *testing.T) {
 	if !got[0].Since.Equal(now.Add(-5 * 24 * time.Hour)) {
 		t.Errorf("since %v", got[0].Since)
 	}
+
+	// A snapshot that does not load is passed over: a damaged newest gives way to the one before it, a damaged baseline to the next one the window allows.
+	damage := func(at time.Time) {
+		t.Helper()
+		if err := os.WriteFile(s.path(at), []byte("{not json"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	damage(now.Add(-5 * 24 * time.Hour))
+	got, err := s.Changes(now, 24*time.Hour, 3)
+	if err != nil || len(got) != 1 || got[0].Before != 2*gb || got[0].After != 9*gb {
+		t.Errorf("damaged baseline: %+v, %v", got, err)
+	}
+	damage(now.Add(-time.Hour))
+	got, err = s.Changes(now, 7*24*time.Hour, 3)
+	if err != nil || len(got) != 1 || got[0].Before != 2*gb || got[0].After != 6*gb {
+		t.Errorf("damaged newest: %+v, %v", got, err)
+	}
+	damage(now.Add(-9 * 24 * time.Hour))
+	if _, err := s.Changes(now, 7*24*time.Hour, 3); !errors.Is(err, ErrNoHistory) {
+		t.Errorf("one snapshot that loads: %v", err)
+	}
 }
