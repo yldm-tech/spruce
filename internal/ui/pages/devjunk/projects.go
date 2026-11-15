@@ -170,7 +170,10 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 			case g.Text == "":
 				return core.Group{}
 			case g.Badge:
-				return kit.Badge{Text: g.Text, Glyph: "alert", Level: kit.LevelWarning, TestID: "project-" + id + "-git"}
+				// The badge aligns itself to the start of its parent; a box of its own centres it in the row.
+				return core.View{Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+					kit.Badge{Text: g.Text, Glyph: "alert", Level: kit.LevelWarning, TestID: "project-" + id + "-git"},
+				}}
 			}
 			t := kit.Text(g.Text, kit.FontSmall, kit.Regular, kit.ColorTextMuted)
 			t.TestID, t.MaxLines = "project-"+id+"-git", 1
