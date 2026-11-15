@@ -316,7 +316,7 @@ func (d *Drill) ask(q kit.ConfirmDialog, req cleanup.CleanRequest, action advice
 	d.Dialog.Set(&q)
 }
 
-// run cleans req through store.Overview for the source, under the view's context, then shows the toast and refreshes the disks and the Trash.
+// run cleans req through store.Overview for the source, then shows the toast and refreshes the disks and the Trash.
 func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) {
 	if core.Untracked(d.cx, func() bool { return !d.CanClean(len(req.ItemIDs)) }) {
 		return
@@ -324,8 +324,7 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 	undo := core.Untracked(d.cx, d.CanUndo)
 	d.seq++
 	mine := d.seq
-	ctx, cancel := context.WithCancel(d.ctx)
-	d.cancel = cancel
+	stores, toast := d.stores, d.toast
 	d.cx.Batch(func() {
 		d.Progress.Set(cleanup.Progress{})
 		d.Sub.Set(sub)
@@ -336,8 +335,8 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			d.Progress.Set(p)
 		}
 	})
-	d.ov.Clean(d.cx, ctx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(out app.OverviewOutcome, err error) {
-		cancel()
+	// The clean runs on the app's context and its toast comes from the app's scope, so the view going away (it cannot while the cleaning overlay holds the sidebar) loses neither.
+	d.cancel = d.ov.Clean(d.cx, req, app.CleanOrigin{Source: d.Source}, feed.Send, func(app.OverviewOutcome, error) {
 		if mine != d.seq {
 			return
 		}
@@ -346,14 +345,15 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 			d.cleaning.Set(false)
 			d.Progress.Set(cleanup.Progress{})
 		})
-		d.stores.Locations.Bump()
-		d.stores.Trash.Bump()
+	}, func(out app.OverviewOutcome, err error) {
+		stores.Locations.Bump()
+		stores.Trash.Bump()
 		if err != nil {
-			d.stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: errorToast})
+			stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: errorToast})
 			return
 		}
-		if d.toast != nil {
-			d.stores.Toasts.Show(d.toast(action, out, undo))
+		if toast != nil {
+			stores.Toasts.Show(toast(action, out, undo))
 		}
 	})
 }

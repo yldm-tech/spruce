@@ -110,30 +110,40 @@ func (o *Overview) StopCheck() {
 	}
 }
 
-// Clean cleans req of the current result for origin, with ctx the caller's (cancelling it stops after the current item). progress and done run in cx, the caller's scope, on the engine goroutine; done is dropped once cx is disposed, but Busy ends either way.
-func (o *Overview) Clean(cx *core.Scope, ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress), done func(app.OverviewOutcome, error)) {
+// Clean cleans req of the current result for origin. It runs on the app's context, so leaving the page does not stop it; the function it returns stops it after the current item (停止). progress and done run in cx, the caller's scope, on the engine goroutine, and are dropped once cx is disposed; outcome, when set, runs in the app's scope before done whatever happened to cx, for what must not be lost with the page (the toast with 撤销). Busy ends either way.
+func (o *Overview) Clean(cx *core.Scope, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress), done, outcome func(app.OverviewOutcome, error)) (stop func()) {
 	if o.svc == nil {
 		refuse(cx, done, app.OverviewOutcome{})
-		return
+		refuse(o.cx, outcome, app.OverviewOutcome{})
+		return func() {}
 	}
+	ctx, cancel := context.WithCancel(o.ctx)
 	o.busy.Set(true)
 	go func() {
+		defer cancel()
 		out, err := o.svc.Clean(ctx, req, origin, func(p cleanup.Progress) {
 			if progress != nil {
 				cx.Post(func() { progress(p) })
 			}
 		})
-		o.cx.Post(func() { o.busy.Set(false) })
+		o.cx.Post(func() {
+			o.busy.Set(false)
+			if outcome != nil {
+				outcome(out, err)
+			}
+		})
 		if done != nil {
 			cx.Post(func() { done(out, err) })
 		}
 	}()
+	return cancel
 }
 
-// Undo puts back what the run runID moved to the Trash. It runs with the app's context, so leaving the page does not stop it; done runs in cx and is dropped once cx is disposed.
-func (o *Overview) Undo(cx *core.Scope, runID string, done func(app.RestoreOutcome, error)) {
+// Undo puts back what the run runID moved to the Trash. It runs with the app's context, so leaving the page does not stop it; done runs in cx and is dropped once cx is disposed, outcome (when set) runs in the app's scope before it whatever happened to cx.
+func (o *Overview) Undo(cx *core.Scope, runID string, done, outcome func(app.RestoreOutcome, error)) {
 	if o.svc == nil {
 		refuse(cx, done, app.RestoreOutcome{})
+		refuse(o.cx, outcome, app.RestoreOutcome{})
 		return
 	}
 	o.busy.Set(true)
@@ -144,6 +154,9 @@ func (o *Overview) Undo(cx *core.Scope, runID string, done func(app.RestoreOutco
 			if err == nil && out.Restored > 0 {
 				o.undid[runID] = true
 				o.undone.Set(Undone{RunID: runID, Seq: o.undone.GetUntracked().Seq + 1})
+			}
+			if outcome != nil {
+				outcome(out, err)
 			}
 		})
 		if done != nil {

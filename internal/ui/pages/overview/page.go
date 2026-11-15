@@ -170,6 +170,17 @@ func (p *page) asker(cx *core.Scope) func(kit.ConfirmDialog, func()) {
 // toast shows the toast t.
 func (p *page) toast(t store.Toast) { p.stores.Toasts.Show(t) }
 
+// cleaned is what a clean of 概览 leaves once it ended, shown in the app's scope so leaving the page does not lose it: the disks and the Trash read again, and the toast (CleanToast, with 撤销 when undo was possible as it started).
+func cleaned(stores *store.Stores, a advice.Action, out app.OverviewOutcome, err error, undo bool) {
+	stores.Locations.Bump()
+	stores.Trash.Bump()
+	if err != nil {
+		stores.Toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
+		return
+	}
+	stores.Toasts.Show(CleanToast(a, out, undo))
+}
+
 // drill opens the drill-down view of source, on the 开发者 tab when tab is set, revealing categoryID.
 func (p *page) drill(source, categoryID string, tab nav.DevTab) {
 	r := nav.Route(source)

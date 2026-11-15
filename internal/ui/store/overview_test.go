@@ -23,23 +23,36 @@ type fakeOverview struct {
 	block   chan struct{}
 	release chan struct{}
 	cleans  []app.CleanOrigin
+	// stopped counts the cleans that ended because their context did.
+	stopped int
+	// answered records the goroutine State answered on.
+	answered answer
 }
 
 func (f *fakeOverview) State() app.OverviewState {
 	<-f.block
+	f.answered.mark()
 	return f.initial
 }
 func (f *fakeOverview) Subscribe() (<-chan app.OverviewState, func()) { return f.ch, func() {} }
 func (f *fakeOverview) Notices() (<-chan app.Notice, func())          { return nil, func() {} }
 func (f *fakeOverview) CheckNow() error                               { return errors.New("正在清理，完成后再检查") }
 func (f *fakeOverview) StopCheck()                                    {}
-func (f *fakeOverview) Clean(_ context.Context, _ cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
+func (f *fakeOverview) Clean(ctx context.Context, _ cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
 	f.mu.Lock()
 	f.cleans = append(f.cleans, origin)
+	release := f.release
 	f.mu.Unlock()
 	progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: 1, Total: 2})
-	<-f.release
-	return app.OverviewOutcome{RunID: "r1", Undoable: true}, nil
+	select {
+	case <-release:
+		return app.OverviewOutcome{RunID: "r1", Undoable: true}, nil
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.stopped++
+		f.mu.Unlock()
+		return app.OverviewOutcome{RunID: "r0", Result: cleanup.CleanResult{Interrupted: true}}, nil
+	}
 }
 func (f *fakeOverview) Undo(context.Context, string) (app.RestoreOutcome, error) {
 	return app.RestoreOutcome{Restored: 2}, nil
@@ -68,13 +81,13 @@ func TestOverviewWithoutAController(t *testing.T) {
 	var errs []error
 	keep := func(err error) { errs = append(errs, err) }
 	st.Overview.CheckNow(keep)
-	st.Overview.Clean(h.root, t.Context(), cleanup.CleanRequest{}, app.CleanOrigin{}, nil, func(_ app.OverviewOutcome, err error) { keep(err) })
-	st.Overview.Undo(h.root, "r", func(_ app.RestoreOutcome, err error) { keep(err) })
+	st.Overview.Clean(h.root, cleanup.CleanRequest{}, app.CleanOrigin{}, nil, func(_ app.OverviewOutcome, err error) { keep(err) }, func(_ app.OverviewOutcome, err error) { keep(err) })
+	st.Overview.Undo(h.root, "r", func(_ app.RestoreOutcome, err error) { keep(err) }, func(_ app.RestoreOutcome, err error) { keep(err) })
 	st.Overview.Growth(h.root, t.Context(), time.Hour, func(_ []growth.Growth, err error) { keep(err) })
 	st.Overview.TrashInfo(h.root, t.Context(), func(_ app.TrashInfo, err error) { keep(err) })
 	st.Overview.StopCheck()
-	st.Overview.Clean(h.root, t.Context(), cleanup.CleanRequest{}, app.CleanOrigin{}, nil, nil)
-	h.until(t, func() bool { return len(errs) == 5 })
+	st.Overview.Clean(h.root, cleanup.CleanRequest{}, app.CleanOrigin{}, nil, nil, nil)()
+	h.until(t, func() bool { return len(errs) == 7 })
 	for _, err := range errs {
 		if err == nil || err.Error() != "概览还没有接入" {
 			t.Errorf("err %v", err)
@@ -97,23 +110,28 @@ func TestOverviewFollowsTheControllerAndCleans(t *testing.T) {
 	// A broadcast wins over the first answer, which comes later and is older.
 	f.ch <- app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{Headline: 42}}
 	h.until(t, func() bool { return st.Overview.State().Result != nil })
+	// The older first answer arrives after the broadcast, and has been delivered before the check.
 	close(f.block)
-	time.Sleep(20 * time.Millisecond)
-	h.drain()
+	h.delivered(t, &f.answered)
 	if got := st.Overview.State(); got.Phase != app.OverviewIdle || got.Result.Headline != 42 {
 		t.Errorf("state %+v", got)
 	}
 
 	var progress []cleanup.Progress
 	var out *app.OverviewOutcome
-	st.Overview.Clean(h.root, t.Context(), cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{Recommendation: "app-caches"},
+	var outcome *app.OverviewOutcome
+	st.Overview.Clean(h.root, cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{Recommendation: "app-caches"},
 		func(p cleanup.Progress) { progress = append(progress, p) },
 		func(o app.OverviewOutcome, err error) {
 			if err != nil {
 				t.Error(err)
 			}
+			if outcome == nil {
+				t.Error("done ran before outcome")
+			}
 			out = &o
-		})
+		},
+		func(o app.OverviewOutcome, _ error) { outcome = &o })
 	if !st.Overview.Busy() {
 		t.Error("not busy while cleaning")
 	}
@@ -134,7 +152,7 @@ func TestOverviewFollowsTheControllerAndCleans(t *testing.T) {
 		t.Errorf("an undo before any: %+v", u)
 	}
 	var restored int
-	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored })
+	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored }, nil)
 	h.until(t, func() bool { return restored == 2 && !st.Overview.Busy() })
 	if u := st.Overview.LastUndo(); u != (Undone{RunID: "r1", Seq: 1}) {
 		t.Errorf("last undo %+v", u)
@@ -143,8 +161,54 @@ func TestOverviewFollowsTheControllerAndCleans(t *testing.T) {
 		t.Error("Undid does not follow the undos")
 	}
 	restored = 0
-	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored })
+	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored }, nil)
 	h.until(t, func() bool { return restored == 2 && st.Overview.LastUndo().Seq == 2 })
+}
+
+// TestOverviewCleanOutlivesThePage: a clean runs on the app's context, so the page that started it going (its scope disposed) neither stops it nor loses its outcome; only the stop it returns ends it early.
+func TestOverviewCleanOutlivesThePage(t *testing.T) {
+	h := newHost(t)
+	f := &fakeOverview{ch: make(chan app.OverviewState, 1), block: make(chan struct{}), release: make(chan struct{})}
+	close(f.block)
+	st := storesWith(t, h, f)
+	page := h.root.Child()
+	var done, outcome *app.OverviewOutcome
+	var progressed bool
+	st.Overview.Clean(page, cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{Recommendation: "app-caches"},
+		func(cleanup.Progress) { progressed = true },
+		func(o app.OverviewOutcome, _ error) { done = &o },
+		func(o app.OverviewOutcome, _ error) { outcome = &o })
+	h.until(t, func() bool { return progressed })
+	page.Dispose()
+	h.drain()
+	close(f.release)
+	h.until(t, func() bool { return outcome != nil })
+	h.drain()
+	if outcome.RunID != "r1" || f.stopped != 0 || done != nil || st.Overview.Busy() {
+		t.Errorf("outcome %+v, stopped %d, done %+v, busy %v", outcome, f.stopped, done, st.Overview.Busy())
+	}
+	// 停止 ends it after the current item, and the outcome still comes.
+	f.mu.Lock()
+	f.release = make(chan struct{})
+	f.mu.Unlock()
+	outcome = nil
+	stop := st.Overview.Clean(h.root, cleanup.CleanRequest{CategoryIDs: []string{"x"}}, app.CleanOrigin{}, nil, nil,
+		func(o app.OverviewOutcome, _ error) { outcome = &o })
+	stop()
+	h.until(t, func() bool { return outcome != nil })
+	if !outcome.Result.Interrupted || f.stopped != 1 {
+		t.Errorf("stopped clean %+v, stopped %d", outcome, f.stopped)
+	}
+	// The same for an undo: its outcome is not lost with the page.
+	page = h.root.Child()
+	var undone, undoDone *app.RestoreOutcome
+	st.Overview.Undo(page, "r1", func(r app.RestoreOutcome, _ error) { undoDone = &r }, func(r app.RestoreOutcome, _ error) { undone = &r })
+	page.Dispose()
+	h.until(t, func() bool { return undone != nil })
+	h.drain()
+	if undone.Restored != 2 || undoDone != nil {
+		t.Errorf("undo outcome %+v, done %+v", undone, undoDone)
+	}
 }
 
 func TestToasts(t *testing.T) {

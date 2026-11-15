@@ -35,7 +35,7 @@ func trashed(svc *spacefake.Service) {
 
 // undo puts back runID through the store, as the toast's 撤销 does.
 func (p *page) undo(runID string) {
-	p.Post(func() { p.stores.Overview.Undo(p.root, runID, nil) })
+	p.Post(func() { p.stores.Overview.Undo(p.root, runID, nil, nil) })
 	p.Settle()
 }
 

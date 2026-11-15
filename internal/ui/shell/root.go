@@ -58,7 +58,7 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 			stores.Trash.Bump()
 			stores.Locations.Bump()
 			toasts.Show(undoToast(out, err))
-		})
+		}, nil)
 	}
 	return core.View{PointerEvents: core.PointerEventsBoxNone,
 		Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(24), AlignItems: core.AlignCenter,

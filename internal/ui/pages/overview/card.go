@@ -116,35 +116,29 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			})
 	}
 
-	// run cleans req, the card r's items as the user saw them when acting: a newer result that lands while a confirmation is open changes neither what nor how. The clean and its bookkeeping (the page's one-at-a-time lock, the held card, the toast) belong to the page, so a card that goes while it runs cannot leave the page locked.
+	// run cleans req, the card r's items as the user saw them when acting: a newer result that lands while a confirmation is open changes neither what nor how. The clean runs on the app's context, so leaving 概览 does not stop it, and its toast (with 撤销) and the refreshed disks are shown from the app's scope; the page's bookkeeping (the one-at-a-time lock, the held card, the progress) belongs to the page, so a card that goes while it runs cannot leave the page locked.
 	run := func(a advice.Action, r advice.Recommendation, req cleanup.CleanRequest) {
 		if len(req.ItemIDs) == 0 || !p.actionable() || p.cleaning() {
 			return
 		}
 		undo := canUndo()
-		ctx, cancel := context.WithCancel(p.ctx)
-		stop = cancel
+		stores := p.stores
 		p.active.Set(id)
 		p.hold(r, index())
 		failed.Set(0)
 		progress.Set(cleanup.Progress{})
 		showProgress.Set(a == advice.ActionDelete || a == advice.ActionCommand)
-		p.ov.Clean(p.cx, ctx, req, app.CleanOrigin{Recommendation: r.ID}, func(pr cleanup.Progress) { progress.Set(pr) },
+		stop = p.ov.Clean(p.cx, req, app.CleanOrigin{Recommendation: r.ID}, func(pr cleanup.Progress) { progress.Set(pr) },
 			func(out app.OverviewOutcome, err error) {
-				cancel()
 				stop = nil
 				p.active.Set("")
 				showProgress.Set(false)
-				p.stores.Locations.Bump()
-				p.stores.Trash.Bump()
-				if err != nil {
-					p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
-				} else {
+				if err == nil {
 					failed.Set(len(out.Result.Failed))
-					p.toast(CleanToast(a, out, undo))
 				}
 				p.release(id)
-			})
+			},
+			func(out app.OverviewOutcome, err error) { cleaned(stores, a, out, err, undo) })
 	}
 
 	act := func() {

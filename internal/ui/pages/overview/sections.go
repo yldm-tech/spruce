@@ -82,18 +82,11 @@ func trashRow(cx *core.Scope, p *page) core.Node {
 		ask(kit.ConfirmDialog{TestID: "empty-trash-confirm", Title: "清空" + bin + "？", Lines: []string{text}, ConfirmLabel: "清空", Danger: true}, func() {
 			p.active.Set(emptyTrash)
 			undo := p.canUndo()
-			// The clean belongs to the page, as a card's does: the row going while it runs cannot leave the page locked.
-			p.ov.Clean(p.cx, p.ctx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
-				func(out app.OverviewOutcome, err error) {
-					p.active.Set("")
-					p.stores.Locations.Bump()
-					p.stores.Trash.Bump()
-					if err != nil {
-						p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
-						return
-					}
-					p.toast(CleanToast(advice.ActionDelete, out, undo))
-				})
+			stores := p.stores
+			// As a card's clean: it outlives the page, its toast comes from the app's scope and the page's lock is the page's.
+			p.ov.Clean(p.cx, cleanup.CleanRequest{CategoryIDs: []string{trashCategory}}, app.CleanOrigin{Source: string(app.CleanerSystemJunk)}, nil,
+				func(app.OverviewOutcome, error) { p.active.Set("") },
+				func(out app.OverviewOutcome, err error) { cleaned(stores, advice.ActionDelete, out, err, undo) })
 		})
 	}
 	press := func() {

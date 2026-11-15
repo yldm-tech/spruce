@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,14 +24,54 @@ type host struct {
 	root  *core.Scope
 	mu    sync.Mutex
 	posts []func()
+	// posters are the goroutines that posted, by goid.
+	posters map[int64]bool
+}
+
+// goid is the current goroutine's ID, from its stack trace's first line ("goroutine 42 [running]:").
+func goid() int64 {
+	var buf [64]byte
+	line := strings.TrimPrefix(string(buf[:runtime.Stack(buf[:], false)]), "goroutine ")
+	id, err := strconv.ParseInt(line[:strings.IndexByte(line, ' ')], 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+// answer remembers the goroutine a fake service answered a request on, so a test can wait until that goroutine has posted the answer to the stores instead of guessing how long it takes.
+type answer struct{ id atomic.Int64 }
+
+// mark records the calling goroutine.
+func (a *answer) mark() {
+	if a != nil {
+		a.id.Store(goid())
+	}
+}
+
+// delivered waits until the goroutine a marked has posted, then runs every post.
+func (h *host) delivered(t *testing.T, a *answer) {
+	t.Helper()
+	h.until(t, func() bool {
+		id := a.id.Load()
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return id != 0 && h.posters[id]
+	})
+	h.drain()
 }
 
 func newHost(t *testing.T) *host {
 	h := &host{}
 	h.root = core.NewRoot(core.RootOptions{
 		Post: func(fn func()) {
+			id := goid()
 			h.mu.Lock()
 			h.posts = append(h.posts, fn)
+			if h.posters == nil {
+				h.posters = map[int64]bool{}
+			}
+			h.posters[id] = true
 			h.mu.Unlock()
 		},
 		Clock:  core.NewManualClock(time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)),
@@ -119,10 +163,13 @@ type fakeAlerts struct {
 	initial []health.Alert
 	ch      chan []health.Alert
 	block   chan struct{}
+	// answered, when set, records the goroutine Alerts answered on.
+	answered *answer
 }
 
 func (f fakeAlerts) Alerts() []health.Alert {
 	<-f.block
+	f.answered.mark()
 	return f.initial
 }
 func (f fakeAlerts) Subscribe() (<-chan []health.Alert, func()) { return f.ch, func() {} }
@@ -205,13 +252,13 @@ func TestAlertsBroadcastWinsOverTheFirstAnswer(t *testing.T) {
 	h := newHost(t)
 	block := make(chan struct{})
 	ch := make(chan []health.Alert, 1)
-	alerts := fakeAlerts{initial: []health.Alert{{Name: "old"}}, ch: ch, block: block}
+	alerts := fakeAlerts{initial: []health.Alert{{Name: "old"}}, ch: ch, block: block, answered: &answer{}}
 	st := newStores(t, h, &fakeSettings{}, alerts, fakeFeed{make(chan settings.AppSettings)}, make(chan history.Run))
 	ch <- []health.Alert{{Name: "new"}}
 	h.until(t, func() bool { return len(st.Alerts.List()) == 1 })
+	// The older first answer arrives after the broadcast, and has been delivered before the check.
 	close(block)
-	time.Sleep(20 * time.Millisecond)
-	h.drain()
+	h.delivered(t, alerts.answered)
 	if got := st.Alerts.List(); len(got) != 1 || got[0].Name != "new" {
 		t.Errorf("alerts %+v", got)
 	}

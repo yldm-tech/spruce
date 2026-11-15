@@ -631,6 +631,36 @@ func TestTrashCard(t *testing.T) {
 	}
 }
 
+// Leaving 概览 while a card cleans neither stops the clean nor loses its toast with 撤销: nothing holds the sidebar during a card's clean.
+func TestCardCleanOutlivesThePage(t *testing.T) {
+	p := open(t, ready())
+	p.ov.CleanRelease = make(chan struct{})
+	stopped := make(chan bool, 1)
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		stopped <- ctx.Err() != nil
+		return app.OverviewOutcome{RunID: "r1", Undoable: true, Result: cleanup.CleanResult{Trashed: 600 * mb, Removed: 1}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitUntil(wait, func() bool { return !p.Exists("id:rec-installers") })
+	close(p.ov.CleanRelease)
+	if <-stopped {
+		t.Fatal("leaving the page stopped the clean")
+	}
+	p.ticking(func() bool { return p.toast() != nil })
+	if got := p.toast(); got.Text != "已移到废纸篓 600 MB" || got.UndoRun != "r1" {
+		t.Errorf("toast %+v", got)
+	}
+	// Back on 概览, nothing is left locked.
+	p.ticking(func() bool { return !p.stores.Overview.Busy() })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitFor("id:rec-app-caches-act", wait)
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card stays disabled after the clean ended elsewhere")
+	}
+}
+
 // A clean that leaves items keeps the card with how many, and the toast offers 查看.
 func TestTrashCardPartlyFailed(t *testing.T) {
 	p := open(t, ready())
