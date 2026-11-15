@@ -659,6 +659,36 @@ func TestActionBarRisesOverTheToast(t *testing.T) {
 	}
 }
 
+// On a long list scrolled to its end, as after pressing 清理, the bar that rises over the toast stays in view above it; a page scrolled away from the bar is left where it is.
+func TestActionBarStaysInViewOverTheToast(t *testing.T) {
+	const height = 600
+	p := startSized(t, stateOf(many(20)...), nsgotest.Size(1052, height))
+	p.WaitFor("id:clean", wait)
+	p.Scroll("id:drill-system-junk", 100000)
+	p.Settle()
+	page := func() *nsgotest.View { return p.Find("id:drill-system-junk") }
+	// bottom is where 清理 ends in the window.
+	bottom := func() float32 {
+		pg := page()
+		return float32(pg.Frame.Origin.Y) + inPage(pg, p.Find("id:clean")) + float32(p.Find("id:clean").Frame.Size.Height) - float32(pg.Offset.Y)
+	}
+	if got := bottom(); got > height {
+		t.Fatalf("清理 ends at %v at the end of the page, below the window", got)
+	}
+	p.undoToast()
+	p.WaitUntil(wait, func() bool { return bottom() <= height-24-44-12 })
+
+	p.Post(p.stores.Toasts.Dismiss)
+	p.Settle()
+	p.Scroll("id:drill-system-junk", -100000)
+	p.Settle()
+	p.undoToast()
+	p.Settle()
+	if y := page().Offset.Y; y != 0 {
+		t.Errorf("the page scrolled to %v for a toast while its bar was out of view", y)
+	}
+}
+
 // A 撤销 toast that comes while the question is open keeps the confirmed clean from emptying the Trash.
 func TestEmptyingTheTrashRefusedUnderUndo(t *testing.T) {
 	p := start(t, stateOf(append(junk(), trash())...))
