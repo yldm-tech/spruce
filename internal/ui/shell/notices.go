@@ -31,7 +31,7 @@ func NoticeText(n app.Notice) (title, body string) {
 			moved += "等"
 		}
 		return "本周自动清理了 " + format.Bytes(n.Trashed),
-			moved + "已移到" + format.TrashName() + "。点按查看，清空" + format.TrashName() + "之前可以放回原处。"
+			moved + "已移到" + format.TrashName() + "。点按查看，需要时可以放回原处。"
 	}
 	title = "磁盘空间不多了"
 	if n.Recommended > 0 {

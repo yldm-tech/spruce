@@ -108,15 +108,15 @@ func TestNoticeText(t *testing.T) {
 			"磁盘空间不多了", "Macintosh HD 只剩 " + format.Bytes(8*gb) + "，点按看看是什么占用了空间。"},
 		{"summary of one rule", app.Notice{Kind: app.NoticeAutoSummary, ID: "auto-summary:2026-W46", Trashed: 3 * gb,
 			Rules: []rules.RuleTotal{{Rule: rules.AppCaches, Items: 40, Bytes: 3 * gb}}},
-			"本周自动清理了 " + format.Bytes(3*gb), "旧的应用缓存 " + format.Bytes(3*gb) + " 已移到" + trash + "。点按查看，清空" + trash + "之前可以放回原处。"},
+			"本周自动清理了 " + format.Bytes(3*gb), "旧的应用缓存 " + format.Bytes(3*gb) + " 已移到" + trash + "。点按查看，需要时可以放回原处。"},
 		{"summary of two rules", app.Notice{Kind: app.NoticeAutoSummary, ID: "auto-summary:2026-W46", Trashed: 5 * gb,
 			Rules: []rules.RuleTotal{{Rule: rules.BuildOutput, Bytes: 4 * gb}, {Rule: rules.Installers, Bytes: gb}}},
 			"本周自动清理了 " + format.Bytes(5*gb),
-			"闲置项目的构建产物 " + format.Bytes(4*gb) + "、旧安装包 " + format.Bytes(gb) + " 已移到" + trash + "。点按查看，清空" + trash + "之前可以放回原处。"},
+			"闲置项目的构建产物 " + format.Bytes(4*gb) + "、旧安装包 " + format.Bytes(gb) + " 已移到" + trash + "。点按查看，需要时可以放回原处。"},
 		{"summary of more rules ends with 等", app.Notice{Kind: app.NoticeAutoSummary, ID: "auto-summary:2026-W46", Trashed: 6 * gb,
 			Rules: []rules.RuleTotal{{Rule: rules.BuildOutput, Bytes: 4 * gb}, {Rule: rules.AppCaches, Bytes: gb}, {Rule: rules.IncompleteDownloads, Bytes: gb}}},
 			"本周自动清理了 " + format.Bytes(6*gb),
-			"闲置项目的构建产物 " + format.Bytes(4*gb) + "、旧的应用缓存 " + format.Bytes(gb) + " 等已移到" + trash + "。点按查看，清空" + trash + "之前可以放回原处。"},
+			"闲置项目的构建产物 " + format.Bytes(4*gb) + "、旧的应用缓存 " + format.Bytes(gb) + " 等已移到" + trash + "。点按查看，需要时可以放回原处。"},
 	} {
 		title, body := NoticeText(c.n)
 		if title != c.title || body != c.body {
