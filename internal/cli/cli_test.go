@@ -45,7 +45,11 @@ type fakeEngine struct {
 	restores   []string
 	restoreOut app.RestoreOutcome
 	restoreErr error
+	// recovered counts RecoverInterrupted calls.
+	recovered int
 }
+
+func (f *fakeEngine) RecoverInterrupted(context.Context) { f.recovered++ }
 
 func (f *fakeEngine) Scan(ctx context.Context, progress func(cleanup.Progress)) (cleanup.ScanResult, error) {
 	progress(cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 500, Total: 1000})
@@ -197,12 +201,55 @@ func TestIsCommand(t *testing.T) {
 
 func TestUnknownCommand(t *testing.T) {
 	h := newHarness()
-	code, _, errOut := h.run(t, "frobnicate")
-	if code != ExitUsage || !strings.Contains(errOut, "未知的命令") {
-		t.Fatalf("code %d, stderr %q", code, errOut)
+	code, out, errOut := h.run(t, "frobnicate")
+	if code != ExitUsage || !strings.Contains(errOut, `未知的命令 "frobnicate"`) || out != "" {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	// The command list follows, so a typo shows what was meant.
+	if !strings.Contains(errOut, "用法：spruce <命令>") || !strings.Contains(errOut, "  scan ") {
+		t.Errorf("no usage after the error: %q", errOut)
+	}
+	if code, out, _ := h.run(t, "scna", "--json"); code != ExitUsage || decode(t, out)["error"] != `未知的命令 "scna"` {
+		t.Errorf("JSON: code %d, stdout %q", code, out)
 	}
 	if h.built != 0 {
 		t.Fatal("a usage error built the engine")
+	}
+}
+
+func TestRefuseRoot(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := RefuseRoot([]string{"clean", "--yes"}, &out, &errOut); code != ExitUsage || out.Len() != 0 || !strings.Contains(errOut.String(), "请不要用 sudo 运行 spruce") {
+		t.Errorf("code %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := RefuseRoot([]string{"history", "--json"}, &out, &errOut); code != ExitUsage || !strings.Contains(decode(t, out.String())["error"].(string), "sudo") {
+		t.Errorf("JSON: code %d, stdout %q", code, out.String())
+	}
+}
+
+// TestRecoverInterruptedBeforeTheRecords: history, restore and clean --yes record the cleans a Spruce process ended midway first; the read-only checks do not write anything.
+func TestRecoverInterruptedBeforeTheRecords(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{"history"}, 1},
+		{[]string{"restore", "20261115T090000Z-0001"}, 1},
+		{[]string{"clean", "--yes"}, 1},
+		{[]string{"clean"}, 0},
+		{[]string{"scan"}, 0},
+		{[]string{"recommendations"}, 0},
+	} {
+		h := newHarness()
+		h.eng.runs = runs()
+		h.eng.restorable = map[string]bool{"20261115T090000Z-0001": true}
+		h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": entry()}
+		h.run(t, tc.args...)
+		if h.eng.recovered != tc.want {
+			t.Errorf("%q: recovered %d times, want %d", tc.args, h.eng.recovered, tc.want)
+		}
 	}
 }
 
@@ -296,10 +343,15 @@ func TestScanFailures(t *testing.T) {
 		if code != ExitPartial {
 			t.Fatalf("code %d", code)
 		}
-		for _, want := range []string{"安装包没能检查完成：无法读取下载文件夹", "有 2 个位置没有读取权限"} {
+		for _, want := range []string{"安装包没能检查完成：无法读取下载文件夹", "有 2 个位置没有读取权限", "读取权限属于终端程序"} {
 			if !strings.Contains(errOut, want) {
 				t.Errorf("stderr lacks %q: %q", want, errOut)
 			}
+		}
+		// On Windows there is no terminal permission to point at.
+		h.d.GOOS = "windows"
+		if _, _, errOut := h.run(t, "scan"); !strings.Contains(errOut, "有 2 个位置没有读取权限") || strings.Contains(errOut, "终端") {
+			t.Errorf("Windows stderr %q", errOut)
 		}
 	})
 	t.Run("every source failed", func(t *testing.T) {
@@ -867,6 +919,19 @@ func TestVersionAndHelp(t *testing.T) {
 	}
 	if code, _, _ := h.run(t, "help", "frobnicate"); code != ExitUsage {
 		t.Fatalf("help of an unknown command: code %d", code)
+	}
+	if _, out, _ := h.run(t, "help"); !strings.Contains(out, "除 help 外，每个命令都可以加 --json") {
+		t.Errorf("general help %q", out)
+	}
+	// Where restore is not available, clean's help does not offer it.
+	if _, out, _ := h.run(t, "help", "clean"); !strings.Contains(out, "spruce restore 放回原处") {
+		t.Errorf("macOS clean help %q", out)
+	}
+	h.d.CanRestore = false
+	for _, args := range [][]string{{"help", "clean"}, {"clean", "--help"}} {
+		if code, out, _ := h.run(t, args...); code != ExitOK || strings.Contains(out, "spruce restore") || !strings.Contains(out, "清理会记入操作历史。") {
+			t.Errorf("%q without restore: code %d, stdout %q", args, code, out)
+		}
 	}
 	if h.built != 0 {
 		t.Fatal("help or version built the engine")

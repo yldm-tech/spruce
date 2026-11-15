@@ -52,6 +52,16 @@ func TestCommandLineDetection(t *testing.T) {
 		{[]string{"--help"}, command},
 		{[]string{"-h"}, command},
 		{[]string{"scan", elevate.Flag}, command},
+		// A word that only looks like a command is the command line, which reports it unknown instead of opening the app.
+		{[]string{"scna"}, command},
+		{[]string{"clean-up", "--yes"}, command},
+		{[]string{"scan2"}, command},
+		{[]string{"Scan"}, gui},
+		{[]string{"2scan"}, gui},
+		{[]string{"scan_all"}, gui},
+		{[]string{"/Applications/Spruce.app"}, gui},
+		{[]string{"Spruce.exe"}, gui},
+		{[]string{""}, gui},
 	} {
 		if got := launchKindOf(c.args); got != c.want {
 			t.Errorf("%q starts %d, want %d", c.args, got, c.want)

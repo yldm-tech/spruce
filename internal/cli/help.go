@@ -21,7 +21,7 @@ const generalHelp = `用法：spruce <命令> [选项]
   version          显示版本
 
 除 clean --yes 与 restore --yes 外，所有命令都只读取，不会删除或改动任何东西。
-每个命令都可以加 --json，在标准输出写一个 JSON 对象。
+除 help 外，每个命令都可以加 --json，在标准输出写一个 JSON 对象。
 
 退出码：0 成功（包括没有可做的和演练），1 失败，2 用法错误，3 部分完成，4 Spruce 正在清理，130 被中断。
 `
@@ -53,7 +53,7 @@ var commandHelp = map[string]string{
   --dry-run             只列出计划，不清理（不加 --yes 时也是这样）
   --json                输出 JSON
 
-不指定建议和类别时，选择全部不需要运行命令的建议。清理和应用里一样经过全部检查：排除的位置、删除前的再次确认、有未提交改动的项目，这些项目无论怎样指定都不会被清理。清理会记入操作历史，移到废纸篓的项目可以用 spruce restore 放回原处。
+不指定建议和类别时，选择全部不需要运行命令的建议。清理和应用里一样经过全部检查：排除的位置、删除前的再次确认、有未提交改动的项目，这些项目无论怎样指定都不会被清理。清理会记入操作历史。` + restoreHint + `
 `,
 	"projects": `用法：spruce projects [--json]
 
@@ -86,13 +86,19 @@ var commandHelp = map[string]string{
 `,
 }
 
+// restoreHint is the sentence of clean's help about putting moves back, left out where restore is not available (Windows).
+const restoreHint = "移到废纸篓的项目可以用 spruce restore 放回原处。"
+
 func (r *run) help(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprint(r.stdout, binNamed(generalHelp))
+		fmt.Fprint(r.stdout, r.generalHelp())
 		return ExitOK
 	}
 	name := commands[args[0]]
 	if text, ok := commandHelp[name]; ok && len(args) == 1 {
+		if !r.d.CanRestore {
+			text = strings.ReplaceAll(text, restoreHint, "")
+		}
 		fmt.Fprint(r.stdout, binNamed(text))
 		return ExitOK
 	}
@@ -101,6 +107,9 @@ func (r *run) help(args []string) int {
 	}
 	return r.usage(fmt.Errorf("没有命令 %q", strings.TrimSpace(args[0])), "")
 }
+
+// generalHelp is spruce help, as the platform names the bin.
+func (r *run) generalHelp() string { return binNamed(generalHelp) }
 
 // binNamed writes the help's 废纸篓 as the system calls it (回收站 on Windows).
 func binNamed(text string) string { return strings.ReplaceAll(text, "废纸篓", format.TrashName()) }

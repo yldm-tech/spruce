@@ -17,7 +17,7 @@ Spruce is a desktop app for macOS and Windows that tells you how much space you 
 
 ## Command line
 
-Run the executable with a command: `Spruce.app/Contents/MacOS/Spruce <command>` on macOS, `Spruce.exe <command>` on Windows. Everything is read-only except `clean --yes` and `restore --yes`.
+Run the executable with a command: `Spruce.app/Contents/MacOS/Spruce <command>` on macOS, `Spruce.exe <command>` on Windows. Everything is read-only except `clean --yes` and `restore --yes`. The help calls it `spruce`; to type it that way, link it into your PATH on macOS (`ln -s /Applications/Spruce.app/Contents/MacOS/Spruce /usr/local/bin/spruce`) or add an alias on Windows (`Set-Alias spruce "$env:LOCALAPPDATA\Programs\Spruce\Spruce.exe"` in your PowerShell profile). A first argument that looks like a command but is none (a typo such as `scna`) prints 「未知的命令」 with the usage and exits 2 instead of opening the app.
 
 | Command | What it does |
 |---|---|
@@ -29,9 +29,13 @@ Run the executable with a command: `Spruce.app/Contents/MacOS/Spruce <command>` 
 | `restore <run-id> [--yes] [--json]` | macOS only: lists what a record moved to the Trash that can still go back; puts it back only with `--yes`. |
 | `help [<command>]`, `version` | Help and version. |
 
-With `--json`, standard output is one JSON object (`{"version":1,"command":...}`, or `{"version":1,"error":...}`); logs go to standard error. Exit codes: 0 success (including nothing to do and dry runs), 1 failure, 2 usage error, 3 partly done (some items failed or were held), 4 busy (Spruce is cleaning, in the app or another command), 130 interrupted.
+With `--json` (every command but `help`), standard output is one JSON object (`{"version":1,"command":...}`, or `{"version":1,"error":...}`); logs go to standard error. Exit codes: 0 success (including nothing to do and dry runs), 1 failure, 2 usage error, 3 partly done (some items failed or were held), 4 busy (Spruce is cleaning, in the app or another command), 130 interrupted.
 
-The command line never takes the app's single-instance lock or talks to a running app; the app and the command line share `clean.lock` in the data folder, so they never clean at the same time. On Windows the executable is a GUI program, so `cmd.exe` does not wait for it: use `start /wait Spruce.exe scan` or run it from PowerShell (`.\Spruce.exe scan | Out-Host`).
+The command line never takes the app's single-instance lock or talks to a running app; the app and the command line share `clean.lock` in the data folder, so they never clean at the same time. Closing the terminal or losing the SSH session stops a clean after its current item, like Ctrl+C, and it is still recorded; `history`, `restore` and `clean --yes` first record any clean a Spruce process ended in the middle of. It refuses to run as root: under `sudo` it would write root-owned files into your data folder that the app can no longer open, and its moves would not reach your Trash.
+
+On macOS the privacy permissions of the command line belong to the terminal app that runs it, not to Spruce.app: for a complete check from a terminal, add that terminal (Terminal, iTerm …) under 系统设置 → 隐私与安全性 → 完全磁盘访问权限. Run from a terminal, the command line can also make the terminal ask for access to Desktop, Documents and Downloads.
+
+On Windows the executable is a GUI program, so `cmd.exe` does not wait for it: use `start /wait Spruce.exe scan`, or from PowerShell `[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); .\Spruce.exe scan | Out-Host`. The output is UTF-8, and PowerShell reads a program's piped output in the console's code page unless told otherwise, so set `[Console]::OutputEncoding` the same way before `> file`, `| ConvertFrom-Json` or any other pipe, or the Chinese text and the JSON strings come out garbled.
 
 ## Windows
 

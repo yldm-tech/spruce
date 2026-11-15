@@ -1,6 +1,6 @@
 // Command spruce is the Spruce desktop app: a disk cleaner and system maintenance tool for macOS and Windows.
 //
-// main does four things, in this order: it serves the elevated child when started with elevate.Flag (before any NSGo code runs), it runs the command line when the first argument is one of its commands (cli.IsCommand; without the single-instance lock or any UI), it takes the single-instance lock in the data folder, and it wires the engine into the UI (wire) and runs it with nsgo.Run.
+// main does four things, in this order: it serves the elevated child when started with elevate.Flag (before any NSGo code runs), it runs the command line when the first argument is one of its commands or looks like one (launchKindOf; without the single-instance lock or any UI), it takes the single-instance lock in the data folder, and it wires the engine into the UI (wire) and runs it with nsgo.Run.
 package main
 
 import (
@@ -58,15 +58,28 @@ const (
 	launchApp
 )
 
-// launchKindOf tells the starts apart by their arguments (os.Args[1:]), in this order: the elevated child, then the command line, then the app. The elevated child's arguments never reach the command line, whatever follows elevate.Flag.
+// launchKindOf tells the starts apart by their arguments (os.Args[1:]), in this order: the elevated child, then the command line, then the app. The elevated child's arguments never reach the command line, whatever follows elevate.Flag. A first argument that only looks like a command (a typo such as "scna") is the command line too, which says the command is unknown instead of opening the app: Finder, Explorer, the login item, the elevated child and the single-instance hand-off only ever pass dash flags or paths, never a bare lowercase word.
 func launchKindOf(args []string) launchKind {
 	switch {
 	case elevate.IsChild(args):
 		return launchChild
-	case cli.IsCommand(args):
+	case cli.IsCommand(args), len(args) > 0 && commandWord(args[0]):
 		return launchCommand
 	}
 	return launchApp
+}
+
+// commandWord reports whether s has the shape of a command: a lowercase letter, then lowercase letters, digits and hyphens (^[a-z][a-z0-9-]*$).
+func commandWord(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func main() {
@@ -189,9 +202,9 @@ func tracked(wg *sync.WaitGroup, work []func(ctx context.Context)) []func(ctx co
 	return out
 }
 
-// interruptContext is cancelled by the first Ctrl+C or SIGTERM, so a scan stops and a clean finishes its current item and records what it did. The signals then get their default behaviour back: a second one ends a command that does not stop (a scan stuck on a stalled network volume, a tool that ignores cancellation) instead of being swallowed.
+// interruptContext is cancelled by the first Ctrl+C, SIGTERM or SIGHUP (the terminal window closed, the SSH session lost), so a scan stops and a clean finishes its current item and records what it did. The signals then get their default behaviour back: a second one ends a command that does not stop (a scan stuck on a stalled network volume, a tool that ignores cancellation) instead of being swallowed.
 func interruptContext() (context.Context, context.CancelFunc) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -199,9 +212,15 @@ func interruptContext() (context.Context, context.CancelFunc) {
 	return ctx, stop
 }
 
-// runCLI runs a command of the command line over the app's engine (wireEngine) and returns its exit code. Ctrl+C and SIGTERM cancel it: a scan stops, a clean stops after its current item and still records what it did. Logs go to stderr, warnings and errors only.
+// runCLI runs a command of the command line over the app's engine (wireEngine) and returns its exit code. Ctrl+C, SIGTERM and SIGHUP cancel it: a scan stops, a clean stops after its current item and still records what it did. A broken pipe on stdout or stderr does not end it: writes fail and the clean goes on. Run as root (sudo) it refuses everything before it opens the data folder. Logs go to stderr, warnings and errors only.
 func runCLI(args []string, log *slog.Logger, runner execx.Runner) int {
 	slog.SetDefault(log)
+	if asRoot() {
+		return cli.RefuseRoot(args, os.Stdout, os.Stderr)
+	}
+	if runtime.GOOS != "windows" {
+		signal.Ignore(syscall.SIGPIPE)
+	}
 	ctx, stop := interruptContext()
 	defer stop()
 	home, err := os.UserHomeDir()
@@ -231,6 +250,9 @@ func runCLI(args []string, log *slog.Logger, runner execx.Runner) int {
 	return cli.Main(ctx, args, d, os.Stdout, os.Stderr)
 }
 
+// asRoot reports whether the command line runs as root (sudo) on macOS.
+func asRoot() bool { return runtime.GOOS != "windows" && os.Geteuid() == 0 }
+
 // cliEngine is the command line's view of the engine: 概览's foreground merged scan, cleaned as the command line through app.Cleanup.
 type cliEngine struct{ e engine }
 
@@ -258,4 +280,8 @@ func (c cliEngine) Entry(runID string) (undo.Entry, error) { return c.e.ledger.L
 
 func (c cliEngine) Restore(ctx context.Context, runID string) (app.RestoreOutcome, error) {
 	return c.e.restore.Run(ctx, runID)
+}
+
+func (c cliEngine) RecoverInterrupted(ctx context.Context) {
+	app.RecoverInterrupted(ctx, c.e.ledger, c.e.history, c.e.activity, slog.Default())
 }
