@@ -166,13 +166,25 @@ func locationRows(o, c Location, since time.Time) []Growth {
 	return []Growth{{Path: c.Path, Label: label, Icon: icon, Before: o.Bytes, After: c.Bytes, Since: since}}
 }
 
+// unnamed is 1 for a row without a label, else 0.
+func unnamed(g Growth) int {
+	if g.Label == "" {
+		return 1
+	}
+	return 0
+}
+
 // nested sorts rows by growth and drops a row when another inside it accounts for most of its growth, and a path already listed.
 func nested(rows []Growth) []Growth {
 	slices.SortStableFunc(rows, func(a, b Growth) int {
 		if c := cmp.Compare(b.After-b.Before, a.After-a.Before); c != 0 {
 			return c
 		}
-		return cmp.Compare(a.Path, b.Path)
+		if c := cmp.Compare(a.Path, b.Path); c != 0 {
+			return c
+		}
+		// Of two rows of one path, the named one lists.
+		return cmp.Compare(unnamed(a), unnamed(b))
 	})
 	var out []Growth
 	seen := map[string]bool{}
