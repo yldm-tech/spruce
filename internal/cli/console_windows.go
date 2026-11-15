@@ -23,12 +23,12 @@ func AttachConsole() {
 		return
 	}
 	if out {
-		if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		if f, err := os.OpenFile("CONOUT$", conoutFlags, 0); err == nil {
 			os.Stdout = f
 		}
 	}
 	if errOut {
-		if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
+		if f, err := os.OpenFile("CONOUT$", conoutFlags, 0); err == nil {
 			os.Stderr = f
 		}
 	}

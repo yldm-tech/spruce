@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"flag"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -124,5 +125,12 @@ func TestRedirected(t *testing.T) {
 		if got := redirected(c.handle, c.fileType, c.err); got != c.want {
 			t.Errorf("redirected(%#x, %d, %v) = %v, want %v", c.handle, c.fileType, c.err, got, c.want)
 		}
+	}
+}
+
+// TestConoutFlags guards the access of the reopened console: without read access GetConsoleMode fails on Windows, Go writes the handle as a plain file and Chinese text comes out garbled.
+func TestConoutFlags(t *testing.T) {
+	if conoutFlags&(os.O_RDONLY|os.O_WRONLY|os.O_RDWR) != os.O_RDWR {
+		t.Fatalf("CONOUT$ is opened with %#x, want read and write access", conoutFlags)
 	}
 }
