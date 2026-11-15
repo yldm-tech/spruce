@@ -343,7 +343,12 @@ func TestSamplerSlowSubscriberKeepsLatest(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	got := drain(ch)
+	// Sampling goes on while the test reads, so draining until empty can pick up a sample published after the check; read only what was buffered at this moment.
+	n := len(ch)
+	got := make([]Vitals, 0, n)
+	for range n {
+		got = append(got, <-ch)
+	}
 	if len(got) == 0 || len(got) > subscriberBuffer {
 		t.Fatalf("buffered %d samples", len(got))
 	}
