@@ -132,7 +132,7 @@ func TestScanDescriptionOnWindows(t *testing.T) {
 	}
 }
 
-// Emptying the Trash with the rest asks with the plan, the Trash measured now; the clean belongs to 系统垃圾 and its toast says what it freed.
+// Emptying the Trash with the rest asks with the plan of the rest and a line for the Trash, measured now; the clean belongs to 系统垃圾 and its toast says what it freed.
 func TestCleanWithThePlan(t *testing.T) {
 	p := start(t, stateOf(categories()...))
 	p.ov.TrashInfoValue = app.TrashInfo{Items: 12, Bytes: 2_000_000_000}
@@ -141,8 +141,11 @@ func TestCleanWithThePlan(t *testing.T) {
 	p.WaitFor("id:confirm", wait)
 	p.Find("role:region 永久删除")
 	p.Find("role:region 移到废纸篓")
-	if got := p.Find("id:plan-message").Text; got != "将清理 4 项，共 2.5 GB。其中 3 项会永久删除，无法恢复；其余移到废纸篓。" {
+	if got := p.Find("id:plan-message").Text; got != "将清理 3 项，共 510 MB。其中 2 项会永久删除，无法恢复；其余移到废纸篓。" {
 		t.Errorf("message %q", got)
+	}
+	if p.Exists("id:confirm >> text:废纸篓 1 项 · 2 GB") {
+		t.Error("the plan lists the Trash beside its line")
 	}
 	if got := p.Find("id:confirm-trash").Text; got != "废纸篓里的 12 项（2 GB）会永久删除，无法恢复。" {
 		t.Errorf("trash line %q", got)

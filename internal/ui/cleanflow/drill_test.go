@@ -610,10 +610,13 @@ func TestEmptyingTheTrash(t *testing.T) {
 	if got := p.Find("id:confirm-trash").Text; got != "废纸篓里的 42 项（5 MB）会永久删除，无法恢复。其中 3 项是 Spruce 移到废纸篓的，清空后不能再放回原处。" {
 		t.Errorf("trash line %q", got)
 	}
-	if got := p.Find("id:plan-message").Text; got != "将清理 1 项，共 5 MB。删除后无法恢复。" {
-		t.Errorf("message %q", got)
+	// The Trash alone asks as 概览's 清空废纸篓… does: one line with the live figures, no plan of one item beside it.
+	if got := p.Find("id:confirm >> role:header").Text; got != "清空废纸篓？" {
+		t.Errorf("title %q", got)
 	}
-	p.Find("id:plan-permanent-0 >> text:1 项 · 5 MB")
+	if p.Exists("id:plan-message") || p.Exists("id:plan-permanent-0") || !p.Exists("id:confirm-ok >> text:清空") {
+		t.Error("the Trash alone is asked about with the plan")
+	}
 	p.Press("id:confirm-cancel")
 	p.WaitForGone("id:confirm", wait)
 
