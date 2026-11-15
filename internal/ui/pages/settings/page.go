@@ -35,12 +35,30 @@ func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
 	ctx := cx.Context()
 	start := nav.SettingsGeneral
-	if n := nav.Use(cx); n != nil {
+	n := nav.Use(cx)
+	var asked int
+	if n != nil {
+		asked = core.Untracked(cx, n.SettingsAsked)
 		if t := n.TakeSettingsTab(); t != "" {
 			start = t
 		}
 	}
 	tab := core.NewSignal(cx, start)
+	// A link made while 设置 is open (the menu bar's 自动清理 item over a window on 设置) switches the tab in place.
+	if n != nil {
+		cx.Effect(func() {
+			a := n.SettingsAsked()
+			if a == asked {
+				return
+			}
+			asked = a
+			cx.Untrack(func() {
+				if t := n.TakeSettingsTab(); t != "" {
+					tab.Set(t)
+				}
+			})
+		})
+	}
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)

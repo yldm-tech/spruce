@@ -573,10 +573,16 @@ func TestOverviewCachedResultIsShownButNotCleaned(t *testing.T) {
 	checked := o.State().Result
 	req := rec(t, o.State(), "app-caches").req
 
-	// The next launch shows the cached result at once.
+	// The next launch shows the cached result at once; before it has loaded it says so.
 	f.clock.Add(time.Hour)
+	if NewOverview(f.cfg).State().Loaded {
+		t.Error("a controller that has not loaded reports Loaded")
+	}
 	o2 := f.start()
 	st := o2.State()
+	if !st.Loaded {
+		t.Error("a loaded controller does not report Loaded")
+	}
 	r := st.Result
 	if r == nil || !r.FromCache || r.Actionable || r.Stale || !r.CheckedAt.Equal(checked.CheckedAt) || r.Headline != checked.Headline || len(r.Recommendations) != 2 {
 		t.Fatalf("cached result %+v", r)

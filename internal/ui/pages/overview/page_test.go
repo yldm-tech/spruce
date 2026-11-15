@@ -350,6 +350,37 @@ func TestStale(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
 }
 
+// State D on a window shown again after it was hidden: 概览 stayed mounted, and decides again on the state then.
+func TestWindowShownAgainChecks(t *testing.T) {
+	p := open(t, ready())
+	p.WaitFor("id:rec-app-caches", wait)
+	// A result that can still be acted on is not checked again.
+	p.Post(p.nav.WindowShown)
+	p.Settle()
+	if p.checks() != 0 {
+		t.Fatalf("%d checks on showing a fresh result again", p.checks())
+	}
+	// Hidden for a day, the result went stale: showing the window checks.
+	st := ready()
+	st.Result.Stale, st.Result.Actionable, st.Result.CheckedAt = true, false, now.Add(-30*time.Hour)
+	p.set(st)
+	p.waitText("id:checked-at", "上次检查：昨天，结果可能已经变化")
+	if p.checks() != 0 {
+		t.Fatalf("%d checks before the window came back", p.checks())
+	}
+	p.Post(p.nav.WindowShown)
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	// Not while a check runs.
+	st.Phase = app.OverviewChecking
+	p.set(st)
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.State().Phase == app.OverviewChecking })
+	p.Post(p.nav.WindowShown)
+	p.Settle()
+	if p.checks() != 1 {
+		t.Errorf("%d checks on showing the window during a check", p.checks())
+	}
+}
+
 // A change of the exclusions or folders while 概览 is open checks again at once.
 func TestSettingsChangeChecksAgain(t *testing.T) {
 	p := open(t, ready())
@@ -420,6 +451,12 @@ func TestStoppedWithoutController(t *testing.T) {
 }
 
 // State G with a controller: a stopped check offers 开始检查.
+// A loaded controller's first answer with nothing in it (Windows: no undo, background checks off, the disk unread, no cache) still starts the check on open.
+func TestBareFirstAnswerChecks(t *testing.T) {
+	p := open(t, app.OverviewState{Phase: app.OverviewIdle})
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+}
+
 func TestStopped(t *testing.T) {
 	fakes := newFakes(t)
 	ov := storefake.NewOverview(app.OverviewState{Phase: app.OverviewChecking, CanUndo: true})
@@ -938,11 +975,21 @@ func TestGrowth(t *testing.T) {
 	q := open(t, ready())
 	r := start(t, newFakes(t), func() *storefake.Overview {
 		o := storefake.NewOverview(ready())
-		o.GrowthErr = errors.New("too few snapshots")
+		o.GrowthErr = growth.ErrNoHistory
 		return o
 	}())
 	r.waitText("id:growth-empty", "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。")
 	q.waitText("id:growth-empty", "最近 7 天没有明显变大的位置。")
+	// Snapshots that cannot be read are said to be so, not to be coming.
+	u := start(t, newFakes(t), func() *storefake.Overview {
+		o := storefake.NewOverview(ready())
+		o.GrowthErr = errors.New("read growth: permission denied")
+		return o
+	}())
+	u.waitText("id:growth-error", "无法读取空间变化的记录")
+	if got := len(u.Query("id:growth-empty")); got != 0 {
+		t.Error("unreadable snapshots read as too few")
+	}
 }
 
 // GoOverviewCard opens 概览 with the card shown and expanded, also past the first five.

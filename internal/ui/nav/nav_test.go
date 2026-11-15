@@ -110,8 +110,18 @@ func TestLinksAreTakenOnce(t *testing.T) {
 		t.Error("GoSpace")
 	}
 
+	asked = n.SettingsAsked()
 	n.GoSettings(SettingsAuto)
-	if n.Current() != Settings || n.TakeSettingsTab() != SettingsAuto {
+	if n.Current() != Settings || n.TakeSettingsTab() != SettingsAuto || n.TakeSettingsTab() != "" {
 		t.Error("GoSettings")
+	}
+	if n.SettingsAsked() != asked+1 {
+		t.Error("GoSettings was not counted")
+	}
+
+	shown := n.Shown()
+	n.WindowShown()
+	if n.Shown() != shown+1 {
+		t.Error("WindowShown was not counted")
 	}
 }

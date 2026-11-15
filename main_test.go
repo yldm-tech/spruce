@@ -12,7 +12,6 @@ import (
 
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
-	"github.com/yldm-tech/spruce/internal/cli"
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/host/loginitem"
 )
@@ -20,26 +19,16 @@ import (
 // TestMain hands the main thread to the platform under go tool nsgo test -target; headless it only runs the tests.
 func TestMain(m *testing.M) { nsgotest.Main(m) }
 
-// TestCommandLineDetection checks the order main tells its starts apart in: the elevated child, then the command line, then the app. The command line must never take the elevated child's arguments nor any the app is started with (Finder, Explorer, the login item, NSGo's own flags, the single-instance hand-off passes none).
+// TestCommandLineDetection checks launchKindOf, which main switches on: the elevated child, then the command line, then the app. The command line must never take the elevated child's arguments nor any the app is started with (Finder, Explorer, the login item, NSGo's own flags, the single-instance hand-off passes none).
 func TestCommandLineDetection(t *testing.T) {
-	type start int
 	const (
-		child start = iota
-		command
-		gui
+		child   = launchChild
+		command = launchCommand
+		gui     = launchApp
 	)
-	route := func(args []string) start {
-		switch {
-		case elevate.IsChild(args):
-			return child
-		case cli.IsCommand(args):
-			return command
-		}
-		return gui
-	}
 	for _, c := range []struct {
 		args []string
-		want start
+		want launchKind
 	}{
 		{nil, gui},
 		{[]string{loginitem.LoginArg}, gui},
@@ -64,7 +53,7 @@ func TestCommandLineDetection(t *testing.T) {
 		{[]string{"-h"}, command},
 		{[]string{"scan", elevate.Flag}, command},
 	} {
-		if got := route(c.args); got != c.want {
+		if got := launchKindOf(c.args); got != c.want {
 			t.Errorf("%q starts %d, want %d", c.args, got, c.want)
 		}
 	}

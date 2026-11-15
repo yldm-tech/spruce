@@ -126,11 +126,8 @@ func shouldCheck(st app.OverviewState) bool {
 	return st.Result.FromCache || st.Result.Stale || !st.Result.Actionable
 }
 
-// unanswered reports whether st is the store's state before the controller's first answer, which always reports more.
-func unanswered(st app.OverviewState) bool {
-	return st.Phase == app.OverviewIdle && st.Result == nil && st.Disk == nil && !st.CanUndo && st.Error == "" && st.Progress == nil && st.Waiting == "" &&
-		st.LastAuto == nil && len(st.Rules) == 0 && st.Next.IsZero()
-}
+// unanswered reports whether st is the store's state before the controller has loaded (OverviewState.Loaded).
+func unanswered(st app.OverviewState) bool { return !st.Loaded }
 
 // State is 概览's controller's state; reading it subscribes.
 func (d *Drill) State() app.OverviewState { return d.ov.State() }

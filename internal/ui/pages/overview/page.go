@@ -283,11 +283,8 @@ func shouldCheck(st app.OverviewState) bool {
 	return st.Result.FromCache || st.Result.Stale || !st.Result.Actionable
 }
 
-// unanswered reports whether st is the store's state before the controller's first answer: a controller always reports more (the disk, whether moves can be undone, a result, a check).
-func unanswered(st app.OverviewState) bool {
-	return st.Phase == app.OverviewIdle && st.Result == nil && st.Disk == nil && !st.CanUndo && st.Error == "" && st.Progress == nil && st.Waiting == "" &&
-		st.LastAuto == nil && len(st.Rules) == 0 && st.Next.IsZero()
-}
+// unanswered reports whether st is the store's state before the controller has loaded: its answer then may hold nothing else (Windows, no cache, no disk read, no rules), so only Loaded tells them apart.
+func unanswered(st app.OverviewState) bool { return !st.Loaded }
 
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
@@ -321,6 +318,20 @@ func Page(cx *core.Scope) core.Node {
 		if shouldCheck(st) {
 			cx.Untrack(p.checkNow)
 		}
+	})
+	// The window coming back after it was hidden (关闭窗口后继续在菜单栏运行) is opening it again for 概览, which stayed mounted: it decides again, on the state then.
+	shown := core.Untracked(cx, p.nav.Shown)
+	cx.Effect(func() {
+		n := p.nav.Shown()
+		if n == shown {
+			return
+		}
+		shown = n
+		cx.Untrack(func() {
+			if decided && shouldCheck(p.state()) {
+				p.checkNow()
+			}
+		})
 	})
 	// A change of what a check looks at (exclusions, folders) while 概览 is open checks again at once.
 	base, have := "", false

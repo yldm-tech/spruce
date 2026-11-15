@@ -136,6 +136,8 @@ type Overview struct {
 	// lastCheck is when the last check ended (the cache's SavedAt at launch); launched is when Run started.
 	lastCheck, launched time.Time
 	running             bool
+	// loaded is set at the end of load, before its publish.
+	loaded bool
 	// wantForeground is set by CheckNow until the loop starts the check.
 	wantForeground bool
 	// fg and bg cancel the foreground check and the background slot (its conditions, scan, rules and snapshot) that run.
@@ -249,6 +251,9 @@ func (o *Overview) load() {
 		}
 	}
 	if o.cfg.Cache == nil {
+		o.mu.Lock()
+		o.loaded = true
+		o.mu.Unlock()
 		o.publish()
 		return
 	}
@@ -264,6 +269,7 @@ func (o *Overview) load() {
 		o.lastCheck = f.SavedAt
 		o.gen++
 	}
+	o.loaded = true
 	o.mu.Unlock()
 	o.publish()
 }
@@ -1016,7 +1022,7 @@ func (o *Overview) publish() {
 func (o *Overview) stateLocked() OverviewState {
 	s := o.cfg.Settings.Get()
 	now := o.now()
-	st := OverviewState{Phase: OverviewIdle, Progress: o.progress, Waiting: o.waiting, Error: o.errText, Disk: o.disk, LastAuto: o.lastAuto, CanUndo: o.canUndo}
+	st := OverviewState{Phase: OverviewIdle, Progress: o.progress, Waiting: o.waiting, Error: o.errText, Disk: o.disk, LastAuto: o.lastAuto, CanUndo: o.canUndo, Loaded: o.loaded}
 	switch {
 	case o.cleaning || o.autoCleaning:
 		st.Phase = OverviewCleaning

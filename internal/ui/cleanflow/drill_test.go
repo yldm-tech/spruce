@@ -128,7 +128,7 @@ func startSized(t *testing.T, st app.OverviewState, size nsgotest.Option, before
 func (p *page) set(st app.OverviewState) {
 	p.tb.Helper()
 	p.ov.Set(st)
-	p.WaitUntil(wait, func() bool { return reflect.DeepEqual(p.stores.Overview.State(), st) })
+	p.WaitUntil(wait, func() bool { return reflect.DeepEqual(p.stores.Overview.State(), p.ov.State()) })
 }
 
 func (p *page) checked(selector string) bool { return p.Find(selector).Props.Checked }
