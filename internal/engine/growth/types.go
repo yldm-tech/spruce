@@ -67,6 +67,8 @@ type TakeOptions struct {
 	Budget time.Duration
 	// Usage reads the system volume's total and free space.
 	Usage func(path string) (total, free int64, err error)
+	// FullDiskAccess reports whether Spruce has Full Disk Access (macOS); the watches of other apps' data (~/Library/Containers and Group Containers, AppDataWatch) are read only when it says so, since reading them without it asks the user for access. Nil never reads them.
+	FullDiskAccess func() bool
 }
 
 // Retention is how many snapshots are kept.
