@@ -2,6 +2,7 @@ package space_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -266,6 +267,18 @@ func TestGrowthEmpty(t *testing.T) {
 	q := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
 	if got := q.WaitFor("id:growth-empty", wait).Text; got != "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。" {
 		t.Errorf("empty without a controller %q", got)
+	}
+
+	// The records cannot be read: it says so rather than that they are coming.
+	fakes = newFakes(t)
+	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
+	fakes.Overview.GrowthErr = errors.New("growth: permission denied")
+	e := start(t, &spacefake.Service{Listings: spacefake.Listings()}, fakes)
+	if got := e.WaitFor("id:growth-error", wait).Text; got != "无法读取空间变化的记录" {
+		t.Errorf("error %q", got)
+	}
+	if e.Exists("id:growth-empty") {
+		t.Error("an error read as no history")
 	}
 
 	// Nothing grew enough: the sentence follows the tab.

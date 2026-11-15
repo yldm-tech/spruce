@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -30,7 +31,7 @@ type growthRead struct {
 	loaded bool
 }
 
-// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 在空间透视中查看, and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming.
+// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 在空间透视中查看, and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming, and when they cannot be read it says so.
 func growthView(cx *core.Scope, s *State, files Files) core.Node {
 	stores := store.Use(cx)
 	navigator := nav.Use(cx)
@@ -95,10 +96,12 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 		switch {
 		case !g.loaded:
 			return core.Group{}
-		case g.err != nil:
+		case errors.Is(g.err, growth.ErrNoHistory), g.err != nil && !stores.Overview.Connected():
 			return core.Func(func(*core.Scope) core.Node {
 				return mutedLine("Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。", "growth-empty")
 			})
+		case g.err != nil:
+			return core.Func(func(*core.Scope) core.Node { return kit.ErrorLine{Text: func() string { return "无法读取空间变化的记录" }, TestID: "growth-error"} })
 		case len(g.list) == 0:
 			return core.Func(func(*core.Scope) core.Node { return mutedLine(GrowthNone(g.window), "growth-empty") })
 		}
