@@ -19,6 +19,9 @@ import (
 // growthMax is how many locations 最近变化 lists.
 const growthMax = 20
 
+// growthActionWidth fits a row's longer action, 在空间透视中查看.
+const growthActionWidth = 132
+
 // growthRead is what 最近变化 read for one tab.
 type growthRead struct {
 	window GrowthWindow
@@ -165,7 +168,9 @@ func growthRow(i int, g growth.Growth, name string, now time.Time, a growthActio
 				kit.Tabular(kit.Text("+"+format.Bytes(g.After-g.Before), kit.FontCardTitle, kit.Bold, kit.ColorText)),
 				kit.Tabular(kit.Text(format.Bytes(g.Before)+" → "+format.Bytes(g.After), kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
 			}},
-			action,
+			// The action column has one width, so the figures beside it line up from row to row.
+			core.View{Style: core.Style{Width: core.Pt(growthActionWidth), FlexShrink: 0, Direction: core.Row, JustifyContent: core.JustifyEnd},
+				Children: []core.Node{action}},
 			kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + name, TestID: id + "-reveal", OnPress: func() { a.reveal(g.Path) }},
 		}}
 }
