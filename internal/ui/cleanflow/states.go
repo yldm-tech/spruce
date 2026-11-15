@@ -21,78 +21,13 @@ func fractionOf(p cleanup.Progress) (float64, bool) {
 	return float64(p.Done) / float64(p.Total), true
 }
 
-// stateStyle is ScanIdle's and ScanProgress's: a column centered in what is left of the page.
+// stateStyle is ScanProgress's: a column centered in what is left of the page.
 var stateStyle = core.Style{FlexGrow: 1, FlexShrink: 0, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 12,
 	Padding: core.Symmetric(24, 0), TextAlign: core.TextAlignCenter}
-
-// subText is the line under a state's title (.scan-state-sub).
-func subText(s string) core.Node {
-	return core.Text{Content: s, Style: core.Style{MaxWidth: core.Pt(440), FontFamily: kit.FontSans, FontSize: kit.FontSubheading,
-		LineHeightMultiple: 1.5, Color: kit.ColorTextOverlaySub, TextAlign: core.TextAlignCenter}}
-}
 
 // pathStyle is the one line of a path being read or removed (.scan-state-path).
 var pathStyle = core.Style{MaxWidth: core.Pt(520), FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextMuted,
 	FontVariant: core.FontTabularNums, WhiteSpace: core.WhiteSpaceNoWrap}
-
-// ScanIdle is a cleaner page before a scan: the page's tile, what the scan looks at and the round 扫描 button, centred in the page. Details sit under the description (the last clean); Error is why the last scan failed, in the warning colour.
-type ScanIdle struct {
-	Tone        kit.Tone
-	Glyph       string
-	Title       string
-	Description string
-	// ActionLabel is the button's text, 扫描 when "".
-	ActionLabel string
-	OnStart     func()
-	Disabled    func() bool
-	Error       func() string
-	Details     core.Node
-	// Ref names the button, for the focus.
-	Ref    *core.Ref
-	TestID string
-}
-
-// Render implements core.Node.
-func (s ScanIdle) Render(*core.Scope) core.Node {
-	label := s.ActionLabel
-	if label == "" {
-		label = "扫描"
-	}
-	children := []core.Node{
-		core.View{Style: core.Style{Margin: core.Edges{Bottom: 6}},
-			Children: []core.Node{kit.IconTile{Tone: s.Tone, Size: 72, GlyphSize: 34, Glyph: s.Glyph, Glow: true, Radius: 22}}},
-		kit.Text(s.Title, kit.FontTitle, kit.Bold, kit.ColorText),
-		subText(s.Description),
-	}
-	if s.Details != nil {
-		children = append(children, s.Details)
-	}
-	children = append(children,
-		// Only there while there is an error, so the gaps around it stay the design's.
-		core.Show{When: func() bool { return s.Error != nil && s.Error() != "" }, Then: func(*core.Scope) core.Node {
-			return core.Text{ContentFunc: s.Error, LiveRegion: core.LiveRegionPolite, Role: core.RoleAlert, TestID: "scan-error",
-				Style: core.Style{MaxWidth: core.Pt(440), FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
-					Color: kit.ColorWarning, TextAlign: core.TextAlignCenter}}
-		}},
-		core.View{Style: core.Style{Margin: core.Edges{Top: 22}},
-			Children: []core.Node{kit.RunButton{Text: label, OnPress: s.OnStart, Disabled: s.Disabled, Ref: s.Ref, TestID: "scan"}}},
-	)
-	return core.View{Role: core.RoleRegion, Label: s.Title, TestID: s.TestID, Style: stateStyle, Children: children}
-}
-
-// IdleDetails is the quiet text under ScanIdle's description (.cleaner-idle-details), one line per entry; nothing, not even a gap, without lines.
-func IdleDetails(lines func() []string) core.Node {
-	return core.Show{When: func() bool { return len(lines()) > 0 }, Then: func(*core.Scope) core.Node { return idleDetails(lines) }}
-}
-
-func idleDetails(lines func() []string) core.Node {
-	return core.View{Style: core.Style{MaxWidth: core.Pt(520), AlignItems: core.AlignCenter, Gap: 4}, Children: []core.Node{
-		core.Each(lines, func(s string) string { return s }, func(_ *core.Scope, line func() string, _ func() int) core.Node {
-			return core.Text{ContentFunc: line, MaxLines: 1, EllipsizeMode: core.EllipsizeTail, Style: core.Style{FontFamily: kit.FontSans,
-				FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, FontVariant: core.FontTabularNums}}
-		}),
-	}}
-}
 
 // ScanProgress is a cleaner page while it scans, in place of its content: the ring (filling once the scanner knows how many steps there are, with the percent inside), the space found so far, the folder being read and 停止.
 type ScanProgress struct {
@@ -167,28 +102,6 @@ func (o CleaningOverlay) Render(*core.Scope) core.Node {
 			}
 			return lines
 		}}
-}
-
-// CleanDoneDialog is the done card of a clean: the space given back, one line per category, the items left in place and what the Trash means (CleanSummary). InUse, when above 0, adds the line about the items another program held open (SetInUseAside took them out of Outcome).
-type CleanDoneDialog struct {
-	Open    func() bool
-	Outcome CleanOutcome
-	InUse   int
-	OnClose func()
-	TestID  string
-}
-
-// Render implements core.Node.
-func (d CleanDoneDialog) Render(*core.Scope) core.Node {
-	s := CleanSummary(d.Outcome)
-	var children []core.Node
-	if d.InUse > 0 {
-		children = append(children, core.Text{Content: strconv.Itoa(d.InUse) + " 项里有文件正被其他程序使用，已跳过这些文件，下次可以再试", TestID: "done-in-use",
-			Style: core.Style{MaxWidth: core.Pt(380), FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
-				Color: kit.ColorTextNavFooter, TextAlign: core.TextAlignCenter}})
-	}
-	return kit.DoneDialog{Open: d.Open, Title: s.Title, Big: s.Big, Lines: s.Lines, Succeeded: s.Succeeded, Children: children,
-		OnClose: d.OnClose, TestID: d.TestID}
 }
 
 // CleanPlanDialog is the question asked before a clean (CleanConfirmation), listing what the tools' own commands clean, what is deleted for good and what goes to the Trash, category by category. It is the danger kind, focusing 取消 first, when anything is deleted for good. The caller sets Open, OnConfirm and OnCancel.
