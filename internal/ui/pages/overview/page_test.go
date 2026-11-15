@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	wait = 5 * time.Second
+	// wait is real time; the page is the largest one and its ticking waits run many frames, which under -race on a loaded machine took longer than 5 s.
+	wait = 20 * time.Second
 	mb   = 1_000_000
 	gb   = 1000 * mb
 	home = "/Users/me"
