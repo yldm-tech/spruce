@@ -1,4 +1,4 @@
-// Package space is the 空间透视 page: pick a disk or a folder, watch the scan, then browse where the space went (a treemap and a list of the open folder, and the largest files) and move what is not needed to the Trash. The service keeps the last scan, so coming back to the page shows it again at once; leaving the page stops a running scan.
+// Package space is the 空间透视 page: pick a disk or a folder, watch the scan, then browse where the space went (a treemap and a list of the open folder, and the largest files) and move what is not needed to the Trash. Its controller lives with the app (Provide): a scan goes on while another page shows, and coming back shows the page as it was left, the running scan or the results at the folder and tab left open.
 package space
 
 import (
@@ -19,7 +19,10 @@ import (
 // Page is the 空间透视 page. A link that asked it for a folder (空间变化's 在空间透视中查看, Navigator.GoSpace) starts scanning that folder as it opens; an undo of one of its moves scans its location again.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
-	s := NewState(cx, deps.Space)
+	s := stateKey.Use(cx)
+	if s == nil {
+		s = NewState(cx, deps.Space)
+	}
 	phase := core.NewMemo(cx, s.Phase)
 	if n := nav.Use(cx); n != nil {
 		if path := n.TakeSpacePath(); path != "" {

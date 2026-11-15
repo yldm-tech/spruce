@@ -76,11 +76,15 @@ type Moves struct {
 	Toast func(store.Toast)
 }
 
-// NewResults makes the controller of the scan sum in cx and opens its root.
+// NewResults makes the controller of the scan sum in cx and opens where the page left its results, its root the first time.
 func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, moves Moves) *Results {
+	folder, tab := sum.Root.ID, TabMap
+	if p := page.place; p.scanID == sum.ScanID {
+		folder, tab = p.folder, p.tab
+	}
 	r := &Results{cx: cx, ctx: cx.Context(), page: page, svc: page.svc, files: files, moves: moves, scanID: sum.ScanID,
-		Folder:     core.NewSignal(cx, sum.Root.ID),
-		Tab:        core.NewSignal(cx, TabMap),
+		Folder:     core.NewSignal(cx, folder),
+		Tab:        core.NewSignal(cx, tab),
 		Listing:    core.NewSignalFunc[*app.SpaceListing](cx, nil, nil),
 		ListingErr: core.NewSignal(cx, ""),
 		Fetching:   core.NewSignal(cx, false),
@@ -92,6 +96,10 @@ func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, 
 		RevealErr:  core.NewSignal(cx, ""),
 	}
 	r.loadListing()
+	if tab == TabLarge {
+		r.loadLarge()
+	}
+	cx.Effect(func() { page.place = place{scanID: sum.ScanID, folder: r.Folder.Get(), tab: r.Tab.Get()} })
 	return r
 }
 
