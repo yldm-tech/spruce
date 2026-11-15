@@ -1,6 +1,6 @@
 // Command spruce is the Spruce desktop app: a disk cleaner and system maintenance tool for macOS and Windows.
 //
-// main does three things, in this order: it serves the elevated child when started with elevate.Flag (before any NSGo code runs), it takes the single-instance lock in the data folder, and it wires the engine into the UI (wire) and runs it with nsgo.Run.
+// main does four things, in this order: it serves the elevated child when started with elevate.Flag (before any NSGo code runs), it runs the command line when the first argument is one of its commands (cli.IsCommand; without the single-instance lock or any UI), it takes the single-instance lock in the data folder, and it wires the engine into the UI (wire) and runs it with nsgo.Run.
 package main
 
 import (
@@ -13,14 +13,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nsgo-dev/nsgo"
 	"github.com/nsgo-dev/nsgo/core"
 
+	"github.com/yldm-tech/spruce/internal/app"
+	"github.com/yldm-tech/spruce/internal/cli"
+	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/elevate"
 	"github.com/yldm-tech/spruce/internal/engine/execx"
+	"github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/maintenance"
+	"github.com/yldm-tech/spruce/internal/engine/settings"
+	"github.com/yldm-tech/spruce/internal/engine/trash"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 	"github.com/yldm-tech/spruce/internal/host/datadir"
 	"github.com/yldm-tech/spruce/internal/host/instance"
 	"github.com/yldm-tech/spruce/internal/host/loginitem"
@@ -58,6 +66,14 @@ func main() {
 		code := elevate.ServeChild(ctx, os.Args[1:], adminIDs, maintenance.ElevatedHandler(tasks, maintenance.Env{Runner: runner, Log: logger}))
 		stop()
 		os.Exit(code)
+	}
+
+	// The command line: the same executable with a command as its first argument. It never takes the single-instance lock nor talks to a running app; it shares only the clean lock with it.
+	if cli.IsCommand(os.Args[1:]) {
+		// Spruce.exe is a GUI program; the shell's console has to be attached before anything is written.
+		cli.AttachConsole()
+		cliLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		os.Exit(runCLI(os.Args[1:], cliLog, runner))
 	}
 
 	exe, err := os.Executable()
@@ -148,4 +164,75 @@ func tracked(wg *sync.WaitGroup, work []func(ctx context.Context)) []func(ctx co
 		}
 	}
 	return out
+}
+
+// interruptContext is cancelled by the first Ctrl+C or SIGTERM, so a scan stops and a clean finishes its current item and records what it did. The signals then get their default behaviour back: a second one ends a command that does not stop (a scan stuck on a stalled network volume, a tool that ignores cancellation) instead of being swallowed.
+func interruptContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ctx, stop
+}
+
+// runCLI runs a command of the command line over the app's engine (wireEngine) and returns its exit code. Ctrl+C and SIGTERM cancel it: a scan stops, a clean stops after its current item and still records what it did. Logs go to stderr, warnings and errors only.
+func runCLI(args []string, log *slog.Logger, runner execx.Runner) int {
+	slog.SetDefault(log)
+	ctx, stop := interruptContext()
+	defer stop()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Error("home folder", "err", err)
+		return cli.ExitFailed
+	}
+	d := cli.Deps{Version: appVersion(), Home: home, GOOS: runtime.GOOS, CanRestore: trash.CanRestore()}
+	d.Engine = func(sources []string) (cli.Engine, error) {
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, err
+		}
+		if exe, err = filepath.EvalSymlinks(exe); err != nil {
+			return nil, err
+		}
+		dataDir, err := datadir.Dir()
+		if err != nil {
+			return nil, err
+		}
+		eng, err := wireEngine(env{home: home, dataDir: dataDir, exe: exe, runner: runner, log: log, sources: sources})
+		if err != nil {
+			return nil, err
+		}
+		return cliEngine{eng}, nil
+	}
+	return cli.Main(ctx, args, d, os.Stdout, os.Stderr)
+}
+
+// cliEngine is the command line's view of the engine: 概览's foreground merged scan, cleaned as the command line through app.Cleanup.
+type cliEngine struct{ e engine }
+
+func (c cliEngine) Scan(ctx context.Context, progress func(cleanup.Progress)) (cleanup.ScanResult, error) {
+	return c.e.cleanups.Scan(ctx, app.CleanerSmartScan, progress)
+}
+
+func (c cliEngine) InstalledApps(ctx context.Context) ([]string, error) {
+	return c.e.installedApps(ctx)
+}
+
+func (c cliEngine) Settings() settings.AppSettings { return c.e.settings.Get() }
+
+func (c cliEngine) Clean(ctx context.Context, req cleanup.CleanRequest, opts app.CleanOptions, progress func(cleanup.Progress)) (app.CleanRun, error) {
+	return c.e.cleanups.CleanWith(ctx, app.CleanerSmartScan, req, opts, progress)
+}
+
+func (c cliEngine) History(limit int) ([]history.Run, error) { return c.e.historySvc.List(limit) }
+
+func (c cliEngine) Restorable(runs []history.Run, now time.Time) map[string]bool {
+	return c.e.historySvc.Restorable(runs, now)
+}
+
+func (c cliEngine) Entry(runID string) (undo.Entry, error) { return c.e.ledger.Load(runID) }
+
+func (c cliEngine) Restore(ctx context.Context, runID string) (app.RestoreOutcome, error) {
+	return c.e.restore.Run(ctx, runID)
 }
