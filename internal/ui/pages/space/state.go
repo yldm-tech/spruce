@@ -2,6 +2,7 @@ package space
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -54,10 +55,34 @@ type State struct {
 	// stopped is set by Stop, so a scan the user stopped goes back without an error.
 	stopped bool
 	cancel  context.CancelFunc
-	// moved are the history runs of this page's moves to the Trash; when 撤销 puts one back, the page scans its location again (Undone).
+	// undo is what of the page's moves to the Trash outlives the page, kept with the service (undoWatchFor).
+	undo *undoWatch
+}
+
+// undoWatch is what 空间透视 keeps of its moves to the Trash beyond one showing of the page: the shell makes a new page (and State) on every visit, while the scan the service keeps and the toast's 撤销 stay, so an undo can come while another page shows.
+type undoWatch struct {
+	// moved are the history runs of the page's moves whose undo has not been seen; when 撤销 or 放回原处 puts one back, the page scans its location again (Undone).
 	moved map[string]bool
-	// rescanOnReturn is set when an undo came while the start screen showed over the results: going back to them scans first.
-	rescanOnReturn bool
+	// pending is set when an undo was seen and the scan it asks for has not started: the results were not showing (the start screen over them, the page loading).
+	pending bool
+}
+
+// undoWatches are the undoWatch of each service, one in the app (*app.Space); the mutex is for tests, which run apps side by side.
+var undoWatches = struct {
+	sync.Mutex
+	m map[Service]*undoWatch
+}{m: map[Service]*undoWatch{}}
+
+// undoWatchFor returns svc's undoWatch, made at first.
+func undoWatchFor(svc Service) *undoWatch {
+	undoWatches.Lock()
+	defer undoWatches.Unlock()
+	w := undoWatches.m[svc]
+	if w == nil {
+		w = &undoWatch{moved: map[string]bool{}}
+		undoWatches.m[svc] = w
+	}
+	return w
 }
 
 // NewState makes the controller in cx, the page's scope, and asks the service for the scan it keeps.
@@ -70,7 +95,7 @@ func NewState(cx *core.Scope, svc Service) *State {
 		Progress: core.NewSignalFunc[*app.SpaceProgress](cx, nil, nil),
 		Err:      core.NewSignal(cx, ""),
 		Choosing: core.NewSignal(cx, false),
-		moved:    map[string]bool{},
+		undo:     undoWatchFor(svc),
 	}
 	async.Do(cx, s.ctx, func(context.Context) (*app.SpaceSummary, error) { return svc.Current(), nil },
 		func(sum *app.SpaceSummary, _ error) {
@@ -79,6 +104,7 @@ func NewState(cx *core.Scope, svc Service) *State {
 				s.Current.Set(sum)
 			}
 			s.Loaded.Set(true)
+			s.rescanIfUndone()
 		})
 	return s
 }
@@ -117,7 +143,8 @@ func (s *State) Scan(req ScanRequest) {
 		if err == nil {
 			s.Current.Set(&sum)
 			s.Picking.Set(false)
-			s.rescanOnReturn = false
+			// The scan read the disk after the undo it may have waited for.
+			s.undo.pending = false
 		} else if !s.stopped {
 			s.Err.Set(err.Error())
 		}
@@ -174,10 +201,7 @@ func (s *State) ChangeLocation() { s.Picking.Set(true) }
 func (s *State) Return() {
 	s.Err.Set("")
 	s.Picking.Set(false)
-	if s.rescanOnReturn {
-		s.rescanOnReturn = false
-		s.Rescan()
-	}
+	s.rescanIfUndone()
 }
 
 // ScanPath scans the folder path, named after it (空间变化's 在空间透视中查看).
@@ -192,19 +216,27 @@ func (s *State) ScanPath(path string) {
 // Moved remembers runID, the history run of a move to the Trash this page made, so its undo scans again.
 func (s *State) Moved(runID string) {
 	if runID != "" {
-		s.moved[runID] = true
+		s.undo.moved[runID] = true
 	}
 }
 
-// Undone is told about every undo that put something back: when it was one of this page's moves, the last scan's sizes are out of date, so the page scans its location again (once the start screen it shows over them is left, if it does).
-func (s *State) Undone(runID string) {
-	if !s.moved[runID] || s.Current.GetUntracked() == nil || s.Scanning.GetUntracked() != nil {
+// Undone looks for moves of the page that undid (store.Overview.Undid) reports put back, also while another page showed: then the last scan's sizes are out of date, so the page scans its location again, at once when its results show, else once they do. The page calls it as it opens and after every undo.
+func (s *State) Undone(undid func(runID string) bool) {
+	for id := range s.undo.moved {
+		if undid(id) {
+			delete(s.undo.moved, id)
+			s.undo.pending = true
+		}
+	}
+	s.rescanIfUndone()
+}
+
+// rescanIfUndone scans the last scan's location again when an undo asked for it and its results show; a scan running already reads the disk as it is.
+func (s *State) rescanIfUndone() {
+	if !s.undo.pending || !s.Loaded.GetUntracked() || s.Current.GetUntracked() == nil || s.Picking.GetUntracked() || s.Scanning.GetUntracked() != nil {
 		return
 	}
-	if s.Picking.GetUntracked() {
-		s.rescanOnReturn = true
-		return
-	}
+	s.undo.pending = false
 	s.Rescan()
 }
 

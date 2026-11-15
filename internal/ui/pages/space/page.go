@@ -27,14 +27,10 @@ func Page(cx *core.Scope) core.Node {
 		}
 	}
 	if stores := store.Use(cx); stores != nil {
-		seen := core.Untracked(cx, stores.Overview.LastUndo).Seq
+		// As the page opens and after every undo: an undo of one of its moves may have come while another page showed.
 		cx.Effect(func() {
-			u := stores.Overview.LastUndo()
-			if u.Seq == seen {
-				return
-			}
-			seen = u.Seq
-			cx.Untrack(func() { s.Undone(u.RunID) })
+			stores.Overview.LastUndo()
+			cx.Untrack(func() { s.Undone(stores.Overview.Undid) })
 		})
 	}
 

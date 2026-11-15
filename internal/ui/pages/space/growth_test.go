@@ -95,6 +95,56 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	p.WaitFor("text:正在分析「个人文件夹」…", wait)
 }
 
+// TestUndoWhileAwayScansOnReturn: the toast's 撤销 outlives the page, so a move undone while another page shows scans its location again when 空间透视 opens again, and only once.
+func TestUndoWhileAwayScansOnReturn(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	trashed(svc)
+	kept := *svc.Current()
+	svc.OnScan = func(context.Context, string, func(app.SpaceProgress)) (app.SpaceSummary, error) { return kept, nil }
+	p := start(t, svc, undoable(t))
+	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.waitToast()
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:space-page", wait)
+	p.undo("run-1")
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.LastUndo().Seq == 1 })
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
+	if got := svc.Scans(); got[0] != spacefake.Home {
+		t.Errorf("scans %v", got)
+	}
+	p.WaitFor(homeList, wait)
+
+	// Opening the page again after that scan does not scan once more.
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:space-page", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor(homeList, wait)
+	if got := svc.Scans(); len(got) != 1 {
+		t.Errorf("scanned again: %v", got)
+	}
+}
+
+// TestUndoAfterLeavingAndComingBack: a move made on an earlier showing of the page is still the page's when 撤销 comes after it opened again.
+func TestUndoAfterLeavingAndComingBack(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	trashed(svc)
+	p := start(t, svc, undoable(t))
+	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.waitToast()
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:space-page", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitFor(homeList, wait)
+	if len(svc.Scans()) != 0 {
+		t.Fatalf("scanned without an undo: %v", svc.Scans())
+	}
+	p.undo("run-1")
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
+}
+
 func TestOneClickMoveSaysWhatCouldNotBeUndone(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	trashed(svc)

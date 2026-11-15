@@ -139,6 +139,9 @@ func TestOverviewFollowsTheControllerAndCleans(t *testing.T) {
 	if u := st.Overview.LastUndo(); u != (Undone{RunID: "r1", Seq: 1}) {
 		t.Errorf("last undo %+v", u)
 	}
+	if !st.Overview.Undid("r1") || st.Overview.Undid("r2") {
+		t.Error("Undid does not follow the undos")
+	}
 	restored = 0
 	st.Overview.Undo(h.root, "r1", func(r app.RestoreOutcome, _ error) { restored = r.Restored })
 	h.until(t, func() bool { return restored == 2 && st.Overview.LastUndo().Seq == 2 })
