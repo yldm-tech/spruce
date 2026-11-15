@@ -217,7 +217,7 @@ func TestCountText(t *testing.T) {
 func TestNewKindsMetaTitlesAndOrder(t *testing.T) {
 	for kind, want := range map[enginehist.Kind]nav.Meta{
 		enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
-		enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+		enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "undo"},
 	} {
 		if got := KindMeta(kind); got.Title != want.Title || got.Tone != want.Tone || got.Glyph != want.Glyph {
 			t.Errorf("KindMeta(%s) = %+v", kind, got)

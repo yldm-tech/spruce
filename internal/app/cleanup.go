@@ -391,7 +391,7 @@ func (c *Cleanup) userError(ctx context.Context, cleaner CleanerID, op string, e
 	case errors.Is(err, cleanup.ErrBusy):
 		return &appError{msg: "已有清理正在进行，请等它结束后再试", err: cleanup.ErrBusy}
 	case errors.Is(err, cleanup.ErrNoScan), errors.Is(err, cleanup.ErrStale):
-		return errors.New("扫描结果已过期，请重新扫描")
+		return errors.New("检查结果可能已经变化，请重新检查后再清理")
 	case errors.Is(err, cleanup.ErrNothingSelected):
 		return errors.New("没有选择任何项目")
 	case op == "scan":

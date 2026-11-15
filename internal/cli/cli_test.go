@@ -630,7 +630,7 @@ func TestCleanOutcomes(t *testing.T) {
 	})
 	t.Run("refused", func(t *testing.T) {
 		h := newHarness()
-		h.eng.cleanErr = errors.New("扫描结果已过期，请重新扫描")
+		h.eng.cleanErr = errors.New("检查结果可能已经变化，请重新检查后再清理")
 		if code, _, _ := h.run(t, "clean", "--yes"); code != ExitFailed {
 			t.Fatalf("code %d", code)
 		}

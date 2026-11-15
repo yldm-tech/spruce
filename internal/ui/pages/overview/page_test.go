@@ -246,7 +246,7 @@ func TestReady(t *testing.T) {
 	p.waitText("id:rec-app-caches-reason", "2 个应用的缓存，最大的是 com.spotify.client")
 	p.waitText("id:rec-app-caches-size", "2 GB")
 	p.waitText("id:rec-app-caches-consequence", "直接删除，应用下次打开时会重新生成，第一次可能稍慢")
-	p.WaitFor("id:rec-app-caches-badge >> text:会自动重新生成", wait)
+	p.WaitFor("id:rec-app-caches-badge >> text:无法撤销", wait)
 	p.waitText("id:rec-app-caches-act", "删除…")
 	p.WaitFor("id:rec-tool-npm-badge >> text:运行命令", wait)
 	p.waitText("id:rec-tool-npm-act", "运行清理…")
@@ -955,13 +955,13 @@ func TestTrashUnreadable(t *testing.T) {
 	for i := range res.Categories {
 		if res.Categories[i].ID == "system-junk:trash" {
 			res.Categories[i].Items, res.Categories[i].Size = nil, 0
-			res.Categories[i].Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新扫描"
+			res.Categories[i].Warning = "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新检查"
 		}
 	}
 	st := ready()
 	st.Result = result(res)
 	p := open(t, st)
-	p.waitText("id:trash-text", "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新扫描")
+	p.waitText("id:trash-text", "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新检查")
 	if p.Exists("id:empty-trash") {
 		t.Error("清空废纸篓 without a readable Trash")
 	}

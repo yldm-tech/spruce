@@ -121,8 +121,8 @@ func TestShowsTheCheck(t *testing.T) {
 	if got := p.stat("已选择"); got != "3 项" {
 		t.Errorf("已选择 %q", got)
 	}
-	if got := p.stat("可释放"); got != "510 MB" {
-		t.Errorf("可释放 %q", got)
+	if got := p.stat("已选大小"); got != "510 MB" {
+		t.Errorf("已选大小 %q", got)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestReveal(t *testing.T) {
 
 // The Trash it could not read cannot be checked or expanded, and the places it could not read are told.
 func TestUnreadableTrash(t *testing.T) {
-	noAccess := category("trash", "废纸篓", cleanup.DeletePermanent, false, nil, "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新扫描")
+	noAccess := category("trash", "废纸篓", cleanup.DeletePermanent, false, nil, "需要为 Spruce 开启「完全磁盘访问权限」才能读取废纸篓，开启后重新检查")
 	st := stateOf(categories()[0], noAccess)
 	st.Result.Scan.Sources[0].Denied = 2
 	p := start(t, st)

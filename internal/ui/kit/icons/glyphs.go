@@ -69,6 +69,8 @@ var glyphs = map[string]glyph{
 	"chevron-up": {round: true, paths: `<path d="M6 15l6-6 6 6"/>`},
 	// Collapsed row.
 	"chevron-right": {round: true, paths: `<path d="M9 6l6 6-6 6"/>`},
+	// Put back where it was (放回原处).
+	"undo": {round: true, paths: `<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/> <path d="M3 4v4h4"/>`},
 	// Show in Finder or Explorer.
 	"reveal": {round: true, paths: `<circle cx="11" cy="11" r="7"/> <path d="M20 20l-4-4"/>`},
 	// Move to the Trash.

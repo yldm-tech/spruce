@@ -313,7 +313,7 @@ func TestGrowthRowActions(t *testing.T) {
 	if p.Exists("id:growth-row-0-space") || p.Exists("id:growth-row-1-clean") {
 		t.Error("the rows offer the wrong action")
 	}
-	p.Find("id:growth-row-1-space >> text:在空间透视中查看")
+	p.Find("id:growth-row-1-space >> text:扫描")
 	p.Press(`id:growth-row-1-reveal`)
 	p.WaitUntil(wait, func() bool { return len(p.files.Reveals()) == 1 })
 	if got := p.files.Reveals()[0]; got != spacefake.Home+"/Movies" {

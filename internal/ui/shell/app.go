@@ -137,7 +137,7 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 			Overview: func() { w.show(nav.Overview) },
 			Check:    func() { stores.Overview.CheckNow(nil) },
 			Auto:     w.automation,
-			Quit: app.Quit,
+			Quit:     app.Quit,
 		}
 		if st.Result != nil {
 			s.Headline = st.Result.Headline

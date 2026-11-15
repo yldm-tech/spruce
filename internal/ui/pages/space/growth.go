@@ -20,8 +20,8 @@ import (
 // growthMax is how many locations 最近变化 lists.
 const growthMax = 20
 
-// growthActionWidth fits a row's longer action, 在空间透视中查看.
-const growthActionWidth = 132
+// growthActionWidth fits a row's longer action, 去清理 (the other is 扫描).
+const growthActionWidth = 48
 
 // growthRead is what 最近变化 read for one tab.
 type growthRead struct {
@@ -31,7 +31,7 @@ type growthRead struct {
 	loaded bool
 }
 
-// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 在空间透视中查看, and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming, and when they cannot be read it says so.
+// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 扫描 (the folder, on this page), and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming, and when they cannot be read it says so.
 func growthView(cx *core.Scope, s *State, files Files) core.Node {
 	stores := store.Use(cx)
 	navigator := nav.Use(cx)
@@ -156,7 +156,7 @@ func growthRow(i int, g growth.Growth, name string, now time.Time, a growthActio
 			if card != "" {
 				return kit.Link{Text: func() string { return "去清理" }, TestID: id + "-clean", OnPress: func() { a.goCard(card) }}
 			}
-			return kit.Link{Text: func() string { return "在空间透视中查看" }, TestID: id + "-space", OnPress: func() { a.scan(g.Path) }}
+			return kit.Link{Text: func() string { return "扫描" }, TestID: id + "-space", OnPress: func() { a.scan(g.Path) }}
 		})
 	})
 	return core.View{TestID: id, Tooltip: kit.Tooltip(g.Path),

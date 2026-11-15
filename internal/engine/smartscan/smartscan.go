@@ -28,7 +28,7 @@ const idSep = ":"
 const permille = 1000
 
 // scanFailed is what the page is told about a source whose scan failed for a reason that is not a cleanup.UserError.
-const scanFailed = "这部分没能扫描完成，详情已记录到日志"
+const scanFailed = "这部分没能检查完成，详情已记录到日志"
 
 // source is a Source with its own scanner.
 type source struct {
@@ -258,7 +258,7 @@ func (s *Scanner) sentence(ctx context.Context, id string, err error) string {
 		return ue.Message
 	}
 	if errors.Is(err, cleanup.ErrBusy) {
-		return "这部分正在扫描或清理，请稍后再试"
+		return "这部分正在检查或清理，请稍后再试"
 	}
 	return scanFailed
 }
@@ -384,7 +384,7 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 			outs := untouched(src.id, p)
 			for i := range outs {
 				outs[i].Failed = p.counts[i]
-				res.Failed = append(res.Failed, cleanup.Failure{CategoryID: p.cats[i], Reason: fmt.Sprintf("「%s」没有清理：扫描结果已过期，请重新扫描", p.titles[i]), Detail: err.Error()})
+				res.Failed = append(res.Failed, cleanup.Failure{CategoryID: p.cats[i], Reason: fmt.Sprintf("「%s」没有清理：检查结果可能已经变化，请重新检查后再清理", p.titles[i]), Detail: err.Error()})
 			}
 			res.Categories = append(res.Categories, outs...)
 			done += p.items

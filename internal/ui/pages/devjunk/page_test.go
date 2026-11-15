@@ -372,7 +372,7 @@ func TestFailedSource(t *testing.T) {
 // Without projects: no project folder set leads to 设置; folders set but nothing found says so; no tool caches is the empty state.
 func TestNoProjectsAndNoTools(t *testing.T) {
 	p := start(t, stateOf(tools()...), nil, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
-	p.Find("id:projects-roots >> text:还没有设置项目文件夹，这次只扫描开发工具的缓存。")
+	p.Find("id:projects-roots >> text:还没有设置项目文件夹，只检查了开发工具的缓存。")
 	p.Press("role:link 去设置")
 	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.Settings })
 

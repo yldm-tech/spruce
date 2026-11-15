@@ -149,7 +149,7 @@ func TestActions(t *testing.T) {
 	}
 	for a, w := range map[advice.Action]want{
 		advice.ActionTrash:   {"移到废纸篓", "移到废纸篓 · 3.1 GB", "正在移到废纸篓…", Badge{Text: "可撤销", Glyph: "check"}, false, true},
-		advice.ActionDelete:  {"删除…", "删除… · 3.1 GB", "正在删除…", Badge{Text: "会自动重新生成", Glyph: "info"}, true, true},
+		advice.ActionDelete:  {"删除…", "删除… · 3.1 GB", "正在删除…", Badge{Text: "无法撤销", Glyph: "alert"}, true, true},
 		advice.ActionCommand: {"运行清理…", "运行清理… · 3.1 GB", "正在运行…", Badge{Text: "运行命令", Glyph: "alert", Warning: true}, true, true},
 		advice.ActionMixed:   {"清理…", "清理… · 3.1 GB", "正在清理…", Badge{Text: "部分无法撤销", Glyph: "alert"}, true, true},
 	} {

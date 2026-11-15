@@ -45,7 +45,7 @@ var kindRoutes = map[enginehist.Kind]nav.Route{
 // kindMetas are the kinds that belong to no page of their own: the automatic rules and 放回原处.
 var kindMetas = map[enginehist.Kind]nav.Meta{
 	enginehist.KindAuto:    {Title: "自动清理", Tone: tone.Green, Glyph: "check"},
-	enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "reveal"},
+	enginehist.KindRestore: {Title: "放回原处", Tone: tone.Slate, Glyph: "undo"},
 }
 
 // KindMeta is the page a run's kind belongs to (its title, tile tone and glyph); 概览's cleans are titled 清理建议, as the page itself is 概览. A kind this build does not know, written by a newer version, shows as the history page's own, titled 其他操作.

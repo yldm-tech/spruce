@@ -355,12 +355,22 @@ func projectOf(it cleanup.Item) string {
 func buildSmall(c *card, in Inputs) {
 	c.rec.Title = "其他小项"
 	c.rec.Reason = fmt.Sprintf("%d 类缓存和日志，每类都不到 100 MB", len(c.cats))
-	switch c.rec.Action {
-	case ActionTrash:
+	// Caches come back on demand; logs and crash reports do not.
+	isLog := func(cat *cleanup.Category) bool { return cat.Kind == cleanup.KindLog }
+	logs := slices.ContainsFunc(c.cats, isLog)
+	onlyLogs := logs && !slices.ContainsFunc(c.cats, func(cat *cleanup.Category) bool { return !isLog(cat) })
+	switch {
+	case c.rec.Action == ActionTrash:
 		c.rec.Consequence = trashSentence(in)
-	case ActionDelete:
+	case c.rec.Action == ActionDelete && onlyLogs:
+		c.rec.Consequence = "直接删除，只在排查问题时用得到"
+	case c.rec.Action == ActionDelete && logs:
+		c.rec.Consequence = "直接删除，缓存会在需要时重新生成，日志不会"
+	case c.rec.Action == ActionDelete:
 		c.rec.Consequence = "直接删除，都会在需要时重新生成"
+	case logs:
+		c.rec.Consequence = "缓存和日志直接删除，缓存会在需要时重新生成；其余移到" + binName(in)
 	default:
-		c.rec.Consequence = "缓存和日志直接删除，都会在需要时重新生成；其余移到" + binName(in)
+		c.rec.Consequence = "缓存直接删除，会在需要时重新生成；其余移到" + binName(in)
 	}
 }

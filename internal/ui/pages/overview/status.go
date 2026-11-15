@@ -143,7 +143,7 @@ func fullDiskAccessCard(cx *core.Scope, st *store.Stores) core.Node {
 		},
 		Note: func() string {
 			if granted() {
-				return "废纸篓、Safari 缓存和受保护的文件夹都能扫描"
+				return "废纸篓、Safari 缓存和受保护的文件夹都能读取"
 			}
 			return FullDiskAccessNote()
 		},

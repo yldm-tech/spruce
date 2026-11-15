@@ -307,8 +307,25 @@ func TestDeriveSmallAndOrder(t *testing.T) {
 	}
 	res.Categories = append(res.Categories, cat("system-junk:logs", cleanup.DeletePermanent, it("/u/Library/Logs/x", 5*mb, true)))
 	recs = Derive(res, Inputs{Now: now})
-	if s := recs[len(recs)-1]; s.Action != ActionMixed || s.Consequence != "缓存和日志直接删除，都会在需要时重新生成；其余移到废纸篓" {
+	if s := recs[len(recs)-1]; s.Action != ActionMixed || s.Consequence != "缓存直接删除，会在需要时重新生成；其余移到废纸篓" {
 		t.Errorf("mixed small %+v", s)
+	}
+	// Logs and crash reports do not come back, so the card does not say they do.
+	res.Categories[len(res.Categories)-1].Kind = cleanup.KindLog
+	recs = Derive(res, Inputs{Now: now})
+	if s := recs[len(recs)-1]; s.Action != ActionMixed || s.Consequence != "缓存和日志直接删除，缓存会在需要时重新生成；其余移到废纸篓" {
+		t.Errorf("mixed small with logs %+v", s)
+	}
+	res.Categories = slices.DeleteFunc(res.Categories, func(c cleanup.Category) bool { return c.ID == "system-junk:incomplete-downloads" })
+	res.Categories = append(res.Categories, cat("dev-junk:tool-yarn", cleanup.DeletePermanent, it("/u/Library/Caches/Yarn", 5*mb, true)))
+	recs = Derive(res, Inputs{Now: now})
+	if s := recs[len(recs)-1]; s.Action != ActionDelete || s.Consequence != "直接删除，缓存会在需要时重新生成，日志不会" {
+		t.Errorf("small with logs %+v", s)
+	}
+	res.Categories = res.Categories[:len(res.Categories)-1]
+	recs = Derive(res, Inputs{Now: now})
+	if s := recs[len(recs)-1]; s.Action != ActionDelete || s.Consequence != "直接删除，只在排查问题时用得到" {
+		t.Errorf("small of logs only %+v", s)
 	}
 	// Nothing recommended: no cards, not nil.
 	if recs := Derive(cleanup.NewResult(nil, now), Inputs{Now: now}); recs == nil || len(recs) != 0 {
