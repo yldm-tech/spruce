@@ -291,9 +291,10 @@ func (o *Overview) step(ctx context.Context) {
 	}
 	s := o.cfg.Settings.Get()
 	o.readDisk(ctx, s)
+	// A foreground check asked for waits while a clean runs (one thing at a time: it would scan the instance the clean works on); the poke after the clean ends starts it.
+	busy := o.cfg.Activity != nil && o.cfg.Activity.Cleaning()
 	o.mu.Lock()
-	fg := o.wantForeground
-	o.wantForeground = false
+	fg := o.wantForeground && !busy && !o.cleaning && !o.autoCleaning
 	o.mu.Unlock()
 	if fg {
 		o.foreground(ctx)
@@ -348,12 +349,16 @@ func (o *Overview) StopCheck() {
 	}
 }
 
-// foreground runs the foreground check, then lets later background checks into the prompting folders it entered.
+// foreground runs the foreground check asked for, unless StopCheck took the request back, then lets later background checks into the prompting folders it entered. The request is kept until the check holds fg, so a clean is refused all the while (actionableLocked).
 func (o *Overview) foreground(ctx context.Context) {
 	run, cancel := context.WithCancel(ctx)
 	defer cancel()
 	o.mu.Lock()
-	o.fg = cancel
+	if !o.wantForeground {
+		o.mu.Unlock()
+		return
+	}
+	o.wantForeground, o.fg = false, cancel
 	o.mu.Unlock()
 	defer func() {
 		o.mu.Lock()
@@ -794,7 +799,7 @@ func (o *Overview) Clean(ctx context.Context, req cleanup.CleanRequest, origin C
 	}
 	cleaner := o.from
 	o.cleaning = true
-	opts := o.cleanOptions(*r, req, origin)
+	opts := o.cleanOptions(*r, origin)
 	o.mu.Unlock()
 	o.publish()
 	run, err := o.cfg.Cleanup.CleanWith(ctx, cleaner, req, opts, progress)
@@ -822,8 +827,8 @@ func (o *Overview) Clean(ctx context.Context, req cleanup.CleanRequest, origin C
 	return out, nil
 }
 
-// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：{n} 项（{size}）」 first, the items it names; a drill-down view's with its source's kind.
-func (o *Overview) cleanOptions(r OverviewResult, req cleanup.CleanRequest, origin CleanOrigin) CleanOptions {
+// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：已清理 {n} 项，释放 {size}」 first, counted from what the clean did; a drill-down view's with its source's kind.
+func (o *Overview) cleanOptions(r OverviewResult, origin CleanOrigin) CleanOptions {
 	if origin.Source != "" {
 		if kind, ok := cleanerKinds[CleanerID(origin.Source)]; ok && origin.Recommendation == "" {
 			return CleanOptions{Kind: kind}
@@ -835,33 +840,14 @@ func (o *Overview) cleanOptions(r OverviewResult, req cleanup.CleanRequest, orig
 	opts := CleanOptions{Kind: history.KindSmartScan}
 	for _, rec := range r.Recommendations {
 		if rec.ID == origin.Recommendation {
-			n, bytes := requested(r.Scan, req)
-			opts.Detail = fmt.Sprintf("%s：%d 项（%s）", rec.Title, n, format.BytesIn(bytes, o.cfg.GOOS == "windows"))
+			title, windows := rec.Title, o.cfg.GOOS == "windows"
+			opts.DetailOf = func(res cleanup.CleanResult) string {
+				return fmt.Sprintf("%s：已清理 %d 项，释放 %s", title, res.Removed, format.BytesIn(res.Freed+res.Trashed, windows))
+			}
 			break
 		}
 	}
 	return opts
-}
-
-// requested counts the items of scan req names, and their size.
-func requested(scan cleanup.ScanResult, req cleanup.CleanRequest) (int, int64) {
-	named := make(map[string]bool, len(req.ItemIDs))
-	for _, id := range req.ItemIDs {
-		named[id] = true
-	}
-	n, bytes := 0, int64(0)
-	for _, c := range scan.Categories {
-		if !slices.Contains(req.CategoryIDs, c.ID) {
-			continue
-		}
-		for _, it := range c.Items {
-			if len(named) == 0 || named[it.ID] {
-				n++
-				bytes += it.Size
-			}
-		}
-	}
-	return n, bytes
 }
 
 // dropLocked takes what a clean of cleaner handled out of the current result, when it is that instance's, as the instance itself forgets it: the items, and a command category whose command ran as a whole. The cards are derived again. o.mu is held.
@@ -896,9 +882,9 @@ func (o *Overview) pending(id CleanerID) bool {
 	return ok && p.Pending()
 }
 
-// actionableLocked is OverviewResult.Actionable: not from the cache, its instance neither scanning nor Pending, checked under the current settings and within scancache.StaleAfter. o.mu is held.
+// actionableLocked is OverviewResult.Actionable: not from the cache, its instance neither scanning nor Pending, no foreground check asked for or running (it replaces the result and may scan the instance a clean would work on), checked under the current settings and within scancache.StaleAfter. o.mu is held.
 func (o *Overview) actionableLocked(r *OverviewResult, s settings.AppSettings, now time.Time) bool {
-	if r.FromCache || o.from == "" || o.scanning == o.from || o.pending(o.from) {
+	if r.FromCache || o.from == "" || o.scanning == o.from || o.wantForeground || o.fg != nil || o.pending(o.from) {
 		return false
 	}
 	return !o.staleLocked(r, s, now)
@@ -1034,7 +1020,8 @@ func (o *Overview) stateLocked() OverviewState {
 	switch {
 	case o.cleaning || o.autoCleaning:
 		st.Phase = OverviewCleaning
-	case o.scanning != "":
+	case o.scanning != "" || o.wantForeground:
+		// A foreground check asked for shows as checking at once, before the loop starts it.
 		st.Phase = OverviewChecking
 	}
 	if o.result != nil {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -515,7 +516,8 @@ func TestOverviewCleanCancelsTheBackgroundCheck(t *testing.T) {
 		t.Errorf("after the clean: mode %q headline %d cards %d phase %q", st.Result.Mode, st.Result.Headline, len(st.Result.Recommendations), st.Phase)
 	}
 	runs := f.runs()
-	if want := "应用缓存：1 项（" + format.BytesIn(cacheSize, false) + "）"; len(runs) != 1 || runs[0].Kind != history.KindSmartScan || len(runs[0].Details) == 0 || runs[0].Details[0] != want {
+	// The card's line says what the clean did: the items removed and the space they gave back.
+	if want := "应用缓存：已清理 1 项，释放 " + format.BytesIn(out.Result.Freed+out.Result.Trashed, false); len(runs) != 1 || runs[0].Kind != history.KindSmartScan || len(runs[0].Details) == 0 || runs[0].Details[0] != want {
 		t.Errorf("history %+v, want the first line %q", runs, want)
 	}
 	// The cache holds what is left.
@@ -767,5 +769,82 @@ func TestOverviewStopCheck(t *testing.T) {
 	// A stopped check leaves its instance unable to clean until the next one.
 	if !f.o.pending(CleanerSmartScan) {
 		t.Error("the stopped instance is not pending")
+	}
+}
+
+// TestOverviewCleanWaitsForAnAskedCheck: between CheckNow and the loop starting the check, 概览 already shows it as checking and refuses a clean; a check asked for while a clean runs waits until the clean ends (one thing at a time).
+func TestOverviewCleanWaitsForAnAskedCheck(t *testing.T) {
+	f := newOvFixture(t, ovOptions{})
+	o := f.start()
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	caches := rec(t, o.State(), "app-caches")
+
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	st := o.State()
+	if st.Phase != OverviewChecking || st.Result.Actionable {
+		t.Fatalf("asked, not started: phase %q actionable %v", st.Phase, st.Result.Actionable)
+	}
+	if _, err := o.Clean(t.Context(), caches.req, CleanOrigin{Recommendation: "app-caches"}, nil); err == nil {
+		t.Fatal("a clean while a check was asked for")
+	}
+	if len(f.runs()) != 0 || f.fgCaches.count() != 1 {
+		t.Fatalf("history %+v, foreground scans %d", f.runs(), f.fgCaches.count())
+	}
+	f.step()
+	if st := o.State(); f.fgCaches.count() != 2 || st.Phase != OverviewIdle || !st.Result.Actionable {
+		t.Fatalf("after the check: scans %d phase %q", f.fgCaches.count(), st.Phase)
+	}
+
+	// Asked for while a clean runs (here another page's clean, through the same gate), the check waits for it.
+	o.mu.Lock()
+	o.askForegroundLocked()
+	o.mu.Unlock()
+	_, end, err := f.activity.BeginClean(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	if f.fgCaches.count() != 2 {
+		t.Error("a foreground check ran while a clean ran")
+	}
+	if st := o.State(); st.Phase != OverviewChecking || st.Result.Actionable {
+		t.Errorf("waiting check: phase %q actionable %v", st.Phase, st.Result.Actionable)
+	}
+	end()
+	f.step()
+	if st := o.State(); f.fgCaches.count() != 3 || st.Phase != OverviewIdle || !st.Result.Actionable {
+		t.Errorf("after the clean: scans %d phase %q", f.fgCaches.count(), st.Phase)
+	}
+
+	// Taken back by StopCheck before the loop starts it, it does not run.
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	o.StopCheck()
+	f.step()
+	if st := o.State(); f.fgCaches.count() != 3 || st.Phase != OverviewIdle || !st.Result.Actionable {
+		t.Errorf("stopped before it started: scans %d phase %q", f.fgCaches.count(), st.Phase)
+	}
+}
+
+// TestCleanWithDetailOf: the first Details line can be made from what the clean did.
+func TestCleanWithDetailOf(t *testing.T) {
+	c, store := newGatedCleanup(t, schedule.NewActivity(nil))
+	s := newExecScanner(t)
+	RegisterCleaner(c, CleanerSmartScan, s)
+	// recordingDeleter frees one byte per item; DetailOf wins over Detail.
+	opts := CleanOptions{Detail: "unused", DetailOf: func(res cleanup.CleanResult) string {
+		return fmt.Sprintf("缓存：已清理 %d 项，释放 %d", res.Removed, res.Freed+res.Trashed)
+	}}
+	if _, err := c.CleanWith(t.Context(), CleanerSmartScan, cleanup.CleanRequest{CategoryIDs: []string{"caches"}}, opts, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.appended) != 1 || store.appended[0].Details[0] != "缓存：已清理 2 项，释放 2" {
+		t.Errorf("history %+v", store.appended)
 	}
 }
