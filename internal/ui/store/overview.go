@@ -38,10 +38,19 @@ type Overview struct {
 	state *core.Signal[app.OverviewState]
 	// busy is set while a Clean or an Undo started through the store runs: one thing at a time across 概览, the drill-down views and the toast.
 	busy *core.Signal[bool]
+	// undone is the last Undo that put something back.
+	undone *core.Signal[Undone]
+}
+
+// Undone is an Undo through the store that put at least one item back: the run it undid, and how many such undos came before it plus one, so a reader tells two undos of one run apart.
+type Undone struct {
+	RunID string
+	Seq   int
 }
 
 func newOverview(cx *core.Scope, ctx context.Context, svc OverviewService) *Overview {
-	o := &Overview{cx: cx, ctx: ctx, svc: svc, state: core.NewSignalFunc(cx, app.OverviewState{Phase: app.OverviewIdle}, nil), busy: core.NewSignal(cx, false)}
+	o := &Overview{cx: cx, ctx: ctx, svc: svc, state: core.NewSignalFunc(cx, app.OverviewState{Phase: app.OverviewIdle}, nil), busy: core.NewSignal(cx, false),
+		undone: core.NewSignal(cx, Undone{})}
 	if svc == nil {
 		return o
 	}
@@ -128,12 +137,20 @@ func (o *Overview) Undo(cx *core.Scope, runID string, done func(app.RestoreOutco
 	o.busy.Set(true)
 	go func() {
 		out, err := o.svc.Undo(o.ctx, runID)
-		o.cx.Post(func() { o.busy.Set(false) })
+		o.cx.Post(func() {
+			o.busy.Set(false)
+			if err == nil && out.Restored > 0 {
+				o.undone.Set(Undone{RunID: runID, Seq: o.undone.GetUntracked().Seq + 1})
+			}
+		})
 		if done != nil {
 			cx.Post(func() { done(out, err) })
 		}
 	}()
 }
+
+// LastUndo returns the last Undo that put something back, zero before any; reading it subscribes. 空间透视 scans again when it undid one of its moves.
+func (o *Overview) LastUndo() Undone { return o.undone.Get() }
 
 // Growth lists what grew over window, with ctx the caller's; done runs in cx.
 func (o *Overview) Growth(cx *core.Scope, ctx context.Context, window time.Duration, done func([]growth.Growth, error)) {
