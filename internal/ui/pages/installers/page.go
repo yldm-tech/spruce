@@ -29,7 +29,7 @@ func Page(cx *core.Scope) core.Node {
 		EmptyDescription: "这些文件夹里没有旧的安装包或磁盘映像。",
 		// With no folder to search there is nothing to find until one is added in 设置.
 		Empty: func(cx *core.Scope) core.Node {
-			if !core.Untracked(cx, func() bool { return set.Loaded() && len(set.Value().Cleanup.InstallerRoots) == 0 }) {
+			if !set.Loaded() || len(set.Value().Cleanup.InstallerRoots) > 0 {
 				return nil
 			}
 			return kit.EmptyState{Title: "没有找到安装包", Description: NoFolders, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty",

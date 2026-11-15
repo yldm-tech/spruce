@@ -23,7 +23,7 @@ type DrillPage struct {
 	ListLabel, SizeLabel string
 	// EmptyTitle and EmptyDescription are the view when the check found nothing of the source.
 	EmptyTitle, EmptyDescription string
-	// Empty, when set and returning a node, replaces that empty state (安装包 without folders to search).
+	// Empty, when set and returning a node, replaces that empty state (安装包 without folders to search); it is called again when what it reads changes.
 	Empty func(cx *core.Scope) core.Node
 	// Reveal shows an item in Finder or Explorer: Files.Reveal.
 	Reveal func(ctx context.Context, path string) error
@@ -39,13 +39,19 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 	body := core.Show{When: has, Then: func(*core.Scope) core.Node {
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if empty.Get() {
-				return core.Func(func(cx *core.Scope) core.Node {
-					if p.Empty != nil {
-						if n := p.Empty(cx); n != nil {
-							return n
+				def := kit.EmptyState{Title: p.EmptyTitle, Description: p.EmptyDescription, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty"}
+				if p.Empty == nil {
+					return core.Func(func(*core.Scope) core.Node { return def })
+				}
+				// What Empty reads (the settings) decides again when it changes.
+				return core.Func(func(*core.Scope) core.Node {
+					return core.Dynamic(func(cx *core.Scope) core.Node {
+						n := p.Empty(cx)
+						if n == nil {
+							n = def
 						}
-					}
-					return kit.EmptyState{Title: p.EmptyTitle, Description: p.EmptyDescription, Tone: meta.Tone, Glyph: meta.Glyph, TestID: "drill-empty"}
+						return core.Func(func(*core.Scope) core.Node { return n })
+					})
 				})
 			}
 			return core.Func(func(*core.Scope) core.Node {
