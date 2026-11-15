@@ -302,7 +302,7 @@ func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
 	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
 		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
-		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, timeNow()),
+		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, cx.WallTime()),
 		reduce: cx.Env().ReduceMotion}
 	seen, _ := seenAuto.Load(p.ov)
 	at, _ := seen.(time.Time)
@@ -310,10 +310,10 @@ func Page(cx *core.Scope) core.Node {
 	if id := p.nav.TakeOverviewCard(); id != "" {
 		p.focus.Set(id)
 	}
-	// The times read again every minute.
+	// The times read again every minute, on the scope's clock (a test's manual clock and wall time).
 	var tick func()
 	tick = func() {
-		p.now.Set(timeNow())
+		p.now.Set(cx.WallTime())
 		cx.AfterFunc(time.Minute, tick)
 	}
 	cx.AfterFunc(time.Minute, tick)

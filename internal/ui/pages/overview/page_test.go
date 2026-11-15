@@ -121,7 +121,6 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 	if runtime.GOOS == "windows" {
 		t.Skip("expectations use the macOS wording and SI sizes")
 	}
-	t.Cleanup(overview.SetNow(now))
 	fakes.Overview = ov
 	p := &page{fakes: fakes, ov: ov, files: &cleanflowfake.Files{}, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
@@ -138,7 +137,7 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 			}
 			return core.Func(overview.Page)
 		})
-	}, nsgotest.Size(1052, 1400))
+	}, nsgotest.Size(1052, 1400), func(a *nsgotest.App) { a.Clock.SetWallTime(now) })
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
 	// The page has the controller's state before the test acts on it.
 	if ov != nil {
@@ -1059,4 +1058,12 @@ func TestInstallersTitle(t *testing.T) {
 	p := open(t, st)
 	p.waitText("id:rec-installers-title", "旧安装包")
 	p.waitText("id:rec-installers-reason", "2 个安装包，都下载超过 7 天了，在下载、桌面里")
+}
+
+// The times read again every minute, on the scope's clock.
+func TestTimesFollowTheClock(t *testing.T) {
+	p := open(t, ready())
+	p.waitText("id:checked-at", "上次检查：5分钟前")
+	p.Advance(time.Minute)
+	p.waitText("id:checked-at", "上次检查：6分钟前")
 }

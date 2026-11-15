@@ -37,7 +37,7 @@ func TestSmoke(t *testing.T) {
 		t.Fatal("概览's controller is not wired")
 	}
 	deps.Background = nil
-	a := nsgotest.Start(t, core.AppRoot(shell.App(deps)), nsgotest.Size(1280, 820))
+	a := nsgotest.Start(t, core.AppRoot(shell.App(deps)), nsgotest.Size(1280, 820), wallNow)
 	a.WaitFor("text:Spruce 会在后台定期检查，告诉你哪些空间可以放心释放", 10*time.Second)
 	// Opening 概览 asks the controller for a check, which waits for the loop that is not running: 概览 shows it stopped and offers 开始检查.
 	a.WaitFor("id:overview-page >> id:check-start", 10*time.Second)

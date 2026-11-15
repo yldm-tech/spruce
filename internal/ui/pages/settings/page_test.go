@@ -46,6 +46,9 @@ type options struct {
 	goos string
 }
 
+// wallClock is the date and time the page reads (core.Scope.WallTime) in these tests.
+var wallClock = time.Date(2026, 11, 14, 12, 0, 0, 0, time.Local)
+
 func start(t *testing.T, o options) *page {
 	t.Helper()
 	if o.svc == nil {
@@ -63,7 +66,7 @@ func start(t *testing.T, o options) *page {
 		settings.DepsKey.Provide(cx, settings.Deps{Files: o.files, GOOS: cmp.Or(o.goos, "darwin")})
 		p.shown = core.NewSignal(cx, true)
 		return core.Show{When: p.shown.Get, Then: func(*core.Scope) core.Node { return core.Func(settings.Page) }}
-	}, nsgotest.Size(1052, 2600))
+	}, nsgotest.Size(1052, 2600), func(a *nsgotest.App) { a.Clock.SetWallTime(wallClock) })
 	p.WaitFor("id:settings-tab-general", wait)
 	return p
 }
@@ -218,15 +221,13 @@ func TestOnlyTheLatestSaveCounts(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return svc.Answered() == 1 && p.checked("在后台定期检查") })
 	close(off)
 	p.WaitUntil(wait, func() bool { return svc.Answered() == 2 })
-	// The older answer is posted right after Update returns; nothing it brings may show.
-	for deadline := time.Now().Add(200 * time.Millisecond); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		p.Settle()
-		if p.Exists("id:background-check-error") {
-			t.Fatalf("the older save's error shows: %q", p.text("background-check-error"))
-		}
-		if !p.checked("在后台定期检查") {
-			t.Fatal("the older save's value shows")
-		}
+	// The older answer is posted right after Update returns; nothing it brings may show. When exactly it lands cannot be seen from here, so the order itself is tested at the store layer (store.TestSettingsOlderSaveAnswersLast); this checks the page once it settled.
+	p.Settle()
+	if p.Exists("id:background-check-error") {
+		t.Fatalf("the older save's error shows: %q", p.text("background-check-error"))
+	}
+	if !p.checked("在后台定期检查") {
+		t.Fatal("the older save's value shows")
 	}
 }
 
@@ -850,7 +851,7 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 	p.Find("id:auto-summary-notify >> text:每周一告诉你自动清理了多少。")
 
 	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{},
-		Rules: []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: time.Now().Add(-3 * time.Hour), LastTrashed: 1 << 30}}})
+		Rules: []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: wallClock.Add(-3 * time.Hour), LastTrashed: 1 << 30}}})
 	p.WaitUntil(wait, func() bool {
 		return p.text("rule-app-caches-status") == "现在符合条件的：12 项，"+format.Bytes(3<<30)
 	})
@@ -867,11 +868,11 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 
 	p.Press("role:switch 旧安装包")
 	p.updates(2)
-	want := "上次运行：" + format.RelativeTime(time.Now().Add(-3*time.Hour), time.Now()) + "，移到废纸篓 " + format.Bytes(1<<30)
+	want := "上次运行：" + format.RelativeTime(wallClock.Add(-3*time.Hour), wallClock) + "，移到废纸篓 " + format.Bytes(1<<30)
 	p.WaitUntil(wait, func() bool { return p.text("rule-installers-status") == want })
 
 	// Without a result (at startup, or with no readable cache) a rule that is on still shows its last run, and a rule that is off waits for a check.
-	statuses := []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: time.Now().Add(-3 * time.Hour), LastTrashed: 1 << 30}, {ID: "build-output", Matching: 2, MatchingBytes: 1 << 30}}
+	statuses := []app.RuleStatus{{ID: "app-caches", Matching: 12, MatchingBytes: 3 << 30}, {ID: "installers", LastRun: wallClock.Add(-3 * time.Hour), LastTrashed: 1 << 30}, {ID: "build-output", Matching: 2, MatchingBytes: 1 << 30}}
 	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{}, Rules: statuses})
 	p.WaitUntil(wait, func() bool {
 		return p.text("rule-build-output-status") == "现在符合条件的：2 项，"+format.Bytes(1<<30)

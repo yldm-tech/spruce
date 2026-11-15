@@ -195,13 +195,13 @@ func maintenanceCard(cx *core.Scope, st *store.Stores) core.Node {
 			s.Set(state{run: LastMaintenance(runs), loaded: true})
 		})
 	})
-	due := func() bool { v := s.Get(); return v.loaded && MaintenanceDue(v.run, timeNow()) }
+	due := func() bool { v := s.Get(); return v.loaded && MaintenanceDue(v.run, cx.WallTime()) }
 	meta := nav.Maintenance.Meta()
 	return statusCard{Title: "维护", Tone: meta.Tone, Glyph: meta.Glyph, TestID: "status-maintenance", Warning: due,
 		Value: func() string {
 			switch v := s.Get(); {
 			case v.loaded:
-				return MaintenanceValue(v.run, timeNow())
+				return MaintenanceValue(v.run, cx.WallTime())
 			case v.failed:
 				return "无法读取操作历史"
 			}

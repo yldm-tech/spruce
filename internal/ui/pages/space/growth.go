@@ -110,8 +110,8 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 		list := g.list[:min(growthMax, len(g.list))]
 		// The names write the home folder as ~ once the start screen's folders arrive.
 		h := home()
-		return core.Func(func(*core.Scope) core.Node {
-			now := time.Now()
+		return core.Func(func(cx *core.Scope) core.Node {
+			now := cx.WallTime()
 			rows := make([]core.Node, len(list))
 			for i, item := range list {
 				rows[i] = growthRow(i, item, GrowthName(item, h), now, actions)

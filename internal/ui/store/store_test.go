@@ -188,7 +188,7 @@ func (fakeLocations) Locations(context.Context) app.SpaceLocations {
 	return app.SpaceLocations{Targets: []app.SpaceTarget{{ID: "home"}}}
 }
 
-func newStores(t *testing.T, h *host, s *fakeSettings, alerts fakeAlerts, feed fakeFeed, runs chan history.Run) *Stores {
+func newStores(t *testing.T, h *host, s SettingsService, alerts fakeAlerts, feed fakeFeed, runs chan history.Run) *Stores {
 	return New(h.root, t.Context(), Deps{Settings: s, SettingsFeed: feed, History: fakeHistory{runs}, Alerts: alerts,
 		Permissions: fakePermissions{maintenance.PermissionDenied}, Locations: fakeLocations{}})
 }
@@ -228,6 +228,53 @@ func TestSettingsSaveKeepsOnlyTheLatestAnswer(t *testing.T) {
 	h.until(t, func() bool { return done })
 	if st.Settings.Generation() != gen+1 || st.Settings.Value().Health.CPUThreshold != 40 {
 		t.Errorf("after reset: gen %d, value %+v", st.Settings.Generation(), st.Settings.Value().Health)
+	}
+}
+
+// orderedSettings answers each Update when its value's channel is closed, so a test decides the order of the answers; a value in fail fails.
+type orderedSettings struct {
+	fakeSettings
+	gates map[int]chan struct{}
+	fail  map[int]bool
+}
+
+func (f *orderedSettings) Update(next settings.AppSettings) (settings.AppSettings, error) {
+	<-f.gates[next.Health.CPUThreshold]
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail[next.Health.CPUThreshold] {
+		return f.cur, errors.New("无法保存设置，详情已记录到日志")
+	}
+	f.cur = next
+	return f.cur, nil
+}
+
+// TestSettingsOlderSaveAnswersLast: the newer save answers first, then the older one fails; once the older answer has been delivered (its done ran) the value is still the newer one.
+func TestSettingsOlderSaveAnswersLast(t *testing.T) {
+	h := newHost(t)
+	fs := &orderedSettings{gates: map[int]chan struct{}{50: make(chan struct{}), 70: make(chan struct{})}, fail: map[int]bool{50: true}}
+	fs.cur.Health.CPUThreshold = 40
+	feed := fakeFeed{make(chan settings.AppSettings, 1)}
+	feed.ch <- fs.cur
+	block := make(chan struct{})
+	close(block)
+	st := newStores(t, h, fs, fakeAlerts{ch: make(chan []health.Alert), block: block}, feed, make(chan history.Run))
+	h.until(t, st.Settings.Loaded)
+	older, newer := st.Settings.Value(), st.Settings.Value()
+	older.Health.CPUThreshold, newer.Health.CPUThreshold = 50, 70
+	var olderErr error
+	olderDone, newerDone := false, false
+	st.Settings.Save(older, func(_ settings.AppSettings, err error) { olderErr, olderDone = err, true })
+	st.Settings.Save(newer, func(settings.AppSettings, error) { newerDone = true })
+	close(fs.gates[70])
+	h.until(t, func() bool { return newerDone })
+	if got := st.Settings.Value().Health.CPUThreshold; got != 70 {
+		t.Fatalf("after the newer answer: %d", got)
+	}
+	close(fs.gates[50])
+	h.until(t, func() bool { return olderDone })
+	if got := st.Settings.Value().Health.CPUThreshold; olderErr == nil || got != 70 {
+		t.Errorf("after the older, failed answer: value %d, err %v", got, olderErr)
 	}
 }
 

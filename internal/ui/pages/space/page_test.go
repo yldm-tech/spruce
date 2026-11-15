@@ -53,9 +53,12 @@ func mount(t *testing.T, p *page, shown bool, opts ...nsgotest.Option) *page {
 		space.DepsKey.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
 		p.shown = core.NewSignal(cx, shown)
 		return core.Show{When: p.shown.Get, Then: space.Page}
-	}, append([]nsgotest.Option{nsgotest.Size(1052, 820)}, opts...)...)
+	}, append([]nsgotest.Option{nsgotest.Size(1052, 820), wallNow}, opts...)...)
 	return p
 }
+
+// wallNow sets the wall time the page reads (core.Scope.WallTime) to the real time, which the fakes' times are made relative to.
+func wallNow(a *nsgotest.App) { a.Clock.SetWallTime(time.Now()) }
 
 func newFakes(t *testing.T) *storefake.Services { return storefake.New(t.TempDir()) }
 
