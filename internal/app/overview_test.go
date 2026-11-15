@@ -43,11 +43,11 @@ func TestSystemDisk(t *testing.T) {
 func TestLastMonday10(t *testing.T) {
 	loc := time.FixedZone("JST", 9*3600)
 	for _, tc := range []struct{ at, want time.Time }{
-		{at: time.Date(2026, 11, 16, 10, 0, 0, 0, loc), want: time.Date(2026, 11, 16, 10, 0, 0, 0, loc)},  // Monday 10:00
-		{at: time.Date(2026, 11, 16, 9, 59, 0, 0, loc), want: time.Date(2026, 11, 9, 10, 0, 0, 0, loc)},   // just before
-		{at: time.Date(2026, 11, 15, 23, 0, 0, 0, loc), want: time.Date(2026, 11, 9, 10, 0, 0, 0, loc)},   // Sunday
-		{at: time.Date(2026, 11, 18, 8, 0, 0, 0, loc), want: time.Date(2026, 11, 16, 10, 0, 0, 0, loc)},   // Wednesday
-		{at: time.Date(2027, 1, 1, 12, 0, 0, 0, loc), want: time.Date(2026, 12, 28, 10, 0, 0, 0, loc)},    // across a year
+		{at: time.Date(2026, 11, 16, 10, 0, 0, 0, loc), want: time.Date(2026, 11, 16, 10, 0, 0, 0, loc)}, // Monday 10:00
+		{at: time.Date(2026, 11, 16, 9, 59, 0, 0, loc), want: time.Date(2026, 11, 9, 10, 0, 0, 0, loc)},  // just before
+		{at: time.Date(2026, 11, 15, 23, 0, 0, 0, loc), want: time.Date(2026, 11, 9, 10, 0, 0, 0, loc)},  // Sunday
+		{at: time.Date(2026, 11, 18, 8, 0, 0, 0, loc), want: time.Date(2026, 11, 16, 10, 0, 0, 0, loc)},  // Wednesday
+		{at: time.Date(2027, 1, 1, 12, 0, 0, 0, loc), want: time.Date(2026, 12, 28, 10, 0, 0, 0, loc)},   // across a year
 	} {
 		if got := lastMonday10(tc.at); !got.Equal(tc.want) {
 			t.Errorf("lastMonday10(%v) = %v, want %v", tc.at, got, tc.want)

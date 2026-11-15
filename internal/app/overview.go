@@ -465,7 +465,9 @@ func (o *Overview) save() {
 func (o *Overview) background(ctx context.Context, s settings.AppSettings) {
 	now := o.now()
 	o.mu.Lock()
-	due := s.Background.Enabled && (schedule.Due(o.cfg.Policy, now, o.lastCheck, o.launched) || o.result != nil && o.result.SettingsKey != scancache.Key(s))
+	// A result checked under other settings is due at once, but never within LaunchDelay of launch (a cached result of an older key).
+	keyChanged := o.result != nil && o.result.SettingsKey != scancache.Key(s) && schedule.Due(o.cfg.Policy, now, time.Time{}, o.launched)
+	due := s.Background.Enabled && (schedule.Due(o.cfg.Policy, now, o.lastCheck, o.launched) || keyChanged)
 	retry := now.Round(0).Before(o.retryAt.Round(0))
 	busy := o.cleaning || o.autoCleaning
 	o.mu.Unlock()
@@ -515,6 +517,10 @@ func (o *Overview) background(ctx context.Context, s settings.AppSettings) {
 		})
 	})
 	if !o.check(run, CheckBackground, o.cfg.Background) {
+		// A failed check (not one stopped or made way for a clean) waits Retry instead of running again on the next tick.
+		if run.Err() == nil {
+			o.setWaiting("", o.now().Add(o.cfg.Policy.Retry))
+		}
 		return
 	}
 	o.autoRules(run, s)
@@ -581,7 +587,10 @@ func (o *Overview) autoRules(run context.Context, s settings.AppSettings) {
 			o.log.Warn("automatic rule", "rule", spec.ID, "err", err)
 			continue
 		}
-		o.ruleRan(spec.ID, o.now(), out.Result.Trashed)
+		// A rule a clean of the user stopped midway has not run: the rest of its items wait for the next scheduled check.
+		if !out.Result.Interrupted {
+			o.ruleRan(spec.ID, o.now(), out.Result.Trashed)
+		}
 		changed = true
 		if out.RunID != "" {
 			auto.RunIDs = append(auto.RunIDs, out.RunID)
