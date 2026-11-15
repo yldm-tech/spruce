@@ -49,13 +49,34 @@ const (
 	cleanGrace      = 30 * time.Second
 )
 
+// launchKind is what a start of the executable is: the elevated child, the command line or the app.
+type launchKind int
+
+const (
+	launchChild launchKind = iota
+	launchCommand
+	launchApp
+)
+
+// launchKindOf tells the starts apart by their arguments (os.Args[1:]), in this order: the elevated child, then the command line, then the app. The elevated child's arguments never reach the command line, whatever follows elevate.Flag.
+func launchKindOf(args []string) launchKind {
+	switch {
+	case elevate.IsChild(args):
+		return launchChild
+	case cli.IsCommand(args):
+		return launchCommand
+	}
+	return launchApp
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	runner := execx.OSRunner{}
 	tasks := maintenance.PlatformTasks()
 
+	switch launchKindOf(os.Args[1:]) {
 	// The elevated child: the same executable relaunched with administrator rights by elevate.ProcessElevator. It accepts only the IDs of this catalog's admin tasks, runs them and exits without starting any UI.
-	if elevate.IsChild(os.Args[1:]) {
+	case launchChild:
 		var adminIDs []string
 		for _, t := range tasks {
 			if t.NeedsAdmin {
@@ -66,14 +87,16 @@ func main() {
 		code := elevate.ServeChild(ctx, os.Args[1:], adminIDs, maintenance.ElevatedHandler(tasks, maintenance.Env{Runner: runner, Log: logger}))
 		stop()
 		os.Exit(code)
-	}
 
 	// The command line: the same executable with a command as its first argument. It never takes the single-instance lock nor talks to a running app; it shares only the clean lock with it.
-	if cli.IsCommand(os.Args[1:]) {
+	case launchCommand:
 		// Spruce.exe is a GUI program; the shell's console has to be attached before anything is written.
 		cli.AttachConsole()
 		cliLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 		os.Exit(runCLI(os.Args[1:], cliLog, runner))
+
+	case launchApp:
+		// The app: the rest of main.
 	}
 
 	exe, err := os.Executable()
