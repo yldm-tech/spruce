@@ -46,6 +46,8 @@ type Scanner struct {
 
 	mu   sync.Mutex
 	last *merged
+	// pending is set while a scan runs and stays set when it does not finish with every source: the sources have then remembered scans the merged one does not match, so Clean refuses until a scan completes.
+	pending bool
 }
 
 var _ cleanup.Scanner = (*Scanner)(nil)
@@ -63,6 +65,8 @@ type origin struct {
 	id     string
 	title  string
 	items  []string
+	// command is set for a category cleaned by its tool's command, which goes as a whole once the command ran.
+	command bool
 }
 
 // New returns a Scanner over sources, in the order given, building each source's scanner now. It panics on an empty or repeated source ID or a nil constructor, so a wiring mistake shows at startup.
@@ -154,6 +158,9 @@ func (s *Scanner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	if progress == nil {
 		progress = func(cleanup.Progress) {}
 	}
+	s.mu.Lock()
+	s.pending = true
+	s.mu.Unlock()
 	started := s.now()
 	ps := &progressState{fn: progress, states: make([]cleanup.SourceState, len(s.sources))}
 	for i, src := range s.sources {
@@ -206,7 +213,7 @@ func (s *Scanner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 			if had > 0 && len(c.Items) == 0 {
 				continue
 			}
-			o := origin{source: i, id: c.ID, title: c.Title}
+			o := origin{source: i, id: c.ID, title: c.Title, command: c.Command != ""}
 			for _, it := range c.Items {
 				seen[it.ID] = true
 				o.items = append(o.items, it.ID)
@@ -228,8 +235,16 @@ func (s *Scanner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	res.Sources = ps.snapshot()
 	s.mu.Lock()
 	s.last = last
+	s.pending = failed > 0
 	s.mu.Unlock()
 	return res, nil
+}
+
+// Pending reports whether the last scan did not finish with every source (stopped, failed, or still running); Clean refuses until one does.
+func (s *Scanner) Pending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending
 }
 
 // sentence is what the page is told about a source's failed scan; the error itself goes to the log.
@@ -267,6 +282,9 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 	if s.last == nil {
 		return nil, 0, cleanup.ErrNoScan
 	}
+	if s.pending {
+		return nil, 0, fmt.Errorf("%w: the last scan did not finish", cleanup.ErrStale)
+	}
 	picked := map[string]bool{}
 	for _, id := range req.CategoryIDs {
 		if _, ok := s.last.cats[id]; !ok {
@@ -278,6 +296,8 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 	for _, id := range req.ItemIDs {
 		named[id] = true
 	}
+	// Decided once: named shrinks as items are found, and must not turn into "every item" for the categories after the last named one.
+	filter := len(named) > 0
 	parts := make([]part, len(s.sources))
 	total := 0
 	for _, id := range s.last.order {
@@ -287,7 +307,7 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 		o := s.last.cats[id]
 		var items []string
 		for _, it := range o.items {
-			if len(named) == 0 || named[it] {
+			if !filter || named[it] {
 				items = append(items, it)
 				delete(named, it)
 			}
@@ -297,6 +317,7 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 		}
 		p := &parts[o.source]
 		p.source = o.source
+		p.req.Mode = req.Mode
 		p.req.CategoryIDs = append(p.req.CategoryIDs, o.id)
 		p.req.ItemIDs = append(p.req.ItemIDs, items...)
 		p.cats = append(p.cats, id)
@@ -314,8 +335,11 @@ func (s *Scanner) plan(req cleanup.CleanRequest) ([]part, int, error) {
 	return slices.DeleteFunc(parts, func(p part) bool { return p.items == 0 }), total, nil
 }
 
-// Clean cleans what req names from the last merged scan, source by source; see the package documentation. It returns an error, and deletes nothing, only when the request cannot be planned (cleanup.ErrBusy, ErrNoScan, ErrStale, ErrNothingSelected) or the first source refuses it.
+// Clean cleans what req names from the last merged scan, source by source; see the package documentation. It returns an error, and deletes nothing, only when the request cannot be planned (cleanup.ErrBadMode, ErrBusy, ErrNoScan, ErrStale, ErrNothingSelected) or the first source refuses it.
 func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !s.busy.TryLock() {
 		return cleanup.CleanResult{}, cleanup.ErrBusy
 	}
@@ -330,6 +354,8 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	res := cleanup.CleanResult{StartedAt: s.now(), Failed: []cleanup.Failure{}, Categories: []cleanup.CategoryOutcome{}}
 	done := 0
 	ran := false
+	onMoved := cleanup.OnMoved(ctx)
+	var handled []string
 	for _, p := range parts {
 		src := s.sources[p.source]
 		if ctx.Err() != nil {
@@ -338,7 +364,11 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 			continue
 		}
 		base, baseBytes := done, res.Freed+res.Trashed
-		r, err := src.scanner.Clean(ctx, p.req, func(ev cleanup.Progress) {
+		srcCtx := cleanup.WithOnMoved(ctx, func(m cleanup.Moved) {
+			m.CategoryID = MergedID(src.id, m.CategoryID)
+			onMoved(m)
+		})
+		r, err := src.scanner.Clean(srcCtx, p.req, func(ev cleanup.Progress) {
 			out := cleanup.Progress{Phase: cleanup.PhaseCleaning, Path: ev.Path, Done: base + min(ev.Done, p.items), Total: total, Bytes: baseBytes + ev.Bytes}
 			if ev.CategoryID != "" {
 				out.CategoryID = MergedID(src.id, ev.CategoryID)
@@ -362,6 +392,7 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		}
 		ran = true
 		done += p.items
+		handled = append(handled, handledItems(p, r)...)
 		res.Freed += r.Freed
 		res.Trashed += r.Trashed
 		res.Removed += r.Removed
@@ -376,14 +407,75 @@ func (s *Scanner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 			c.Source = src.id
 			res.Categories = append(res.Categories, c)
 		}
+		for _, m := range r.Moved {
+			m.CategoryID = MergedID(src.id, m.CategoryID)
+			res.Moved = append(res.Moved, m)
+		}
 	}
 	progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: min(done, total), Total: total, Bytes: res.Freed + res.Trashed})
 	res.Partial = res.Interrupted || len(res.Failed) > 0
 	res.Duration = s.now().Sub(res.StartedAt)
-	s.mu.Lock()
-	s.last = nil
-	s.mu.Unlock()
+	res.Handled = handled
+	s.forget(handled)
 	return res, nil
+}
+
+// handledItems are the items of part p its source dropped from its own remembered scan in r, so the merged scan never names an item the source has forgotten: what the source lists in CleanResult.Handled and CleanResult.Moved and, when the clean was not interrupted, every planned item that did not fail. After an interrupted clean the items not reached stay in the merged scan, as they stay in the source's.
+func handledItems(p part, r cleanup.CleanResult) []string {
+	seen := map[string]bool{}
+	var ids []string
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if !r.Interrupted {
+		failed := make(map[string]bool, len(r.Failed))
+		for _, f := range r.Failed {
+			failed[f.ItemID] = true
+		}
+		for _, id := range p.req.ItemIDs {
+			if !failed[id] {
+				add(id)
+			}
+		}
+	}
+	for _, id := range r.Handled {
+		add(id)
+	}
+	for _, m := range r.Moved {
+		add(m.ItemID)
+	}
+	return ids
+}
+
+// forget drops the handled items from the merged scan, and a command category whose command ran as a whole, so the rest can be cleaned without another scan.
+func (s *Scanner) forget(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	gone := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		gone[id] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.last == nil {
+		return
+	}
+	next := &merged{cats: make(map[string]origin, len(s.last.cats))}
+	for _, id := range s.last.order {
+		o := s.last.cats[id]
+		had := len(o.items)
+		o.items = slices.DeleteFunc(slices.Clone(o.items), func(it string) bool { return gone[it] })
+		if o.command && had > 0 && len(o.items) == 0 {
+			continue
+		}
+		next.order = append(next.order, id)
+		next.cats[id] = o
+	}
+	s.last = next
 }
 
 // untouched is the outcome of a part that was not cleaned: one empty line per category.

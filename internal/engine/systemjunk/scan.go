@@ -31,8 +31,9 @@ type candidate struct {
 	note string
 	// busy marks an item whose app is running.
 	busy bool
-	// size is filled in by measure.
-	size int64
+	// size and newest are filled in by measure: the space it takes and the latest modification time inside it.
+	size   int64
+	newest time.Time
 }
 
 // scanCtx is the state the collectors of one scan share.
@@ -43,6 +44,8 @@ type scanCtx struct {
 	// denied counts folders that could not be read for lack of permission.
 	denied atomic.Int64
 	report func(path string)
+	// exclusions are the user's exclusions; an excluded folder is not listed.
+	exclusions []string
 }
 
 // entry is one child of a folder: a plain file or folder, never a symlink.
@@ -52,8 +55,14 @@ type entry struct {
 	info fs.FileInfo
 }
 
-// entries lists the plain files and folders in dir, each with its Lstat info; symlinks, junctions and devices are left out, so nothing is ever followed. A missing folder lists nothing; an unreadable one counts as denied unless quiet.
+// entries lists the plain files and folders in dir, each with its Lstat info; symlinks, junctions and devices are left out, so nothing is ever followed. A missing folder lists nothing; an unreadable one counts as denied unless quiet. An excluded folder, whose items measure would drop anyway, and one the read gate (Env.MayRead) refuses list nothing without being read.
 func (sc *scanCtx) entries(dir string, quiet bool) []entry {
+	if len(sc.exclusions) > 0 && fsx.Excluded(dir, sc.exclusions) {
+		return nil
+	}
+	if sc.env.MayRead != nil && !sc.env.MayRead(dir) {
+		return nil
+	}
 	sc.report(dir)
 	des, err := os.ReadDir(dir)
 	if err != nil {
@@ -223,8 +232,8 @@ func measure(ctx context.Context, sc *scanCtx, cands [][]candidate, exclusions [
 		wg.Go(func() {
 			for j := range queue {
 				c := &cands[j.spec][j.idx]
-				size, ok := measureOne(ctx, sc, c.path, exclusions, rep)
-				c.size = size
+				size, newest, ok := measureOne(ctx, sc, c.path, exclusions, rep)
+				c.size, c.newest = size, newest
 				keep[j.spec][j.idx] = ok
 				rep.step(c.path, size)
 			}
@@ -254,13 +263,13 @@ feed:
 	return out, nil
 }
 
-// measureOne returns the size of path and whether to offer it.
-func measureOne(ctx context.Context, sc *scanCtx, path string, exclusions []string, rep *reporter) (int64, bool) {
+// measureOne returns the size of path, the latest modification time inside it and whether to offer it.
+func measureOne(ctx context.Context, sc *scanCtx, path string, exclusions []string, rep *reporter) (int64, time.Time, bool) {
 	if ctx.Err() != nil {
-		return 0, false
+		return 0, time.Time{}, false
 	}
 	if len(exclusions) > 0 && fsx.Excluded(path, exclusions) {
-		return 0, false
+		return 0, time.Time{}, false
 	}
 	var hit atomic.Bool
 	opts := fsx.SizeOptions{
@@ -283,10 +292,10 @@ func measureOne(ctx context.Context, sc *scanCtx, path string, exclusions []stri
 		if errors.Is(err, fs.ErrPermission) {
 			sc.denied.Add(1)
 		}
-		return 0, false
+		return 0, time.Time{}, false
 	}
 	if hit.Load() {
-		return 0, false
+		return 0, time.Time{}, false
 	}
-	return res.Bytes, true
+	return res.Bytes, res.Newest, true
 }

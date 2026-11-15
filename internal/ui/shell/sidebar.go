@@ -60,7 +60,8 @@ func (s Sidebar) Render(*core.Scope) core.Node {
 // item is one page's entry: a 26-point tile, or in the footer an 18-point glyph, and the title.
 func (s Sidebar) item(r nav.Route, footer bool) core.Node {
 	m := r.Meta()
-	current := func() bool { return s.Nav.Current() == r }
+	// A drill-down view lights the page it belongs to.
+	current := func() bool { cur := s.Nav.Current(); return cur == r || cur.Meta().Parent == r }
 	var icon core.Node = kit.IconTile{Tone: m.Tone, Size: 26, GlyphSize: 15, Glyph: m.Glyph, StrokeWidth: 2.2}
 	height, size, color := core.Points(40), kit.FontNav, kit.ColorTextNav
 	if footer {

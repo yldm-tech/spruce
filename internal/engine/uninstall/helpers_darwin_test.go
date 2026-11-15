@@ -11,6 +11,7 @@ import (
 
 	"howett.net/plist"
 
+	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/fsx"
 )
 
@@ -38,20 +39,21 @@ func (d *fakeDeleter) Remove(context.Context, string, []string) (fsx.Removal, er
 	return fsx.Removal{}, errors.New("permanent deletion")
 }
 
-func (d *fakeDeleter) Trash(_ context.Context, path string, roots []string) error {
+func (d *fakeDeleter) Trash(_ context.Context, path string, roots []string) (cleanup.Trashed, error) {
 	if err := fsx.CheckTrashable(path, roots); err != nil {
-		return err
+		return cleanup.Trashed{}, err
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err := d.failing[path]; err != nil {
-		return err
+		return cleanup.Trashed{}, err
 	}
-	if err := os.Rename(path, filepath.Join(d.bin, fmt.Sprintf("%d-%s", len(d.trashed), filepath.Base(path)))); err != nil {
-		return err
+	to := filepath.Join(d.bin, fmt.Sprintf("%d-%s", len(d.trashed), filepath.Base(path)))
+	if err := os.Rename(path, to); err != nil {
+		return cleanup.Trashed{}, err
 	}
 	d.trashed = append(d.trashed, path)
-	return nil
+	return cleanup.Trashed{Path: to}, nil
 }
 
 func (d *fakeDeleter) moved() []string {

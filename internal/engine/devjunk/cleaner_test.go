@@ -36,11 +36,11 @@ func (d *testDeleter) Remove(ctx context.Context, path string, roots []string) (
 	return fsx.SafeRemove(ctx, path, roots)
 }
 
-func (d *testDeleter) Trash(_ context.Context, path string, roots []string) error {
+func (d *testDeleter) Trash(_ context.Context, path string, roots []string) (cleanup.Trashed, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.trashed[path] = roots
-	return nil
+	return cleanup.Trashed{}, nil
 }
 
 type fixture struct {

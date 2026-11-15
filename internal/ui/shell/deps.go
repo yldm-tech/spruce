@@ -6,14 +6,16 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/host/instance"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/devjunk"
 	"github.com/yldm-tech/spruce/internal/ui/pages/health"
 	"github.com/yldm-tech/spruce/internal/ui/pages/history"
 	"github.com/yldm-tech/spruce/internal/ui/pages/installers"
 	"github.com/yldm-tech/spruce/internal/ui/pages/maintenance"
+	"github.com/yldm-tech/spruce/internal/ui/pages/overview"
 	"github.com/yldm-tech/spruce/internal/ui/pages/settings"
-	"github.com/yldm-tech/spruce/internal/ui/pages/smartscan"
 	"github.com/yldm-tech/spruce/internal/ui/pages/space"
 	"github.com/yldm-tech/spruce/internal/ui/pages/systemjunk"
 	"github.com/yldm-tech/spruce/internal/ui/pages/uninstall"
@@ -24,7 +26,7 @@ import (
 type Deps struct {
 	Stores store.Deps
 
-	SmartScan   smartscan.Deps
+	Overview    overview.Deps
 	SystemJunk  systemjunk.Deps
 	DevJunk     devjunk.Deps
 	Installers  installers.Deps
@@ -44,4 +46,15 @@ type Deps struct {
 	// SetMainView shows the root view: nsgo.SetMainView in the app, core's in tests.
 	SetMainView func(cx *core.Scope, view func(cx *core.Scope) core.Node)
 	Log         *slog.Logger
+	// Start is the page the window opens on; "" means nav.Start. Screen tests of the drill-down views, which have no sidebar entry, open on them this way.
+	Start nav.Route
+	// Activity is the gate every clean and the background work go through: main ends it as the app quits, and the tray's 退出 says when a clean is running.
+	Activity *schedule.Activity
+	// LaunchedAtLogin reports whether the system started this run at login, and whether that is known yet (loginitem.LaunchedAtLogin); nil counts as a launch the user made.
+	LaunchedAtLogin func() (atLogin, known bool)
+	// TrayIcon and TrayAlertIcon are the menu bar icon's template PNGs, the second for low space (macOS); without TrayIcon there is no menu bar icon.
+	TrayIcon, TrayAlertIcon []byte
+
+	// host replaces the main window's platform in the shell's own tests.
+	host windowHost
 }

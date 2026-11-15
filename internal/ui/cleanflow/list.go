@@ -34,7 +34,10 @@ type CategoryList struct {
 	Reveal func(ctx context.Context, path string) error
 	// Disabled disables every checkbox and 全选/全不选, e.g. while a clean runs.
 	Disabled func() bool
-	TestID   string
+	// Expand is the category that starts expanded (a drill-down view opened on it, nav.Navigator.GoDrill), "" for none; Scroll, when set, receives its card once it is shown, for the page to scroll to it.
+	Expand string
+	Scroll func(card *core.Ref)
+	TestID string
 }
 
 // Render implements core.Node.
@@ -82,10 +85,17 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 
 // categoryCard is one category: its head and, once expanded, its items.
 func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string)) core.Node {
-	open := core.NewSignal(cx, false)
 	id := core.Untracked(cx, c).ID
+	expand := id == l.Expand && len(core.Untracked(cx, c).Items) > 0
+	open := core.NewSignal(cx, expand)
+	ref := new(core.Ref)
+	if expand && l.Scroll != nil {
+		cx.Effect(func() { cx.Untrack(func() { l.Scroll(ref) }) })
+	}
 	state := func() CheckState { return CategoryState(c(), l.Selection()) }
 	empty := func() bool { return len(c().Items) == 0 }
+	// A category whose items are all held (Item.Hold) has nothing to check.
+	none := func() bool { return Selectable(c()) == 0 }
 	title := func() string { return c().Title }
 	line := func() string {
 		if w := c().Warning; w != "" {
@@ -104,7 +114,7 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 		kit.Checkbox{Label: core.Untracked(cx, title), TestID: "check-" + id,
 			Checked:       func() bool { return state() == CheckAll },
 			Indeterminate: func() bool { return state() == CheckSome },
-			Disabled:      func() bool { return disabled() || empty() },
+			Disabled:      func() bool { return disabled() || none() },
 			OnChange:      func(on bool) { l.OnChange(SetCategory(core.Untracked(cx, l.Selection), core.Untracked(cx, c), on)) }},
 		core.Dynamic(func(*core.Scope) core.Node {
 			icon := c().Icon
@@ -127,7 +137,9 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 		expandButton(id, title, open, empty),
 	}}
 	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node { return itemList(cx, c, l, disabled, reveal) }}
-	return kit.Card{Clip: true, TestID: "category-" + id, Children: []core.Node{head, items}}
+	return core.View{Ref: ref, Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+		kit.Card{Clip: true, TestID: "category-" + id, Children: []core.Node{head, items}},
+	}}
 }
 
 // expandButton opens and closes a category's items (.icon-button.category-expand).
@@ -163,7 +175,18 @@ func expandButton(id string, title func() string, open *core.Signal[bool], empty
 func itemList(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string)) core.Node {
 	cat := core.Untracked(cx, c)
 	st := core.Style{Padding: core.Symmetric(4, 0), Background: kit.SurfaceList, Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}
-	row := func(it cleanup.Item) core.Node { return itemRow(cat.ID, it, l, disabled, reveal) }
+	row := func(it cleanup.Item) core.Node {
+		return ItemRow{Item: it, Disabled: disabled, Reveal: reveal,
+			Checked: func() bool { return l.Selection().Has(cat.ID, it.ID) },
+			OnChange: func(on bool) {
+				for _, c := range l.Categories() {
+					if c.ID == cat.ID {
+						l.OnChange(SetItem(l.Selection(), c, it.ID, on))
+						return
+					}
+				}
+			}}
+	}
 	if len(cat.Items) <= scrollItemsAfter {
 		children := make([]core.Node, len(cat.Items))
 		for i, it := range cat.Items {
@@ -183,8 +206,18 @@ func itemList(cx *core.Scope, c func() cleanup.Category, l CategoryList, disable
 		}}
 }
 
-// itemRow is one item: its checkbox, name, folder (and note), age, size and 在访达中显示.
-func itemRow(categoryID string, it cleanup.Item, l CategoryList, disabled func() bool, reveal func(string)) core.Node {
+// ItemRow is one item of a list: its checkbox, name, folder (and note), age, size and 在访达中显示. Checked and OnChange are its checkbox; Disabled disables it (nil for never), and a held item (Item.Hold) is always disabled, with the reason as the checkbox's tooltip; Reveal shows the item in Finder or Explorer (nil shows nothing). 概览's cards and the drill-down views list items with it.
+type ItemRow struct {
+	Item     cleanup.Item
+	Checked  func() bool
+	OnChange func(on bool)
+	Disabled func() bool
+	Reveal   func(path string)
+}
+
+// Render implements core.Node.
+func (r ItemRow) Render(*core.Scope) core.Node {
+	it := r.Item
 	name := format.BaseName(it.Path)
 	where := []string{}
 	if p := format.TruncateMiddle(format.ParentPath(it.Path), 72); p != "" {
@@ -197,18 +230,14 @@ func itemRow(categoryID string, it cleanup.Item, l CategoryList, disabled func()
 		t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
 		return t
 	}
+	var check core.Node = kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: r.Disabled, Checked: r.Checked, OnChange: r.OnChange}
+	if it.Hold != "" {
+		check = core.View{Tooltip: kit.Tooltip(it.Hold), Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+			kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: func() bool { return true }, Checked: r.Checked, OnChange: r.OnChange},
+		}}
+	}
 	children := []core.Node{
-		kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: disabled,
-			Checked: func() bool { return l.Selection().Has(categoryID, it.ID) },
-			OnChange: func(on bool) {
-				sel := l.Selection()
-				for _, c := range l.Categories() {
-					if c.ID == categoryID {
-						l.OnChange(SetItem(sel, c, it.ID, on))
-						return
-					}
-				}
-			}},
+		check,
 		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
 			ellipsis(kit.Text(name, kit.FontBody, kit.Regular, kit.ColorText)),
 			ellipsis(kit.Text(strings.Join(where, " · "), kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
@@ -221,7 +250,11 @@ func itemRow(categoryID string, it cleanup.Item, l CategoryList, disabled func()
 	size.Style.MinWidth, size.Style.TextAlign = core.Pt(64), core.TextAlignRight
 	children = append(children, size,
 		kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + name, TestID: "reveal-" + it.ID,
-			OnPress: func() { reveal(it.Path) }})
+			OnPress: func() {
+				if r.Reveal != nil {
+					r.Reveal(it.Path)
+				}
+			}})
 	return core.View{TestID: "row-" + it.ID, Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Height: core.Pt(itemRowHeight),
 		Padding: core.Symmetric(0, 18), Hover: &core.Style{Background: kit.SurfaceRowHover}}, Children: children}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"slices"
 	"time"
@@ -56,13 +57,29 @@ type Item struct {
 	Note string `json:"note,omitempty"`
 	// Selected is whether the item starts checked. A scanner sets it per item when a category starts checked in part (every Xcode device support version but the newest); NewResult sets it on every item of a category that starts checked, so the page reads the default selection from the items alone.
 	Selected bool `json:"selected,omitempty"`
+	// Newest is the newest modification time inside a folder item (fsx.SizeResult.Newest); zero for files and when unknown. Build output items never set it: their age is the project's last activity, in ModTime.
+	Newest time.Time `json:"newest,omitzero"`
+	// Project is the project folder of a build output item.
+	Project string `json:"project,omitempty"`
+	// Git is the state of that project's repository.
+	Git GitState `json:"git,omitempty"`
+	// Hold, when set, is why the item must not be cleaned, a sentence in Simplified Chinese; the Executor refuses it and the pages show it disabled.
+	Hold string `json:"hold,omitempty"`
 
 	// symlink records that the scan saw a symlink, which is the only case in which the item may be one when it is deleted.
 	symlink bool
+	// stat records that NewItem saw the item through os.Lstat, which makes the fields below meaningful.
+	stat bool
+	// dev and ino identify what os.Lstat saw at scan time (macOS; zero on Windows); changed compares them.
+	dev, ino uint64
+	// lmod and lsize are the modification time and size os.Lstat reported at scan time, kept apart from ModTime and Size, which a scanner may replace (a project's activity, a folder's measured size).
+	lmod  time.Time
+	lsize int64
 }
 
 // NewItem returns the Item for path, as os.Lstat described it, with size measured by the scanner.
 func NewItem(path string, info fs.FileInfo, size int64) Item {
+	dev, ino := identity(info)
 	return Item{
 		ID:      ItemID(path),
 		Path:    path,
@@ -70,8 +87,27 @@ func NewItem(path string, info fs.FileInfo, size int64) Item {
 		ModTime: info.ModTime(),
 		Dir:     info.Mode().Type() == fs.ModeDir,
 		symlink: info.Mode().Type() == fs.ModeSymlink,
+		stat:    true,
+		dev:     dev,
+		ino:     ino,
+		lmod:    info.ModTime(),
+		lsize:   info.Size(),
 	}
 }
+
+// GitState is what git says about the project a build output item belongs to.
+type GitState string
+
+const (
+	// GitClean is a project whose folder has no uncounted change and whose build output holds no tracked file.
+	GitClean GitState = "clean"
+	// GitDirty is a project with uncommitted changes.
+	GitDirty GitState = "dirty"
+	// GitUnknown is no git, a timeout or an error.
+	GitUnknown GitState = "unknown"
+	// GitNone is a project not inside any repository.
+	GitNone GitState = "none"
+)
 
 // ItemID returns the stable ID of path: 16 hex digits of its SHA-256.
 func ItemID(path string) string {
@@ -180,10 +216,54 @@ func NewResult(categories []Category, started time.Time) ScanResult {
 	return res
 }
 
+// CleanMode changes how a clean deletes.
+type CleanMode string
+
+const (
+	// ModeDefault deletes every item as its category says.
+	ModeDefault CleanMode = ""
+	// ModeTrashOnly moves every item to the Trash, DeletePermanent ones included, and refuses commands and emptying the Trash: what automatic rules use.
+	ModeTrashOnly CleanMode = "trashOnly"
+)
+
+// CheckMode returns ErrBadMode (wrapped, naming m) for a mode that is neither ModeDefault nor ModeTrashOnly. Every cleaner calls it before it plans anything, so an unknown mode never runs a command, empties the Trash or deletes a file.
+func CheckMode(m CleanMode) error {
+	if m != ModeDefault && m != ModeTrashOnly {
+		return fmt.Errorf("%w: %q", ErrBadMode, m)
+	}
+	return nil
+}
+
 // CleanRequest names what to delete from the last scan. With ItemIDs empty, every item of every category in CategoryIDs goes; otherwise only the named items, each of which must belong to one of CategoryIDs.
 type CleanRequest struct {
-	CategoryIDs []string `json:"categoryIds"`
-	ItemIDs     []string `json:"itemIds,omitempty"`
+	CategoryIDs []string  `json:"categoryIds"`
+	ItemIDs     []string  `json:"itemIds,omitempty"`
+	Mode        CleanMode `json:"mode,omitempty"`
+}
+
+// Moved is one item a clean moved to the Trash.
+type Moved struct {
+	ItemID     string       `json:"itemId"`
+	CategoryID string       `json:"categoryId"`
+	Kind       CategoryKind `json:"kind"`
+	Path       string       `json:"path"`
+	// TrashedPath is where the item now is; "" when the system does not say (Windows).
+	TrashedPath string `json:"trashedPath,omitempty"`
+	// Root is the first of the category's roots that contains Path.
+	Root string `json:"root"`
+	Size int64  `json:"size"`
+	Dir  bool   `json:"dir"`
+	// Dev and Ino identify the trashed item (macOS).
+	Dev uint64 `json:"dev,omitempty"`
+	Ino uint64 `json:"ino,omitempty"`
+}
+
+// Trashed is where Deleter.Trash put an item.
+type Trashed struct {
+	// Path is where the item now is, "" when the system does not say.
+	Path string
+	// Dev and Ino identify the item there (macOS; zero otherwise).
+	Dev, Ino uint64
 }
 
 // Failure is one item that was not deleted.
@@ -223,6 +303,10 @@ type CleanResult struct {
 	Skipped int `json:"skipped"`
 	// Failed lists the items left in place, wholly or in part.
 	Failed []Failure `json:"failed"`
+	// Moved lists the items moved to the Trash, in the order they went.
+	Moved []Moved `json:"moved,omitempty"`
+	// Handled lists the IDs of the requested items the cleaner dropped from its remembered scan: deleted, moved to the Trash, found already gone, cleaned by a command that ran, or the Trash once emptying it was tried. A later Clean naming one of them fails with ErrStale, so a caller keeping its own copy of the scan drops exactly these (Drop), interrupted cleans included. It is bookkeeping for callers in this process and is not serialised.
+	Handled []string `json:"-"`
 	// Categories has one entry per category of the request, in scan order.
 	Categories []CategoryOutcome `json:"categories"`
 	// Partial is set when anything failed or the clean was interrupted.

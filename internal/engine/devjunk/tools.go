@@ -3,6 +3,7 @@ package devjunk
 import (
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -498,4 +499,18 @@ func simctlCommand(l located) *execx.Command {
 		return nil
 	}
 	return &execx.Command{Name: l.xcrun, Args: []string{"simctl", "delete", "unavailable"}, Timeout: cleanTimeout}
+}
+
+// ToolIDs returns the ID of every tool cache this package knows, on either platform, in catalog order: the category of a tool is "tool-" followed by its ID.
+func ToolIDs() []string {
+	var out []string
+	for _, goos := range []string{"darwin", "windows"} {
+		e := env{goos: goos, home: string(filepath.Separator), getenv: func(string) string { return "" }}
+		for _, t := range catalog(e, located{bins: map[string]string{}}) {
+			if !slices.Contains(out, t.id) {
+				out = append(out, t.id)
+			}
+		}
+	}
+	return out
 }

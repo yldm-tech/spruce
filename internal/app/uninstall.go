@@ -10,10 +10,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
+	"github.com/yldm-tech/spruce/internal/engine/undo"
 	"github.com/yldm-tech/spruce/internal/engine/uninstall"
 )
 
@@ -150,15 +153,18 @@ type UninstallerStatus struct {
 
 // Uninstall is the controller of the 应用卸载 page: list → pick → leftovers → remove. It records each removal in the history.
 type Uninstall struct {
-	eng     UninstallEngine
-	history history.Store
-	home    string
-	log     *slog.Logger
+	eng      UninstallEngine
+	history  history.Store
+	home     string
+	log      *slog.Logger
+	activity *schedule.Activity
+	// ledger records what a removal moved to the Trash so it can be put back (SetUninstallLedger); nil records nothing.
+	ledger *undo.Ledger
 }
 
-// NewUninstall returns the service over eng, recording removals in store; home shortens paths in the history.
-func NewUninstall(eng UninstallEngine, store history.Store, home string, log *slog.Logger) *Uninstall {
-	return &Uninstall{eng: eng, history: store, home: home, log: log}
+// NewUninstall returns the service over eng, removing inside activity's gate and recording removals in store; home shortens paths in the history.
+func NewUninstall(eng UninstallEngine, store history.Store, home string, log *slog.Logger, activity *schedule.Activity) *Uninstall {
+	return &Uninstall{eng: eng, history: store, home: home, log: log, activity: activity}
 }
 
 // Apps lists the installed apps, sorted by name, without their sizes, icons and last use (Measure streams those).
@@ -220,9 +226,29 @@ func leftoverView(l uninstall.Leftover) UninstallLeftover {
 	return UninstallLeftover{ID: l.ID, Path: l.Path, Kind: UninstallLeftoverKind(l.Kind), Size: l.Size, Dir: l.Dir, Selected: l.Selected, Note: l.Note}
 }
 
-// Remove moves the planned app (macOS) and the chosen leftovers to the Trash, reports progress (throttled; nil reports nothing) and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Cancelling ctx stops after the current item.
+// Remove moves the planned app (macOS) and the chosen leftovers to the Trash, reports progress (throttled; nil reports nothing) and records the removal in the history. The app goes first; when it cannot be moved its leftovers stay too and BundleFailure says why. Cancelling ctx stops after the current item. With a ledger (macOS) every move is journaled as it happens and kept for 放回原处, each item coming back into the category root of the plan it was found in.
 func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress func(cleanup.Progress)) (UninstallOutcome, error) {
+	clean, end, err := u.activity.BeginClean(ctx)
+	if err != nil {
+		return UninstallOutcome{}, gateError(ctx, u.log, err)
+	}
+	defer end()
+	runID := newRunID(time.Now())
+	ctx, undoRun := beginUndo(clean, u.ledger, u.log, undo.JournalMeta{RunID: runID, Kind: history.KindUninstall, Started: time.Now()})
+	// The engine runs the app and the leftovers as two cleans; the moves of both are gathered as they happen.
+	var mu sync.Mutex
+	var moves []cleanup.Moved
+	next := cleanup.OnMoved(ctx)
+	ctx = cleanup.WithOnMoved(ctx, func(m cleanup.Moved) {
+		mu.Lock()
+		moves = append(moves, m)
+		mu.Unlock()
+		next(m)
+	})
 	res, err := u.eng.Remove(ctx, uninstall.Request{AppID: req.AppID, LeftoverIDs: req.LeftoverIDs}, throttled(progress))
+	mu.Lock()
+	info := undoRun.finish(time.Now(), moves)
+	mu.Unlock()
 	if err != nil {
 		return UninstallOutcome{}, u.userError(ctx, "remove", err, "卸载没能开始，详情已记录到日志")
 	}
@@ -241,12 +267,13 @@ func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress f
 	}
 	if res.Clean.Removed+len(res.Clean.Failed) > 0 || res.BundleFailure != "" {
 		u.record(history.Run{
-			ID:        newRunID(res.Clean.StartedAt),
+			ID:        runID,
 			Kind:      history.KindUninstall,
 			StartedAt: res.Clean.StartedAt,
 			EndedAt:   res.Clean.StartedAt.Add(res.Clean.Duration),
 			Summary:   &history.Totals{Freed: res.Clean.Freed, Trashed: res.Clean.Trashed, Items: res.Clean.Removed, Failed: len(res.Clean.Failed)},
 			Details:   u.removeDetails(res),
+			Undo:      info,
 		})
 	}
 	return out, nil

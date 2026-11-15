@@ -10,4 +10,6 @@
 // An item is checked by default only when it arrived more than 7 days ago (the later of its modification and creation times) and, for a disk image, is not attached: those go to the type's category; the others to 最近下载或正在使用的安装包, which starts unchecked. Attached images are read from `hdiutil info -plist` on macOS.
 //
 // Everything goes to the Trash (cleanup.DeleteTrash), whatever the folder: these are files the user downloaded, and Put Back must work. The user's exclusions are respected.
+//
+// When the attached images cannot be listed, 磁盘映像 carries the warning 「无法确认哪些磁盘映像正在使用」: the page still offers it, but automatic rules skip a category with a warning. Env.MayRead, the background read gate, is asked before each root and sub-folder is listed (after the exclusions); a folder it refuses, on macOS Downloads and Desktop until a foreground read has entered them, is skipped silently.
 package installers

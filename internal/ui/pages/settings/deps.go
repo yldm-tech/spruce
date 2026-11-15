@@ -1,7 +1,9 @@
 package settings
 
 import (
+	"cmp"
 	"context"
+	"runtime"
 
 	"github.com/nsgo-dev/nsgo/core"
 )
@@ -16,7 +18,14 @@ type Deps struct {
 	Files Files
 	// Icon is the app's icon as a PNG, which 关于 shows; without it 关于 shows the page's tile.
 	Icon []byte
+	// GOOS is the platform the page lays out for, runtime.GOOS when "": Windows has no menu bar icon to stay in and no automatic rules. Tests set it to see the other platform's page.
+	GOOS string
+	// NotificationPermission answers whether Spruce may send notifications, asking the user first when ask is set: the scope's NotificationPermission and RequestNotificationPermission when nil. Screen tests on a real platform replace it, so no system prompt shows.
+	NotificationPermission func(cx *core.Scope, ask bool, done func(core.NotificationPermission))
 }
+
+// windows reports whether the page lays out for Windows.
+func (d Deps) windows() bool { return cmp.Or(d.GOOS, runtime.GOOS) == "windows" }
 
 // DepsKey provides the page's Deps.
 var DepsKey = core.NewKey[Deps]("spruce.settings", Deps{})

@@ -16,6 +16,8 @@ type Outcome struct {
 	Path string
 	// TrashedPath is where the item now is, when the system says (macOS); empty otherwise.
 	TrashedPath string
+	// Dev and Ino identify the item at TrashedPath (macOS: uint64(Stat_t.Dev) and Stat_t.Ino of an os.Lstat right after the move); zero otherwise or when it could not be read.
+	Dev, Ino uint64
 	// Err is nil when the item is in the Trash. A missing item matches fs.ErrNotExist, a batch cut short by ctx matches its error.
 	Err error
 }

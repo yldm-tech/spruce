@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yldm-tech/spruce/internal/engine/history"
+	"github.com/yldm-tech/spruce/internal/engine/schedule"
 	"github.com/yldm-tech/spruce/internal/engine/settings"
 	"github.com/yldm-tech/spruce/internal/engine/space"
 	"github.com/yldm-tech/spruce/internal/engine/trash"
@@ -84,7 +85,7 @@ func newSpaceFixture(t *testing.T) *spaceFixture {
 	cfg := settings.Defaults(f.home)
 	cfg.Cleanup.Exclusions = []string{filepath.Join(f.data, "keep")}
 	cfg.Cleanup.LargeFileMinMB = 2
-	f.svc = NewSpace(f.home, func() settings.AppSettings { return cfg }, f.bin, f.store, slog.New(slog.DiscardHandler))
+	f.svc = NewSpace(f.home, func() settings.AppSettings { return cfg }, f.bin, f.store, slog.New(slog.DiscardHandler), schedule.NewActivity(nil))
 	f.svc.volumes = func(context.Context) ([]space.Volume, error) { return nil, errors.New("no disks in tests") }
 	return f
 }

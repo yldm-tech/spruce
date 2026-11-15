@@ -48,7 +48,7 @@ func projectTree(t *testing.T) string {
 
 func TestWalkProjectsFindsArtifactsNextToMarkers(t *testing.T) {
 	root := projectTree(t)
-	found, denied, err := walkProjects(context.Background(), root, []string{filepath.Join(root, "excluded"), "ignored-*"}, fsx.Excluded, nil)
+	found, denied, err := walkProjects(context.Background(), root, []string{filepath.Join(root, "excluded"), "ignored-*"}, fsx.Excluded, nil, nil)
 	if err != nil || denied != 0 {
 		t.Fatalf("walk = %v, denied %d", err, denied)
 	}
@@ -105,13 +105,13 @@ func TestWalkProjectsHonoursCancel(t *testing.T) {
 	root := projectTree(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := walkProjects(ctx, root, nil, fsx.Excluded, nil); err == nil {
+	if _, _, err := walkProjects(ctx, root, nil, fsx.Excluded, nil, nil); err == nil {
 		t.Error("a cancelled walk returned no error")
 	}
 }
 
 func TestWalkProjectsMissingRoot(t *testing.T) {
-	found, _, err := walkProjects(context.Background(), filepath.Join(t.TempDir(), "missing"), nil, fsx.Excluded, nil)
+	found, _, err := walkProjects(context.Background(), filepath.Join(t.TempDir(), "missing"), nil, fsx.Excluded, nil, nil)
 	if err != nil || len(found) != 0 {
 		t.Errorf("missing root = %v, %v", found, err)
 	}

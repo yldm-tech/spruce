@@ -24,6 +24,9 @@ func fillPlatform(env *Env) {
 	if env.TrashPath == "" {
 		env.TrashPath = filepath.Join(env.Home, ".Trash")
 	}
+	if env.volumes == "" {
+		env.volumes = "/Volumes"
+	}
 	if env.Running == nil && env.Runner != nil {
 		runner := env.Runner
 		env.Running = func(ctx context.Context) (Running, error) { return runningApps(ctx, runner) }

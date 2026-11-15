@@ -1,9 +1,10 @@
-// Package store holds the app-wide state the pages share, as signals in the app's own scope, which lives until the app quits: the settings, the history's generation, the CPU alerts, the Full Disk Access state, the Trash's and the disks' generations, and whether an overlay blocks the shell. The shell makes it once (New) and provides it with Key; pages read it with Use. Every method runs on the engine goroutine; the work behind it goes to goroutines (package async).
+// Package store holds the app-wide state the pages share, as signals in the app's own scope, which lives until the app quits: the settings, the history's generation, the CPU alerts, the Full Disk Access state, the Trash's and the disks' generations, 概览's state, the toast, and whether an overlay blocks the shell. The shell makes it once (New) and provides it with Key; pages read it with Use. Every method runs on the engine goroutine; the work behind it goes to goroutines (package async).
 package store
 
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -34,6 +35,8 @@ type HistoryService interface {
 	List(limit int) ([]history.Run, error)
 	Clear() error
 	Subscribe() (<-chan history.Run, func(), bool)
+	// Restorable returns the IDs of the runs among runs that 放回原处 can put back at now.
+	Restorable(runs []history.Run, now time.Time) map[string]bool
 }
 
 // AlertService is the CPU monitor: *app.Health.
@@ -62,6 +65,8 @@ type Deps struct {
 	Alerts       AlertService
 	Permissions  PermissionService
 	Locations    LocationService
+	// Overview is 概览's controller; nil until it is wired (see Overview).
+	Overview OverviewService
 }
 
 // Stores are the app-wide stores.
@@ -72,6 +77,8 @@ type Stores struct {
 	Permission *Permission
 	Trash      *Trash
 	Locations  *Locations
+	Overview   *Overview
+	Toasts     *Toasts
 	Block      *Block
 }
 
@@ -90,6 +97,8 @@ func New(cx *core.Scope, ctx context.Context, d Deps) *Stores {
 		Permission: newPermission(cx, ctx, d.Permissions),
 		Trash:      &Trash{gen: core.NewSignal(cx, 0)},
 		Locations:  newLocations(cx, ctx, d.Locations),
+		Overview:   newOverview(cx, ctx, d.Overview),
+		Toasts:     newToasts(cx),
 		Block:      &Block{holders: core.NewSignal(cx, 0)},
 	}
 	return s
@@ -218,6 +227,12 @@ func (h *History) Clear(done func(error)) {
 // Load lists up to limit runs on a goroutine and calls done in cx, the caller's scope, with ctx the caller's.
 func (h *History) Load(cx *core.Scope, ctx context.Context, limit int, done func([]history.Run, error)) {
 	async.Do(cx, ctx, func(context.Context) ([]history.Run, error) { return h.svc.List(limit) }, done)
+}
+
+// Restorable finds, on a goroutine, which of runs 放回原处 can put back now (it reads the undo ledger) and calls done with their IDs in cx, the caller's scope, with ctx the caller's.
+func (h *History) Restorable(cx *core.Scope, ctx context.Context, runs []history.Run, done func(map[string]bool)) {
+	async.Do(cx, ctx, func(context.Context) (map[string]bool, error) { return h.svc.Restorable(runs, time.Now()), nil },
+		func(ids map[string]bool, _ error) { done(ids) })
 }
 
 // Alerts holds the current CPU alerts, most CPU first.

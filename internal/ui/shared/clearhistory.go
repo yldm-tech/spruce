@@ -5,6 +5,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"github.com/yldm-tech/spruce/internal/ui/format"
 	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
@@ -37,7 +38,8 @@ func (d ClearHistoryDialog) Render(cx *core.Scope) core.Node {
 	}
 	message := core.View{Children: []core.Node{
 		core.Text{ContentFunc: func() string {
-			return "将删除" + what() + "，无法恢复。只删除记录，不会撤销或改动已经做过的清理和维护。"
+			return "将删除" + what() + "，无法恢复。只删除记录，不会撤销或改动已经做过的清理和维护。之前移到" + format.TrashName() +
+				"的项目也不能再在这里放回原处，记下的空间变化和上次检查的结果也会一并删除。"
 		}, TestID: "clear-message"},
 		core.Show{When: func() bool { return failure.Get() != "" }, Then: func(*core.Scope) core.Node {
 			return core.Text{ContentFunc: failure.Get, Role: core.RoleAlert, LiveRegion: core.LiveRegionPolite, TestID: "clear-error",

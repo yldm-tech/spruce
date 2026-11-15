@@ -8,8 +8,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +46,11 @@ type Env struct {
 	Now func() time.Time
 	// Log receives what the page is not told; nil discards it.
 	Log *slog.Logger
+	// MayRead reports whether a folder may be read (the background read gate), asked after the exclusions and before the folder is listed; a folder it refuses is skipped silently, neither read nor counted as denied. On macOS it keeps background checks out of the Downloads folder until a foreground read has entered it. Nil reads every folder.
+	MayRead func(path string) bool
+
+	// volumes is the folder the mounted volumes appear in, whose Trash folders Bin measures besides TrashPath: /Volumes on macOS, none on Windows. Tests point it at a temporary folder.
+	volumes string
 }
 
 // Category IDs, stable across scans.
@@ -59,6 +66,9 @@ const (
 	catIncompleteDownload = "incomplete-downloads"
 	catTrash              = "trash"
 )
+
+// warnRunningUnknown is the warning of the caches a scan could not sort by running app.
+const warnRunningUnknown = "无法确认哪些应用正在运行"
 
 // maxItems caps the items of one category, keeping the largest: the page virtualizes long lists, but tens of thousands of crash reports help nobody. Items left out are not deleted.
 const maxItems = 3000
@@ -111,7 +121,9 @@ func newCleaner(env Env, specs func(Env) []spec) *Cleaner {
 	if env.Running == nil {
 		env.Running = func(context.Context) (Running, error) { return Running{}, nil }
 	}
-	return &Cleaner{env: env, specs: specs, exec: cleanup.NewExecutor(env.Deleter)}
+	c := &Cleaner{env: env, specs: specs}
+	c.exec = cleanup.NewExecutorWith(env.Deleter, cleanup.ExecutorOptions{Exclusions: c.exclusions})
+	return c
 }
 
 func (c *Cleaner) exclusions() []string {
@@ -131,15 +143,17 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 	rep := newReporter(progress)
 
 	running, err := c.env.Running(ctx)
+	unsure := err != nil
 	if err != nil {
 		if ctx.Err() != nil {
 			return cleanup.ScanResult{}, ctx.Err()
 		}
-		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open.
+		// Without the list every cache looks idle and starts checked; the scan is still worth finishing, and SafeRemove skips what is held open. The caches the list would have sorted carry a warning, which keeps automatic rules away from them.
 		c.env.Log.Warn("list running apps", "err", err)
 		running = Running{}
 	}
-	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path}
+	exclusions := c.exclusions()
+	sc := &scanCtx{env: c.env, running: running, now: started, report: rep.path, exclusions: exclusions}
 	specs := c.specs(c.env)
 
 	// The Trash is measured beside the other locations.
@@ -161,7 +175,7 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 		}
 		cands[i] = s.collect(ctx, sc)
 	}
-	items, err := measure(ctx, sc, cands, c.exclusions(), rep)
+	items, err := measure(ctx, sc, cands, exclusions, rep)
 	<-trashDone
 	if err != nil {
 		return cleanup.ScanResult{}, err
@@ -181,6 +195,9 @@ func (c *Cleaner) Scan(ctx context.Context, progress func(cleanup.Progress)) (cl
 				return dup
 			})
 			if len(cat.Items) > 0 {
+				if unsure && (cat.ID == catAppCaches || cat.ID == catBrowserCaches) {
+					cat.Warning = warnRunningUnknown
+				}
 				cats = append(cats, cat)
 			}
 		}
@@ -228,6 +245,9 @@ func assemble(s spec, found []candidate, log *slog.Logger) []cleanup.Category {
 		}
 		it := cleanup.NewItem(cand.path, cand.info, cand.size)
 		it.Note = cand.note
+		if it.Dir {
+			it.Newest = cand.newest
+		}
 		cat.Items = append(cat.Items, it)
 	}
 	var out []cleanup.Category
@@ -242,6 +262,34 @@ func assemble(s spec, found []candidate, log *slog.Logger) []cleanup.Category {
 		out = append(out, cat)
 	}
 	return out
+}
+
+// mayMeasureTrash asks the read gate (Env.MayRead) about every Trash folder Bin.Size reads: TrashPath and, on macOS, the user's .Trashes folder on each mounted volume, which lies in a prompting folder (a removable or network volume). Only the volumes folder itself is listed, which reads nothing on the volumes. Without a gate everything may be read.
+func (c *Cleaner) mayMeasureTrash() bool {
+	if c.env.MayRead == nil {
+		return true
+	}
+	if !c.env.MayRead(c.env.TrashPath) {
+		return false
+	}
+	if c.env.volumes == "" {
+		return true
+	}
+	vols, err := os.ReadDir(c.env.volumes)
+	if err != nil {
+		return true // no volumes to read: Bin.Size finds none either
+	}
+	uid := strconv.Itoa(os.Getuid())
+	for _, v := range vols {
+		// The startup volume appears there as a symlink to /; its Trash is TrashPath. Bin.Size skips it and anything that is not a folder in the same way.
+		if v.Type()&fs.ModeSymlink != 0 || !v.IsDir() {
+			continue
+		}
+		if !c.env.MayRead(filepath.Join(c.env.volumes, v.Name(), ".Trashes", uid)) {
+			return false
+		}
+	}
+	return true
 }
 
 // binName is what the system calls its Trash.
@@ -264,6 +312,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 		Deletion:    cleanup.DeletePermanent,
 		Warning:     "清空后无法恢复，默认不选",
 		Items:       []cleanup.Item{},
+	}
+	if !c.mayMeasureTrash() {
+		// Measuring would read a Trash folder the read gate refuses; the Trash is left out of this check rather than measured in part.
+		return nil, nil, nil
 	}
 	u, err := c.env.Bin.Size(ctx)
 	switch {
@@ -289,6 +341,10 @@ func (c *Cleaner) trashCategory(ctx context.Context) (*cleanup.Category, *cleanu
 
 // Clean deletes what req names from the last scan. The Trash, when named, is emptied first, then the other items are handled by the cleanup.Executor; a request that does not match the last scan is rejected before anything is deleted.
 func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress func(cleanup.Progress)) (cleanup.CleanResult, error) {
+	// Checked first: an unknown mode must not empty the Trash, which the Executor's own check does not cover when only the Trash is named.
+	if err := cleanup.CheckMode(req.Mode); err != nil {
+		return cleanup.CleanResult{}, err
+	}
 	if !c.busy.TryLock() {
 		return cleanup.CleanResult{}, ErrBusy
 	}
@@ -307,6 +363,12 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	if !emptyTrash && len(rest.CategoryIDs) == 0 {
 		return cleanup.CleanResult{}, cleanup.ErrNothingSelected
 	}
+	rest.Mode = req.Mode
+	// An automatic clean never empties the Trash: the Trash is refused as one failure and the rest goes on.
+	refuseTrash := emptyTrash && req.Mode == cleanup.ModeTrashOnly
+	if refuseTrash {
+		emptyTrash = false
+	}
 	if len(rest.CategoryIDs) > 0 {
 		// The Executor plans the whole request before it deletes anything and checks ctx before every item, so a cancelled context validates the request without touching a file. Doing that first keeps a stale request from emptying the Trash.
 		probe, cancel := context.WithCancel(ctx)
@@ -319,6 +381,10 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 	res := cleanup.CleanResult{StartedAt: c.env.Now(), Failed: []cleanup.Failure{}, Categories: []cleanup.CategoryOutcome{}}
 	var trashOut *cleanup.CategoryOutcome
 	steps := 0
+	if refuseTrash {
+		res.Failed = append(res.Failed, cleanup.Failure{ItemID: trashItem.ID, CategoryID: catTrash, Path: trashItem.Path, Reason: cleanup.ReasonNoEmptyTrash()})
+		trashOut = &cleanup.CategoryOutcome{CategoryID: catTrash, Title: binName(), Failed: 1}
+	}
 	if emptyTrash {
 		steps = 1
 		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, CategoryID: catTrash, Path: trashItem.Path})
@@ -342,6 +408,8 @@ func (c *Cleaner) Clean(ctx context.Context, req cleanup.CleanRequest, progress 
 		res.Removed += r.Removed
 		res.Skipped += r.Skipped
 		res.Failed = append(res.Failed, r.Failed...)
+		res.Moved = append(res.Moved, r.Moved...)
+		res.Handled = append(res.Handled, r.Handled...)
 		res.Categories = append(res.Categories, r.Categories...)
 		res.Interrupted = r.Interrupted
 	} else {
@@ -366,6 +434,8 @@ func (c *Cleaner) empty(ctx context.Context, it cleanup.Item, res *cleanup.Clean
 	c.mu.Lock()
 	c.trash = nil
 	c.mu.Unlock()
+	// The Trash item is dropped from the scan whether or not emptying worked, so the caller drops it too.
+	res.Handled = append(res.Handled, it.ID)
 	if err == nil {
 		res.Removed++
 		out.Removed = 1

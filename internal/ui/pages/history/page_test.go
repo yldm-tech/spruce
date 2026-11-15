@@ -14,6 +14,7 @@ import (
 	enginehist "github.com/yldm-tech/spruce/internal/engine/history"
 	"github.com/yldm-tech/spruce/internal/engine/taskresult"
 	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/nav"
 	"github.com/yldm-tech/spruce/internal/ui/pages/history"
 	"github.com/yldm-tech/spruce/internal/ui/pages/history/historyfake"
 	"github.com/yldm-tech/spruce/internal/ui/store"
@@ -69,27 +70,44 @@ type page struct {
 	*nsgotest.App
 	svc    *historyfake.Service
 	stores *store.Stores
+	nav    *nav.Navigator
 }
 
-func start(t *testing.T, svc *historyfake.Service) *page {
+// options change how start mounts the page: 概览's controller (nil leaves it unwired, as in the app before it is) and a navigator call made before the page opens.
+type options struct {
+	overview *storefake.Overview
+	before   func(n *nav.Navigator)
+}
+
+func start(t *testing.T, svc *historyfake.Service) *page { return startWith(t, svc, options{}) }
+
+func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 	t.Helper()
 	fakes := storefake.New(t.TempDir())
+	fakes.Overview = o.overview
 	p := &page{svc: svc}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		d := fakes.Deps()
 		d.History = svc
 		p.stores = storefake.Provide(cx, d)
+		p.nav = nav.NewNavigator(cx, nav.History)
+		if o.before != nil {
+			o.before(p.nav)
+		}
+		nav.Key.Provide(cx, p.nav)
 		history.DepsKey.Provide(cx, history.Deps{Catalog: catalog})
 		return history.Page(cx)
 	}, nsgotest.Size(1052, 820))
 	return p
 }
 
-// rows lists the IDs of the rows inside selector, in order: the day sections hold no other buttons than the rows' heads. rows("role:region") lists every row shown.
+// rows lists the IDs of the rows inside selector, in order, by their heads' buttons. rows("role:region") lists every row shown.
 func (p *page) rows(selector string) []string {
 	var ids []string
 	for _, v := range p.Query(selector + " >> role:button") {
-		ids = append(ids, strings.TrimSuffix(strings.TrimPrefix(v.Props.TestID, "run-"), "-head"))
+		if id, ok := strings.CutSuffix(v.Props.TestID, "-head"); ok {
+			ids = append(ids, strings.TrimPrefix(id, "run-"))
+		}
 	}
 	return ids
 }
@@ -217,7 +235,7 @@ func TestRefreshesWhenARunIsRecorded(t *testing.T) {
 	fresh.StartedAt, fresh.EndedAt = daysAgo(0, 11, 0, 0).UTC(), daysAgo(0, 11, 0, 1).UTC()
 	svc.Record(fresh)
 	p.WaitFor("id:run-j2", wait)
-	p.Find("id:run-j2 >> text:开发者垃圾")
+	p.Find("id:run-j2 >> text:开发者")
 	if got := p.rows("id:day-" + dayKey(0)); !reflect.DeepEqual(got, []string{"j2", "m1", "j1"}) {
 		t.Errorf("rows %v", got)
 	}
@@ -259,7 +277,8 @@ func TestClearAsksFirstThenClears(t *testing.T) {
 	p.Press("id:clear-history")
 	p.WaitFor("id:clear-dialog", wait)
 	p.Find("text:清空操作历史？ >> nth=0")
-	if got := p.Find("id:clear-message").Text; !strings.Contains(got, "将删除全部 3 条操作记录，无法恢复") {
+	if got := p.Find("id:clear-message").Text; !strings.Contains(got, "将删除全部 3 条操作记录，无法恢复") ||
+		!strings.Contains(got, "之前移到"+format.TrashName()+"的项目也不能再在这里放回原处，记下的空间变化和上次检查的结果也会一并删除。") {
 		t.Errorf("message %q", got)
 	}
 	if !p.stores.Block.Blocked() {

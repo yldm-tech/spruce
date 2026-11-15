@@ -4,7 +4,7 @@ package icons
 
 // glyphs are the app's line icons on the 24-unit grid, by name: page/<route>, category/<Category.Icon key>, task/<maintenance.Icon> and the shared ones.
 var glyphs = map[string]glyph{
-	"page/smart-scan":    {round: true, paths: `<circle cx="12" cy="12" r="8"/> <path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>`},
+	"page/overview":      {round: true, paths: `<circle cx="12" cy="12" r="8"/> <path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>`},
 	"page/system-junk":   {round: true, paths: `<path d="M14 3l-3 8"/> <path d="M5 12h12l1.5 8h-15z"/>`},
 	"page/dev-junk":      {round: true, paths: `<path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/>`},
 	"page/installers":    {round: true, paths: `<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>`},

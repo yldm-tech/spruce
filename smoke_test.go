@@ -14,7 +14,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/shell"
 )
 
-// TestSmoke starts the app on the real engine with a temporary home and data folder, checks that it opens on 智能扫描, goes to 维护 through the sidebar and finds the task catalog there. It never presses 扫描 or 运行, so nothing is scanned, cleaned or run.
+// TestSmoke starts the app on the real engine with a temporary home and data folder, checks that it opens on 概览, goes to 维护 through the sidebar and finds the task catalog there. It never presses 开始检查 or 运行, so nothing is scanned, cleaned or run.
 func TestSmoke(t *testing.T) {
 	dir := t.TempDir()
 	home, dataDir := dir+string(os.PathSeparator)+"home", dir+string(os.PathSeparator)+"data"
@@ -32,10 +32,18 @@ func TestSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The background work (the CPU monitor) is not needed to look at the pages.
+	// 概览's controller is wired, but its loop is background work and does not start: no check reads anything (the sources run real tools), nothing is scheduled and the CPU monitor stays off.
+	if deps.Stores.Overview == nil {
+		t.Fatal("概览's controller is not wired")
+	}
 	deps.Background = nil
 	a := nsgotest.Start(t, core.AppRoot(shell.App(deps)), nsgotest.Size(1280, 820))
-	a.WaitFor("text:一次扫描系统垃圾、开发者垃圾和安装包，按推荐勾选可以放心清理的", 10*time.Second)
+	a.WaitFor("text:Spruce 会在后台定期检查，告诉你哪些空间可以放心释放", 10*time.Second)
+	// Opening 概览 asks the controller for a check, which waits for the loop that is not running: 概览 shows it stopped and offers 开始检查.
+	a.WaitFor("id:overview-page >> id:check-start", 10*time.Second)
+	if got := len(a.Query("id:sidebar >> role:link")); got != 7 {
+		t.Errorf("the sidebar has %d entries, want 7", got)
+	}
 	a.Screenshot("smoke-home")
 
 	a.Press("id:nav-maintenance")

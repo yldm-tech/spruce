@@ -19,5 +19,9 @@
 //
 // # Defaults
 //
-// Defaults(home) is the platform's defaults: CPU alert at 40 % of one core for 10 minutes, enabled; developer project roots among ~/Workspace, ~/Projects, ~/Developer, ~/code and ~/src (and %USERPROFILE%\source\repos on Windows) that exist; build output older than 30 days; installers in Downloads and Desktop; large files from 500 MB; history kept 180 days; confirm before cleaning.
+// Defaults(home) is the platform's defaults: CPU alert at 40 % of one core for 10 minutes, enabled; developer project roots among ~/Workspace, ~/Projects, ~/Developer, ~/code and ~/src (and %USERPROFILE%\source\repos on Windows) that exist; build output older than 30 days; installers in Downloads and Desktop; large files from 500 MB; history kept 180 days; confirm before cleaning (no longer read); keep running in the menu bar when the window closes; no low-disk alert, its threshold 20 GB; scheduled checks on; every automatic rule off and the weekly summary on.
+//
+// # Versions
+//
+// Version 2 added Background, Automation and General's KeepInTray, LowDiskAlert and LowDiskGB. A version 1 file decodes over the defaults, so it gets their defaults; Normalize then stamps version 2. A version 1 build reading a version 2 file ignores the new fields and drops them on its next write, an accepted downgrade.
 package settings
