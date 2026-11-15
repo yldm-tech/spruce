@@ -1,6 +1,6 @@
 package installers
 
-// ScanDescription is what the scan looks for, as the engine (internal/engine/installers) classifies files on each system.
+// ScanDescription is what the check looks for, as the engine (internal/engine/installers) classifies files on each system.
 func ScanDescription(windows bool) string {
 	if windows {
 		return "在下面的文件夹和它们的下一层子文件夹里查找 .exe、.msi、.msix、.appx 安装程序和 .iso 映像。"
@@ -25,8 +25,5 @@ func Notice(windows bool) string {
 	return TrashLine(false) + "最近 7 天内下载的和仍在挂载的默认不选。"
 }
 
-// NoFolders is the idle line when 设置 lists no folders to search.
+// NoFolders is the empty view's line when 设置 lists no folders to search.
 const NoFolders = "还没有要查找的文件夹，可以在「设置」里添加。"
-
-// folderChars is how many characters of a folder's path the idle list shows before it shortens the middle.
-const folderChars = 64

@@ -25,7 +25,7 @@ func shellScreensApp(t *testing.T, start nav.Route) (*nsgotest.App, *showing) {
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
 	d := shell.Deps{Stores: fakes.Deps(), Start: start,
 		Overview:   overview.Deps{Files: &cleanflowfake.Files{}},
-		SystemJunk: systemjunk.Deps{Cleanup: &cleanflowfake.Cleaner{}, Files: &cleanflowfake.Files{}}}
+		SystemJunk: systemjunk.Deps{Files: &cleanflowfake.Files{}}}
 	stores := &showing{}
 	a := nsgotest.Start(t, core.AppRoot(func(cx *core.Scope) {
 		shell.App(d)(cx)
@@ -47,7 +47,7 @@ func TestScreensShell(t *testing.T) {
 
 	d, _ := shellScreensApp(t, nav.SystemJunk)
 	d.WaitFor("id:back", 10*time.Second)
-	d.WaitFor("id:scan", 10*time.Second)
+	d.WaitFor("id:drill-system-junk", 10*time.Second)
 	d.Screenshot("drill-back")
 }
 

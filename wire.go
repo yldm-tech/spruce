@@ -139,9 +139,6 @@ func wire(e env) (shell.Deps, error) {
 	app.SetLedger(cleanups, ledger)
 	app.RegisterCleaner(cleanups, app.CleanerSmartScan, merged(gate.Foreground))
 	app.RegisterCleaner(cleanups, app.CleanerSmartScanBackground, merged(gate.Background))
-	app.RegisterCleaner(cleanups, app.CleanerSystemJunk, newSystemJunk(nil))
-	app.RegisterCleaner(cleanups, app.CleanerDevJunk, newDevJunk(nil))
-	app.RegisterCleaner(cleanups, app.CleanerInstallers, newInstallers(nil))
 
 	files := app.NewFiles(e.runner, trash.System(), e.log)
 	maint := app.NewMaintenance(svc, historyStore, e.log, activity)
@@ -234,9 +231,9 @@ func wire(e env) (shell.Deps, error) {
 		Stores: store.Deps{Settings: settingsSvc, SettingsFeed: settingsStore, History: historySvc, Alerts: healthSvc,
 			Permissions: permissions, Locations: spaceSvc, Overview: overview},
 		Overview:    uioverview.Deps{Files: files, Home: e.home},
-		SystemJunk:  uisystemjunk.Deps{Cleanup: cleanups, Files: files},
-		DevJunk:     uidevjunk.Deps{Cleanup: cleanups, Files: files},
-		Installers:  uiinstallers.Deps{Cleanup: cleanups, Files: files},
+		SystemJunk:  uisystemjunk.Deps{Files: files},
+		DevJunk:     uidevjunk.Deps{Files: files},
+		Installers:  uiinstallers.Deps{Files: files},
 		Uninstall:   uiuninstall.Deps{Uninstall: uninstaller, Files: files},
 		Space:       uispace.Deps{Space: spaceSvc, Files: files},
 		Maintenance: uimaintenance.Deps{Maintenance: maint},

@@ -1,6 +1,9 @@
 package cleanflow
 
-import "github.com/yldm-tech/spruce/internal/engine/cleanup"
+import (
+	"github.com/yldm-tech/spruce/internal/engine/advice"
+	"github.com/yldm-tech/spruce/internal/engine/cleanup"
+)
 
 // Selection is which items are checked: category ID to the set of its checked item IDs. A category without an entry has none checked. A Selection is a value: the functions here return a new one and never change the one they are given, so a signal can hold it.
 type Selection map[string]map[string]struct{}
@@ -45,13 +48,13 @@ func (s Selection) clone() Selection {
 	return out
 }
 
-// DefaultSelection checks what the scan says starts checked: every item of a category marked selected, and each item marked selected on its own (a category may start checked in part).
+// DefaultSelection checks what the scan says starts checked: every item of a category marked selected, and each item marked selected on its own (a category may start checked in part). A held item (Item.Hold) never starts checked.
 func DefaultSelection(categories []cleanup.Category) Selection {
 	sel := Selection{}
 	for _, c := range categories {
 		var picked []string
 		for _, it := range c.Items {
-			if c.Selected || it.Selected {
+			if (c.Selected || it.Selected) && it.Hold == "" {
 				picked = append(picked, it.ID)
 			}
 		}
@@ -62,40 +65,60 @@ func DefaultSelection(categories []cleanup.Category) Selection {
 	return sel
 }
 
-// CategoryState says whether none, some or all of a category's items are checked; an empty category is CheckNone.
+// CategoryState says whether none, some or all of a category's items that may be checked are checked; a category with none that may be (empty, or every item held) is CheckNone.
 func CategoryState(c cleanup.Category, sel Selection) CheckState {
-	n := sel.Count(c.ID)
-	if n == 0 || len(c.Items) == 0 {
+	n, all := sel.Count(c.ID), Selectable(c)
+	if n == 0 || all == 0 {
 		return CheckNone
 	}
-	if n >= len(c.Items) {
+	if n >= all {
 		return CheckAll
 	}
 	return CheckSome
 }
 
-// itemIDs returns the IDs of c's items.
+// Selectable counts the items of c that may be checked: every one but those held (Item.Hold), which the cleaners refuse.
+func Selectable(c cleanup.Category) int {
+	n := 0
+	for _, it := range c.Items {
+		if it.Hold == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// itemIDs returns the IDs of c's items that may be checked.
 func itemIDs(c cleanup.Category) []string {
-	ids := make([]string, len(c.Items))
-	for i, it := range c.Items {
-		ids[i] = it.ID
+	ids := make([]string, 0, len(c.Items))
+	for _, it := range c.Items {
+		if it.Hold == "" {
+			ids = append(ids, it.ID)
+		}
 	}
 	return ids
 }
 
-// SetCategory checks or unchecks every item of a category.
+// SetCategory checks or unchecks every item of a category that may be checked.
 func SetCategory(sel Selection, c cleanup.Category, on bool) Selection {
 	next := sel.clone()
-	if on && len(c.Items) > 0 {
-		next[c.ID] = set(itemIDs(c))
+	if ids := itemIDs(c); on && len(ids) > 0 {
+		next[c.ID] = set(ids)
 	} else {
 		delete(next, c.ID)
 	}
 	return next
 }
 
-// SetItem checks or unchecks one item of a category.
+// SetItem checks or unchecks one item of a category; a held item stays unchecked.
 func SetItem(sel Selection, c cleanup.Category, itemID string, on bool) Selection {
+	if on {
+		for _, it := range c.Items {
+			if it.ID == itemID && it.Hold != "" {
+				return sel
+			}
+		}
+	}
 	items := make(map[string]struct{}, len(sel[c.ID])+1)
 	for id := range sel[c.ID] {
 		items[id] = struct{}{}
@@ -114,15 +137,65 @@ func SetItem(sel Selection, c cleanup.Category, itemID string, on bool) Selectio
 	return next
 }
 
-// SelectAll checks every item of every category.
+// SelectAll checks every item of every category that may be checked.
 func SelectAll(categories []cleanup.Category) Selection {
 	sel := Selection{}
 	for _, c := range categories {
-		if len(c.Items) > 0 {
-			sel[c.ID] = set(itemIDs(c))
+		if ids := itemIDs(c); len(ids) > 0 {
+			sel[c.ID] = set(ids)
 		}
 	}
 	return sel
+}
+
+// Reconcile is sel over a newer scan of categories: the checks of items still there and not held stay, every other one goes. Categories not among categories keep nothing.
+func Reconcile(sel Selection, categories []cleanup.Category) Selection {
+	out := Selection{}
+	for _, c := range categories {
+		ids := sel[c.ID]
+		if len(ids) == 0 {
+			continue
+		}
+		var kept []string
+		for _, it := range c.Items {
+			if _, ok := ids[it.ID]; ok && it.Hold == "" {
+				kept = append(kept, it.ID)
+			}
+		}
+		if len(kept) > 0 {
+			out[c.ID] = set(kept)
+		}
+	}
+	return out
+}
+
+// Refs are the checked items of categories, in their order, as advice names items of a merged scan.
+func Refs(categories []cleanup.Category, sel Selection) []advice.ItemRef {
+	var out []advice.ItemRef
+	for _, c := range categories {
+		ids := sel[c.ID]
+		if len(ids) == 0 {
+			continue
+		}
+		for _, it := range c.Items {
+			if _, ok := ids[it.ID]; ok {
+				out = append(out, advice.ItemRef{CategoryID: c.ID, ItemID: it.ID})
+			}
+		}
+	}
+	return out
+}
+
+// ItemsRequest is the request for the checked items of categories with every item named, so a clean acts on exactly what the view showed when the user asked, whatever a newer check found since.
+func ItemsRequest(categories []cleanup.Category, sel Selection) cleanup.CleanRequest {
+	req := cleanup.CleanRequest{CategoryIDs: []string{}}
+	for _, ref := range Refs(categories, sel) {
+		if n := len(req.CategoryIDs); n == 0 || req.CategoryIDs[n-1] != ref.CategoryID {
+			req.CategoryIDs = append(req.CategoryIDs, ref.CategoryID)
+		}
+		req.ItemIDs = append(req.ItemIDs, ref.ItemID)
+	}
+	return req
 }
 
 // WithinGroup applies next, a selection a CategoryList over group made, to group's categories only, keeping the checks of every other category: a list that shows part of a scan has 全选 and 全不选 act on its own part.
@@ -167,35 +240,4 @@ func SelectedTotals(categories []cleanup.Category, sel Selection) Totals {
 		}
 	}
 	return t
-}
-
-// ToCleanRequest turns a selection into the request Cleanup.Clean takes: every category with a checked item, and the item IDs only when some category is checked in part (the Go side then deletes exactly those items). IDs no longer in the categories are left out.
-func ToCleanRequest(categories []cleanup.Category, sel Selection) cleanup.CleanRequest {
-	req := cleanup.CleanRequest{CategoryIDs: []string{}}
-	var itemIDs []string
-	partial := false
-	for _, c := range categories {
-		ids := sel[c.ID]
-		if len(ids) == 0 {
-			continue
-		}
-		picked := 0
-		for _, it := range c.Items {
-			if _, ok := ids[it.ID]; ok {
-				itemIDs = append(itemIDs, it.ID)
-				picked++
-			}
-		}
-		if picked == 0 {
-			continue
-		}
-		req.CategoryIDs = append(req.CategoryIDs, c.ID)
-		if picked < len(c.Items) {
-			partial = true
-		}
-	}
-	if partial {
-		req.ItemIDs = itemIDs
-	}
-	return req
 }
