@@ -2,12 +2,16 @@ package space
 
 import (
 	"math"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yldm-tech/spruce/internal/app"
+	"github.com/yldm-tech/spruce/internal/engine/growth"
 	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
 // EntryLabel is what the page calls an entry: its name, or 「其他 N 项」 and 「N 个小文件」 for the groups the scan folded.
@@ -231,3 +235,101 @@ func slice(row []tile, value, x0, y0, x1, y1 float64) {
 		row[i].y1 = y0
 	}
 }
+
+// Toast times: a message alone stays 6 seconds, one with 撤销 10 (as the shell's).
+const (
+	toastShort = 6 * time.Second
+	toastLong  = 10 * time.Second
+)
+
+// TrashToast is the toast after a move to the Trash that moved something. With undo (macOS, where Spruce can put moves back) it offers 撤销 for what the undo ledger kept, says what it could not keep and what was left, and offers 查看 when something was left; without it (Windows) it says the Recycle Bin can restore the items.
+func TrashToast(res app.SpaceTrashResult, undo bool) store.Toast {
+	trash := format.TrashName()
+	text := "已移到" + trash + " " + format.Bytes(res.Trashed)
+	failed := len(res.Failed)
+	if !undo {
+		t := store.Toast{Text: text + "，需要时可以在" + trash + "里还原", Duration: toastShort}
+		if failed > 0 {
+			t.ViewRun = res.RunID
+		}
+		return t
+	}
+	t := store.Toast{Duration: toastLong}
+	switch {
+	case failed > 0:
+		text += "，" + strconv.Itoa(failed) + " 项未能处理"
+		t.ViewRun = res.RunID
+	case res.NotUndoable > 0:
+		text += "，其中 " + strconv.Itoa(res.NotUndoable) + " 项不能撤销"
+	}
+	if res.Undoable && res.RunID != "" {
+		t.UndoRun = res.RunID
+	}
+	t.Text = text
+	return t
+}
+
+// weekdays are 星期 by time.Weekday.
+var weekdays = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+
+// GrowthWhen is when a growth started: hours within a day, the weekday within a week, else the date.
+func GrowthWhen(since, now time.Time) string {
+	d := now.Sub(since)
+	switch {
+	case d < 24*time.Hour:
+		return strconv.Itoa(max(1, int(d/time.Hour))) + " 小时前"
+	case d < 7*24*time.Hour:
+		return weekdays[since.In(now.Location()).Weekday()]
+	}
+	return format.MonthDay(since, now)
+}
+
+// GrowthSentence is a growth row's sentence: 「从周二到现在涨了 6 GB」, 「至少涨了」 for a folder that was too small to be listed before.
+func GrowthSentence(g growth.Growth, now time.Time) string {
+	verb := "涨了 "
+	if g.AtLeast {
+		verb = "至少涨了 "
+	}
+	return "从" + GrowthWhen(g.Since, now) + "到现在" + verb + format.Bytes(g.After-g.Before)
+}
+
+// GrowthName is a growth row's name: its label, else its path with the home folder written ~, shortened in the middle.
+func GrowthName(g growth.Growth, home string) string {
+	if g.Label != "" {
+		return g.Label
+	}
+	p := g.Path
+	if home != "" {
+		if rel, err := filepath.Rel(home, p); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			p = "~"
+			if rel != "." {
+				p += string(filepath.Separator) + rel
+			}
+		}
+	}
+	return format.TruncateMiddle(p, 48)
+}
+
+// GrowthWindow is a tab of 最近变化.
+type GrowthWindow time.Duration
+
+// The tabs of 最近变化, 7 天 first shown.
+const (
+	GrowthDay   = GrowthWindow(24 * time.Hour)
+	GrowthWeek  = GrowthWindow(7 * 24 * time.Hour)
+	GrowthMonth = GrowthWindow(30 * 24 * time.Hour)
+)
+
+// Label is the tab's name: 24 小时, 7 天, 30 天.
+func (w GrowthWindow) Label() string {
+	switch w {
+	case GrowthDay:
+		return "24 小时"
+	case GrowthMonth:
+		return "30 天"
+	}
+	return "7 天"
+}
+
+// GrowthNone is what 最近变化 says when nothing grew enough over w.
+func GrowthNone(w GrowthWindow) string { return "最近 " + w.Label() + "没有明显变大的位置。" }

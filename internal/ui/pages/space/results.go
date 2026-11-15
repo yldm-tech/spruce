@@ -7,7 +7,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/ui/async"
-	"github.com/yldm-tech/spruce/internal/ui/format"
+	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
 // Tab is the results' view.
@@ -22,14 +22,13 @@ const (
 // NoticeKind is what a notice reports.
 type NoticeKind uint8
 
-// The notices: none, a move to the Trash that worked, and something that did not.
+// The notices: none, and something that did not work. A move that worked shows the toast instead (TrashToast).
 const (
 	NoticeNone NoticeKind = iota
-	NoticeDone
 	NoticeError
 )
 
-// Notice is the line under the tabs after an action.
+// Notice is the line under the tabs after an action that did not work.
 type Notice struct {
 	Kind NoticeKind
 	Text string
@@ -42,7 +41,7 @@ type Results struct {
 	page   *State
 	svc    Service
 	files  Files
-	bump   func()
+	moves  Moves
 	scanID string
 
 	// Folder is the id of the folder open on the 空间分布 tab.
@@ -57,8 +56,9 @@ type Results struct {
 	LargeErr *core.Signal[string]
 	// Confirming is the entry the move to the Trash waits to be confirmed for, nil when none.
 	Confirming *core.Signal[*app.SpaceEntry]
-	Trashing   *core.Signal[bool]
-	Notice     *core.Signal[Notice]
+	// Trashing is set while a move to the Trash runs, confirmed or not.
+	Trashing *core.Signal[bool]
+	Notice   *core.Signal[Notice]
 	RevealErr  *core.Signal[string]
 
 	listSeq, largeSeq int
@@ -66,9 +66,19 @@ type Results struct {
 	largeStale bool
 }
 
-// NewResults makes the controller of the scan sum in cx and opens its root. bump runs after every move to the Trash (the Trash's size changed).
-func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, bump func()) *Results {
-	r := &Results{cx: cx, ctx: cx.Context(), page: page, svc: page.svc, files: files, bump: bump, scanID: sum.ScanID,
+// Moves is how a move to the Trash goes on around the page: whether it asks first and what it does after.
+type Moves struct {
+	// Undo reports whether a move can be undone from Spruce (macOS with 概览's controller, OverviewState.CanUndo): then it happens at once and the toast offers 撤销; otherwise it is confirmed first.
+	Undo func() bool
+	// Bump runs after every move (the Trash's size changed).
+	Bump func()
+	// Toast shows the toast after a move that moved something.
+	Toast func(store.Toast)
+}
+
+// NewResults makes the controller of the scan sum in cx and opens its root.
+func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, moves Moves) *Results {
+	r := &Results{cx: cx, ctx: cx.Context(), page: page, svc: page.svc, files: files, moves: moves, scanID: sum.ScanID,
 		Folder:     core.NewSignal(cx, sum.Root.ID),
 		Tab:        core.NewSignal(cx, TabMap),
 		Listing:    core.NewSignalFunc[*app.SpaceListing](cx, nil, nil),
@@ -153,13 +163,17 @@ func (r *Results) Reveal(e app.SpaceEntry) {
 		})
 }
 
-// RequestTrash asks to confirm moving e to the Trash, or says why it cannot move.
+// RequestTrash moves e to the Trash at once when the move can be undone, else asks to confirm it; an entry the page may not move says why instead.
 func (r *Results) RequestTrash(e app.SpaceEntry) {
 	if e.Locked != "" {
 		r.Notice.Set(Notice{Kind: NoticeError, Text: "「" + EntryLabel(e) + "」不能移走：" + e.Locked})
 		return
 	}
 	r.Notice.Set(Notice{})
+	if r.moves.Undo != nil && r.moves.Undo() {
+		r.trash(e)
+		return
+	}
 	r.Confirming.Set(&e)
 }
 
@@ -170,13 +184,19 @@ func (r *Results) CancelTrash() {
 	}
 }
 
-// ConfirmTrash moves the entry waiting for confirmation to the Trash, then corrects the sizes the page shows and says what happened.
+// ConfirmTrash moves the entry waiting for confirmation to the Trash.
 func (r *Results) ConfirmTrash() {
-	e := r.Confirming.GetUntracked()
-	if e == nil || r.Trashing.GetUntracked() {
+	if e := r.Confirming.GetUntracked(); e != nil {
+		r.trash(*e)
+	}
+}
+
+// trash moves entry to the Trash, one move at a time, then corrects the sizes the page shows and says what happened: the toast when something moved, the notice when nothing did.
+func (r *Results) trash(entry app.SpaceEntry) {
+	if r.Trashing.GetUntracked() {
 		return
 	}
-	entry := *e
+	undo := r.moves.Undo != nil && r.moves.Undo()
 	r.Trashing.Set(true)
 	async.Do(r.cx, r.ctx, func(ctx context.Context) (app.SpaceTrashResult, error) {
 		return r.svc.Trash(ctx, r.scanID, []string{entry.Path})
@@ -188,24 +208,26 @@ func (r *Results) ConfirmTrash() {
 			return
 		}
 		r.page.trashed(r.scanID, res.Root)
+		r.page.Moved(res.RunID)
 		r.loadListing()
 		if r.Tab.GetUntracked() == TabLarge {
 			r.loadLarge()
 		} else {
 			r.largeStale = true
 		}
-		if r.bump != nil {
-			r.bump()
+		if r.moves.Bump != nil {
+			r.moves.Bump()
 		}
-		name := EntryLabel(entry)
 		if res.Items > 0 {
-			r.Notice.Set(Notice{Kind: NoticeDone, Text: "已把「" + name + "」移到" + format.TrashName() + "，清倒" + format.TrashName() + "后可释放 " + format.Bytes(res.Trashed)})
+			if r.moves.Toast != nil {
+				r.moves.Toast(TrashToast(res, undo))
+			}
 			return
 		}
 		reason := "原因不明"
 		if len(res.Failed) > 0 {
 			reason = res.Failed[0].Reason
 		}
-		r.Notice.Set(Notice{Kind: NoticeError, Text: "「" + name + "」没有移走：" + reason})
+		r.Notice.Set(Notice{Kind: NoticeError, Text: "「" + EntryLabel(entry) + "」没有移走：" + reason})
 	})
 }

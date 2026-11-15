@@ -54,6 +54,10 @@ type State struct {
 	// stopped is set by Stop, so a scan the user stopped goes back without an error.
 	stopped bool
 	cancel  context.CancelFunc
+	// moved are the history runs of this page's moves to the Trash; when 撤销 puts one back, the page scans its location again (Undone).
+	moved map[string]bool
+	// rescanOnReturn is set when an undo came while the start screen showed over the results: going back to them scans first.
+	rescanOnReturn bool
 }
 
 // NewState makes the controller in cx, the page's scope, and asks the service for the scan it keeps.
@@ -66,6 +70,7 @@ func NewState(cx *core.Scope, svc Service) *State {
 		Progress: core.NewSignalFunc[*app.SpaceProgress](cx, nil, nil),
 		Err:      core.NewSignal(cx, ""),
 		Choosing: core.NewSignal(cx, false),
+		moved:    map[string]bool{},
 	}
 	async.Do(cx, s.ctx, func(context.Context) (*app.SpaceSummary, error) { return svc.Current(), nil },
 		func(sum *app.SpaceSummary, _ error) {
@@ -112,6 +117,7 @@ func (s *State) Scan(req ScanRequest) {
 		if err == nil {
 			s.Current.Set(&sum)
 			s.Picking.Set(false)
+			s.rescanOnReturn = false
 		} else if !s.stopped {
 			s.Err.Set(err.Error())
 		}
@@ -164,10 +170,42 @@ func (s *State) Choose() {
 // ChangeLocation shows the start screen over the results (更换位置).
 func (s *State) ChangeLocation() { s.Picking.Set(true) }
 
-// Return goes back from the start screen to the last scan's results.
+// Return goes back from the start screen to the last scan's results, scanning them again first when an undo changed them meanwhile.
 func (s *State) Return() {
 	s.Err.Set("")
 	s.Picking.Set(false)
+	if s.rescanOnReturn {
+		s.rescanOnReturn = false
+		s.Rescan()
+	}
+}
+
+// ScanPath scans the folder path, named after it (空间变化's 在空间透视中查看).
+func (s *State) ScanPath(path string) {
+	name := format.BaseName(path)
+	if name == "" {
+		name = path
+	}
+	s.Scan(ScanRequest{Path: path, Name: name})
+}
+
+// Moved remembers runID, the history run of a move to the Trash this page made, so its undo scans again.
+func (s *State) Moved(runID string) {
+	if runID != "" {
+		s.moved[runID] = true
+	}
+}
+
+// Undone is told about every undo that put something back: when it was one of this page's moves, the last scan's sizes are out of date, so the page scans its location again (once the start screen it shows over them is left, if it does).
+func (s *State) Undone(runID string) {
+	if !s.moved[runID] || s.Current.GetUntracked() == nil || s.Scanning.GetUntracked() != nil {
+		return
+	}
+	if s.Picking.GetUntracked() {
+		s.rescanOnReturn = true
+		return
+	}
+	s.Rescan()
 }
 
 // trashed replaces the root of the scan scanID, if it is still the current one, with root corrected after a move to the Trash.

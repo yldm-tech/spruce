@@ -16,11 +16,27 @@ import (
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
-// Page is the 空间透视 page.
+// Page is the 空间透视 page. A link that asked it for a folder (空间变化's 在空间透视中查看, Navigator.GoSpace) starts scanning that folder as it opens; an undo of one of its moves scans its location again.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	s := NewState(cx, deps.Space)
 	phase := core.NewMemo(cx, s.Phase)
+	if n := nav.Use(cx); n != nil {
+		if path := n.TakeSpacePath(); path != "" {
+			s.ScanPath(path)
+		}
+	}
+	if stores := store.Use(cx); stores != nil {
+		seen := core.Untracked(cx, stores.Overview.LastUndo).Seq
+		cx.Effect(func() {
+			u := stores.Overview.LastUndo()
+			if u.Seq == seen {
+				return
+			}
+			seen = u.Seq
+			cx.Untrack(func() { s.Undone(u.RunID) })
+		})
+	}
 
 	actions := core.Dynamic(func(*core.Scope) core.Node {
 		switch phase.Get() {
@@ -37,7 +53,7 @@ func Page(cx *core.Scope) core.Node {
 	body := core.Dynamic(func(*core.Scope) core.Node {
 		switch phase.Get() {
 		case PhaseStart:
-			return core.Func(func(cx *core.Scope) core.Node { return startView(cx, s) })
+			return core.Func(func(cx *core.Scope) core.Node { return startView(cx, s, deps.Files) })
 		case PhaseScanning:
 			return core.Func(func(*core.Scope) core.Node { return scanningView(s) })
 		case PhaseResults:
@@ -80,7 +96,8 @@ func scanningView(s *State) core.Node {
 
 // resultsPhase is the page after a scan: why a scan failed, if one did, the scan's results (a new controller for every scan) and the action bar with 重新扫描.
 func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
-	bump := store.Use(cx).Trash.Bump
+	stores := store.Use(cx)
+	moves := Moves{Undo: func() bool { return stores.Overview.State().CanUndo }, Bump: stores.Trash.Bump, Toast: stores.Toasts.Show}
 	scanID := core.NewMemo(cx, func() string {
 		if sum := s.Current.Get(); sum != nil {
 			return sum.ScanID
@@ -100,7 +117,7 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 				return core.Group{}
 			}
 			return core.Func(func(cx *core.Scope) core.Node {
-				r := NewResults(cx, s, core.Untracked(cx, summary), files, bump)
+				r := NewResults(cx, s, core.Untracked(cx, summary), files, moves)
 				return resultsView(cx, r, summary)
 			})
 		}),
@@ -121,7 +138,7 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 	}
 }
 
-// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash.
+// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash that cannot be undone from Spruce (Windows).
 func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) core.Node {
 	// The confirmation gives the focus back to the 移到废纸篓 button that opened it, through this Ref pointed at that button.
 	opener := new(core.Ref)
@@ -136,10 +153,6 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 	tabs := kit.Tabs[Tab]{Label: "查看方式", Value: r.Tab.Get, OnChange: r.SetTab,
 		Options: []kit.Option[Tab]{{Value: TabMap, Label: "空间分布", TestID: "tab-map"}, {Value: TabLarge, Label: "大文件", TestID: "tab-large"}}}
 
-	notice := core.Show{When: func() bool { return r.Notice.Get().Kind == NoticeDone }, Then: func(*core.Scope) core.Node {
-		return core.Text{ContentFunc: func() string { return r.Notice.Get().Text }, Role: core.RoleText, LiveRegion: core.LiveRegionPolite, TestID: "space-notice",
-			Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}}
-	}}
 	noticeErr := kit.ErrorLine{TestID: "space-notice-error", Text: func() string {
 		if n := r.Notice.Get(); n.Kind == NoticeError {
 			return n.Text
@@ -166,9 +179,9 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 			return "将把「" + EntryLabel(*e) + "」（" + format.Bytes(e.Size) + "）移到" + trash + "。需要时可以从" + trash + "放回原处。"
 		}}}
 
-	return core.View{TestID: "space-results", Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
+	return core.View{TestID: "space-results", Busy: r.Trashing.Get, Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
 		core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
-		tabs, notice, noticeErr, revealErr, mapPanel, largePanel, confirm,
+		tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
 	}}
 }
 
