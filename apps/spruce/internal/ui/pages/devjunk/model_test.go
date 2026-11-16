@@ -317,3 +317,25 @@ func TestArtifactsOfAndProjectNames(t *testing.T) {
 		t.Errorf("many %q", got)
 	}
 }
+
+// 最近活动 puts the most recently active first and a project of unknown activity last; ties keep the larger first, as 大小 does.
+func TestSortProjects(t *testing.T) {
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ps := []engdev.Project{{ID: "big", LastActive: at}, {ID: "unknown"}, {ID: "tie", LastActive: at}, {ID: "recent", LastActive: at.Add(time.Hour)}}
+	ids := func(ps []engdev.Project) []string {
+		out := make([]string, len(ps))
+		for i, p := range ps {
+			out[i] = p.ID
+		}
+		return out
+	}
+	if got := ids(devjunk.SortProjects(ps, devjunk.SortSize)); !slices.Equal(got, []string{"big", "unknown", "tie", "recent"}) {
+		t.Errorf("by size %v", got)
+	}
+	if got := ids(devjunk.SortProjects(ps, devjunk.SortActive)); !slices.Equal(got, []string{"recent", "big", "tie", "unknown"}) {
+		t.Errorf("by activity %v", got)
+	}
+	if ps[0].ID != "big" {
+		t.Error("sorting changed the check's projects")
+	}
+}

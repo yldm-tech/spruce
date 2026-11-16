@@ -19,18 +19,16 @@ func ScanDescription(windows bool) string {
 	return "检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓。只看你自己的用户文件夹，不需要管理员权限。"
 }
 
-// Page is the 系统垃圾 view.
+// Page is the 系统垃圾 view. Its header says what it is for; what the check looks at (ScanDescription) shows only when it found nothing, where it tells how far the check looked.
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
-	description := ScanDescription(runtime.GOOS == "windows")
 	return cleanflow.DrillPage{
 		Route:            nav.SystemJunk,
 		Toast:            overview.CleanToast,
-		Notice:           func() string { return description },
 		ListLabel:        "可以清理的系统垃圾",
 		SizeLabel:        "已选大小",
 		EmptyTitle:       "没有找到系统垃圾",
-		EmptyDescription: "缓存、日志和临时文件都很干净，过段时间再来看看。",
+		EmptyDescription: ScanDescription(runtime.GOOS == "windows"),
 		Reveal:           revealer(deps.Files),
 	}
 }

@@ -2,6 +2,7 @@ package devjunk
 
 import (
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -144,6 +145,24 @@ func FilterProjects(projects []engdev.Project, f ProjectFilter, days int, now ti
 			out = append(out, p)
 		}
 	}
+	return out
+}
+
+// ProjectSort is the order of the 项目 tab.
+type ProjectSort string
+
+const (
+	SortSize   ProjectSort = "size"
+	SortActive ProjectSort = "active"
+)
+
+// SortProjects orders projects (largest first, as the check groups them) by s: as they are for SortSize, by last activity, most recent first, for SortActive, a project whose activity is unknown last and ties kept largest first.
+func SortProjects(projects []engdev.Project, s ProjectSort) []engdev.Project {
+	if s != SortActive {
+		return projects
+	}
+	out := slices.Clone(projects)
+	slices.SortStableFunc(out, func(a, b engdev.Project) int { return b.LastActive.Compare(a.LastActive) })
 	return out
 }
 

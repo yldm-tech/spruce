@@ -181,7 +181,7 @@ func TestDrillListsItsSource(t *testing.T) {
 		t.Error("defaults")
 	}
 	p.Find("id:category-system-junk:logs >> text:排查问题时可能用得到")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 3 项" {
+	if got := p.toolbar(); got != "3 类，共 13.5 MB" {
 		t.Errorf("toolbar %q", got)
 	}
 	if got := p.stat("可释放"); got != "13 MB" {
@@ -222,7 +222,7 @@ func TestCategoryListItems(t *testing.T) {
 func TestCategoryListSelectAllAndNone(t *testing.T) {
 	p := start(t, ready())
 	p.Press("id:select-all")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 4 项" {
+	if got := p.stat("已选择"); got != "4 项" {
 		t.Errorf("toolbar %q", got)
 	}
 	p.Press("id:select-none")

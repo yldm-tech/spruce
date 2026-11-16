@@ -16,8 +16,8 @@ import (
 	"spruce/apps/spruce/internal/ui/store"
 )
 
-// projectsTab is 项目: the filters and the projects largest first with 全选 and 全不选 (which leave held projects alone), whose 清理 is in the pinned bar (projectsBar); or why there are none.
-func projectsTab(cx *core.Scope, d *cleanflow.Drill, l *lists, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
+// projectsTab is 项目: the filters, the order and the projects with 全选 and 全不选 (which leave held projects alone), whose 清理 is in the pinned bar (projectsBar); or why there are none.
+func projectsTab(cx *core.Scope, d *cleanflow.Drill, l *lists, filter *core.Signal[ProjectFilter], order *core.Signal[ProjectSort], rev reveal) core.Node {
 	set := store.Use(cx).Settings
 	none := core.NewMemo(cx, func() bool { return len(l.projects.Get()) == 0 })
 	return core.Dynamic(func(*core.Scope) core.Node {
@@ -25,7 +25,7 @@ func projectsTab(cx *core.Scope, d *cleanflow.Drill, l *lists, filter *core.Sign
 			return core.Func(func(cx *core.Scope) core.Node { return noProjects(cx, d, set) })
 		}
 		return core.Func(func(cx *core.Scope) core.Node {
-			return projectList(cx, d, set, l, filter, rev)
+			return projectList(cx, d, set, l, filter, order, rev)
 		})
 	})
 }
@@ -62,8 +62,8 @@ func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.No
 	})
 }
 
-// projectList is the 项目 tab with projects, under filter.
-func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lists, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
+// projectList is the 项目 tab with projects, under filter, in order.
+func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lists, filter *core.Signal[ProjectFilter], order *core.Signal[ProjectSort], rev reveal) core.Node {
 	days := func() int { return set.Value().Cleanup.DevArtifactMinAgeDays }
 	shown, artifacts := l.shown, l.artifacts.Get
 	revealPath := cleanflow.Revealer(cx, rev)
@@ -88,7 +88,10 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lis
 	toolbar := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 8, ColumnGap: 12, FlexShrink: 0},
 		Children: []core.Node{
 			core.View{Style: core.Style{AutoMargin: core.SideRight}, Children: []core.Node{chips}},
-			kit.Text("按大小排序", kit.FontBody, kit.Regular, kit.ColorTextMuted),
+			kit.Chips[ProjectSort]{Label: "排序", Value: order.Get, OnChange: order.Set, Options: []kit.Option[ProjectSort]{
+				{Value: SortSize, Label: "大小", TestID: "projects-sort-size"},
+				{Value: SortActive, Label: "最近活动", TestID: "projects-sort-active"},
+			}},
 		}}
 	tools := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 8, ColumnGap: 12, FlexShrink: 0},
 		Children: []core.Node{

@@ -29,7 +29,7 @@ func Page(cx *core.Scope) core.Node {
 	}
 	tab := k.tab
 	rev := revealer(deps.Files)
-	l := newLists(cx, d, store.Use(cx).Settings, k.filter)
+	l := newLists(cx, d, store.Use(cx).Settings, k.filter, k.sort)
 	cleanRef := new(core.Ref)
 	tabs := kit.Tabs[nav.DevTab]{Label: "开发者", Value: tab.Get, OnChange: tab.Set, Options: []kit.Option[nav.DevTab]{
 		{Value: nav.DevProjects, Label: "项目", TestID: "tab-projects"},
@@ -42,7 +42,7 @@ func Page(cx *core.Scope) core.Node {
 				if tab.Get() == nav.DevTools {
 					return core.Func(func(cx *core.Scope) core.Node { return toolsTab(cx, d, l, rev) })
 				}
-				return core.Func(func(cx *core.Scope) core.Node { return projectsTab(cx, d, l, k.filter, rev) })
+				return core.Func(func(cx *core.Scope) core.Node { return projectsTab(cx, d, l, k.filter, k.sort, rev) })
 			}),
 		}
 	}}
@@ -77,13 +77,13 @@ func Page(cx *core.Scope) core.Node {
 type lists struct {
 	tools, artifacts *core.Memo[[]cleanup.Category]
 	projects         *core.Memo[[]engdev.Project]
-	// shown are the projects the 项目 filter shows, and shownArtifacts their build output: what the bar of 项目 counts and cleans.
+	// shown are the projects the 项目 filter shows, in its order, and shownArtifacts their build output: what the bar of 项目 counts and cleans.
 	shown          *core.Memo[[]engdev.Project]
 	shownArtifacts *core.Memo[[]cleanup.Category]
 }
 
-// newLists makes the view's lists in cx, with the projects shown under filter by the idle days of set.
-func newLists(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *core.Signal[ProjectFilter]) *lists {
+// newLists makes the view's lists in cx, with the projects shown under filter by the idle days of set, in the order order.
+func newLists(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *core.Signal[ProjectFilter], order *core.Signal[ProjectSort]) *lists {
 	l := &lists{
 		tools:     core.NewMemoFunc(cx, func() []cleanup.Category { t, _ := SplitGroups(d.Categories()); return t }, nil),
 		artifacts: core.NewMemoFunc(cx, func() []cleanup.Category { _, a := SplitGroups(d.Categories()); return a }, nil),
@@ -96,7 +96,7 @@ func newLists(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *c
 	}
 	now := timeNow()
 	l.shown = core.NewMemoFunc(cx, func() []engdev.Project {
-		return FilterProjects(l.projects.Get(), filter.Get(), set.Value().Cleanup.DevArtifactMinAgeDays, now)
+		return SortProjects(FilterProjects(l.projects.Get(), filter.Get(), set.Value().Cleanup.DevArtifactMinAgeDays, now), order.Get())
 	}, nil)
 	l.shownArtifacts = core.NewMemoFunc(cx, func() []cleanup.Category { return ArtifactsOf(l.shown.Get(), l.artifacts.Get()) }, nil)
 	return l

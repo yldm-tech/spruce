@@ -17,7 +17,7 @@ import (
 type DrillPage struct {
 	Route nav.Route
 	Toast Toaster
-	// Notice is the line above the list, e.g. what the source looks at or where its items go.
+	// Notice, when set, is the line above the list, e.g. where the source's items go.
 	Notice func() string
 	// ListLabel names the list for assistive technology; SizeLabel labels the checked size beside 清理.
 	ListLabel, SizeLabel string

@@ -55,7 +55,8 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 		for _, c := range cats {
 			total += c.Size
 		}
-		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total) + "，已选 " + strconv.Itoa(SelectedTotals(cats, l.Selection()).Count) + " 项"
+		// What is checked is the action bar's, pinned under the list.
+		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total)
 	}
 	toolbar := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 8, ColumnGap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{AutoMargin: core.SideRight}, Children: []core.Node{
