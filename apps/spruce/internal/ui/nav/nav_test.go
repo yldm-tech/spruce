@@ -1,6 +1,7 @@
 package nav
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -197,5 +198,30 @@ func TestCommandsFollowThePageThatRegisteredThem(t *testing.T) {
 	}
 	if len(did) != 2 || did[0] != "second" || did[1] != "first" {
 		t.Errorf("ran %v, want [second first]", did)
+	}
+}
+
+// CanRefresh wakes its readers only when the answer changes, not at every change of what Busy reads.
+func TestCanRefreshChangesOnlyWithTheAnswer(t *testing.T) {
+	root := core.NewRoot(core.RootOptions{Post: func(fn func()) { fn() }, Report: func(err error) { t.Errorf("graph failed: %v", err) }})
+	t.Cleanup(root.Dispose)
+	n := NewNavigator(root, Overview)
+	Key.Provide(root, n)
+	runs := 0
+	var answers []bool
+	root.Effect(func() {
+		runs++
+		answers = append(answers, n.CanRefresh())
+	})
+	step := core.NewSignal(root, 0)
+	page := root.Child()
+	UseCommands(page, Commands{Refresh: func() {}, Busy: func() bool { return step.Get() > 0 }})
+	for i := 1; i <= 50; i++ {
+		step.Set(i)
+	}
+	step.Set(0)
+	page.Dispose()
+	if want := []bool{false, true, false, true, false}; runs != len(want) || !slices.Equal(answers, want) {
+		t.Errorf("CanRefresh read %v in %d runs, want %v", answers, runs, want)
 	}
 }

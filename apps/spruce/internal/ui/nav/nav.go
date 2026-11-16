@@ -113,12 +113,19 @@ type Navigator struct {
 	offsets map[Route]core.Points
 	// commands are the page commands registered with UseCommands, newest last; the newest is what the menu's 重新检查 and 查找 run.
 	commands *core.Signal[[]*Commands]
+	// canRefresh is CanRefresh's answer, which changes far less often than what a page's Busy reads.
+	canRefresh *core.Memo[bool]
 }
 
 // NewNavigator returns a navigator on start.
 func NewNavigator(cx *core.Scope, start Route) *Navigator {
-	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0), settingsAsked: core.NewSignal(cx, 0), shown: core.NewSignal(cx, 0),
+	n := &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0), settingsAsked: core.NewSignal(cx, 0), shown: core.NewSignal(cx, 0),
 		offsets: map[Route]core.Points{}, commands: core.NewSignalFunc[[]*Commands](cx, nil, slices.Equal)}
+	n.canRefresh = core.NewMemo(cx, func() bool {
+		c := n.Commands()
+		return c.Refresh != nil && (c.Busy == nil || !c.Busy())
+	})
+	return n
 }
 
 // Current returns the page shown; reading it subscribes.
@@ -301,6 +308,9 @@ func (n *Navigator) Commands() Commands {
 	}
 	return *all[len(all)-1]
 }
+
+// CanRefresh reports whether the newest page's Refresh can run now: it has one and its Busy does not say no. Reading it subscribes, but only to the answer, so a Busy that reads a check's every step does not wake the reader at each one.
+func (n *Navigator) CanRefresh() bool { return n.canRefresh.Get() }
 
 // Key provides the shell's Navigator to the pages.
 var Key = core.NewKey[*Navigator]("spruce.nav", nil)

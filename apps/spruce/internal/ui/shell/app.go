@@ -179,7 +179,6 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.MenuItem {
 	sep := desktop.MenuItem{Separator: true}
 	cmds := n.Commands()
-	refreshOff := blocked || cmds.Refresh == nil || cmds.Busy != nil && cmds.Busy()
 	goTo := make([]desktop.MenuItem, 0, len(nav.Pages)+2)
 	for i, r := range nav.Pages {
 		goTo = append(goTo, desktop.MenuItem{Label: r.Meta().Title, Shortcut: "mod+" + strconv.Itoa(i+1), Disabled: blocked, OnSelect: func() { n.Go(r) }})
@@ -197,7 +196,7 @@ func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.Menu
 			{Role: desktop.MenuCut}, {Role: desktop.MenuCopy}, {Role: desktop.MenuPaste}, {Role: desktop.MenuSelectAll},
 		}},
 		{Label: "显示", Items: []desktop.MenuItem{
-			{Label: "重新检查", Shortcut: "mod+r", When: core.MenuNotEditing, Disabled: refreshOff, OnSelect: cmds.Refresh},
+			{Label: "重新检查", Shortcut: "mod+r", When: core.MenuNotEditing, Disabled: blocked || !n.CanRefresh(), OnSelect: cmds.Refresh},
 			{Label: "查找", Shortcut: "mod+f", Disabled: blocked || cmds.Find == nil, OnSelect: cmds.Find},
 		}},
 		{Label: "前往", Items: goTo},
