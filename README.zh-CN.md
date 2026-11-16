@@ -21,7 +21,7 @@ Spruce 是 macOS 和 Windows 上的磁盘清理工具。它在后台检查你的
 - **开发者。** 列出每个项目的最后活动时间、构建产物（node_modules、target、.next 等，支持 Node、Rust、Maven、Gradle、CocoaPods、SwiftPM、Python、.NET、Zig 和 Flutter 项目）的大小和 Git 状态。有未提交改动、或构建产物里有纳入版本控制的文件的项目永远不会被选中或清理，删除前还会再查一次 Git；没有 Git 或 Git 出错时标为「无法确定」，不会选中。工具缓存（Xcode、Homebrew、npm、pnpm、Yarn、Go、Cargo、Gradle、JetBrains 等）有自带清理命令的就用它的命令。
 - **系统垃圾。** 应用和浏览器缓存、未完成的下载、日志、崩溃报告、临时文件，以及 Windows 上的错误报告。不包括浏览器的 Cookie、历史记录和登录信息；正在运行的应用和浏览器的缓存不会选中。
 - **应用卸载。** 在 macOS 上，应用本身和你勾选的残留文件（Application Support、Caches、Preferences、Containers、Saved State、LaunchAgents 等）会移到废纸篓，可以放回；不列出 Apple 自带的应用，正在运行的应用无法移除。在 Windows 上，Spruce 先运行程序自带的卸载程序，再列出它在 `%APPDATA%` 和 `%LOCALAPPDATA%` 里留下的文件，可以移到回收站；不列出应用商店的应用。
-- **维护。** macOS：刷新 DNS 缓存、校验 Spotlight 索引、刷新 QuickLook 预览、重建图标缓存、修复「打开方式」、优化 Safari、邮件和信息的数据库（需要完全磁盘访问权限）。Windows：刷新 DNS 缓存、刷新图标缓存、清除缩略图缓存、清理失效的「打开方式」、检查 Windows 搜索。刷新 DNS 缓存和重建出错的 Spotlight 索引需要管理员权限，每次运行只问一次。
+- **维护。** macOS：刷新 DNS 缓存、校验 Spotlight 索引、刷新 QuickLook 预览、重建图标缓存、修复「打开方式」、优化 Safari、邮件和信息的数据库（需要完全磁盘访问权限）。Windows：刷新 DNS 缓存、刷新图标缓存、清除缩略图缓存、清理失效的「打开方式」、检查 Windows 搜索。在 macOS 上，刷新 DNS 缓存和重建出错的 Spotlight 索引需要管理员权限，每次运行只问一次；在 Windows 上，只有检查 Windows 搜索时才会请求管理员权限，而且只在该服务被设为自动启动却已停止时才请求。
 - **健康监测。** 每个核心的 CPU、内存和内存压力、磁盘和网络读写速度、电池、系统信息、占用 CPU 和内存最多的进程；单个进程长时间占用过多 CPU 时显示提醒。Spruce 只显示进程，不会结束进程。
 - **自动清理（macOS）。** 四条规则，默认都关闭：旧的应用缓存（30 天没有改动，每周）、「下载」里超过 7 天且对应应用已装好的安装包（每天）、闲置 90 天且 Git 干净的项目的构建产物（每周）、7 天没有变化的未完成下载（每天）。规则在后台检查之后运行，只会把文件移到废纸篓，不运行命令，不会再处理你放回原处的项目，每次运行都记在「操作历史」里，可以放回原处。「每周汇总」在每周一发送。
 - **菜单栏和空间不足提醒（macOS）。** 菜单栏图标显示可用空间，空间不足时图标会变化；关闭窗口后 Spruce 继续留在菜单栏。可以开启提醒（默认关闭，阈值默认 20 GB）：启动磁盘的可用空间低于你设定的值时提醒一次，再少 5 GB 才会再次提醒，每天最多一次。
@@ -78,7 +78,7 @@ irm https://github.com/yldm-tech/spruce/releases/latest/download/install.ps1 | i
 
 每个版本的 `checksums.txt` 列出所有文件的 SHA-256。Spruce 不会自动更新：下载新版本，或再次运行安装脚本即可。
 
-在 macOS 上，完全磁盘访问权限是可选的。优化 Safari 和邮件的数据库、读取废纸篓、查找部分应用的残留文件、在空间快照里计入其他应用的容器时需要它；后台检查从不请求这项权限。
+在 macOS 上，完全磁盘访问权限是可选的。优化 Safari、邮件和信息的数据库、读取废纸篓、查找部分应用的残留文件、在空间快照里计入其他应用的容器时需要它；后台检查从不请求这项权限。
 
 ![健康监测：CPU、内存、磁盘、网络、电池和系统信息](docs/assets/health-idle.png)
 
@@ -146,7 +146,7 @@ make build  # 为当前平台构建应用，输出到 apps/spruce/build
 make check  # CI 运行的全部检查（apps/spruce/scripts/check.sh）
 ```
 
-`make check` 依次运行：gofmt，两种架构的 macOS 和 Windows 的 vet 和构建，带竞态检测的测试，golangci-lint v2（需要用不低于 `apps/spruce/go.mod` 中版本的 Go 构建），无界面的 nsgo 测试，以及 nsgo check。窗口测试用固定的测试数据把每个页面置于主要状态，在 macOS 上用 `go tool nsgo test -target macos apps/spruce` 在真实窗口中截图（加 `-run 'TestScreensSpace'` 只跑部分页面）；截图保存在 `apps/spruce/.nsgo/test/screenshots/<target>`。
+`make check` 依次运行：gofmt，两种架构的 macOS 和 Windows 的 vet 和构建，检查 `apps/spruce/resources/THIRD_PARTY_NOTICES.txt` 与链接的模块一致，带竞态检测的测试，golangci-lint v2（需要用不低于 `apps/spruce/go.mod` 中版本的 Go 构建），无界面的 nsgo 测试，以及 nsgo check。窗口测试用固定的测试数据把每个页面置于主要状态，在 macOS 上用 `go tool nsgo test -target macos apps/spruce` 在真实窗口中截图（加 `-run 'TestScreensSpace'` 只跑部分页面）；截图保存在 `apps/spruce/.nsgo/test/screenshots/<target>`。
 
 `nsgo dev` 和 `nsgo test -target macos` 对应用做临时签名并从终端启动，所以依赖应用身份的功能（完全磁盘访问权限、登录项、需要提权的维护任务）要用 `nsgo build` 构建的应用来验证。
 
@@ -162,8 +162,8 @@ make check  # CI 运行的全部检查（apps/spruce/scripts/check.sh）
 
 ## CI 和发布
 
-[CI](https://github.com/yldm-tech/spruce/actions/workflows/ci.yml) 工作流在 GitHub 托管的运行器上检查拉取请求和 `main`。[Release](https://github.com/yldm-tech/spruce/actions/workflows/release.yml) 工作流在 `main` 的 CI 通过后运行：根据上一个标签之后的 Conventional Commits 决定下一个版本（作用域为 `site` 或 `deps` 的改动不会发布新版本），把版本号连同[更新日志](apps/spruce/CHANGELOG.md)里的对应章节以 `chore(release)` 提交到 `main` 并打标签，构建签名并公证的 macOS 磁盘映像和 Windows 安装程序，然后发布 GitHub Release，附带安装包、校验值和构建来源证明。
+[CI](https://github.com/yldm-tech/spruce/actions/workflows/ci.yml) 工作流在 GitHub 托管的运行器上检查拉取请求和 `main`。[Release](https://github.com/yldm-tech/spruce/actions/workflows/release.yml) 工作流在 `main` 的 CI 通过后运行：根据上一个标签之后的 Conventional Commits 决定下一个版本（作用域为 `site` 的改动不会发布新版本），把版本号连同[更新日志](apps/spruce/CHANGELOG.md)里的对应章节以 `chore(release)` 提交到 `main` 并打标签，构建签名并公证的 macOS 磁盘映像和 Windows 安装程序，然后发布 GitHub Release，附带安装包、校验值和构建来源证明。
 
 ## 许可证
 
-[MIT](LICENSE)。附带的 Inter 字体采用 SIL Open Font License 1.1（[apps/spruce/resources/fonts/Inter-LICENSE.txt](apps/spruce/resources/fonts/Inter-LICENSE.txt)）；第三方库及其许可证列在应用的「设置 → 关于 → 开源许可」里。
+[MIT](LICENSE)。附带的 Inter 字体采用 SIL Open Font License 1.1（[apps/spruce/resources/fonts/Inter-LICENSE.txt](apps/spruce/resources/fonts/Inter-LICENSE.txt)）；第三方库及其许可证列在应用的「设置 → 关于 → 开源许可」里，它们的许可证和声明全文随每个安装包附带，见 [apps/spruce/resources/THIRD_PARTY_NOTICES.txt](apps/spruce/resources/THIRD_PARTY_NOTICES.txt)。
