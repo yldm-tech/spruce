@@ -551,6 +551,39 @@ func TestBusyElsewhere(t *testing.T) {
 	}
 }
 
+// The view's clean ends on one goroutine and the controller says so on another: while the controller still cleans after the view's clean ended, that is the view's own clean, so 正在清理其他项目… does not show.
+func TestOwnCleanEndingIsNotAnotherClean(t *testing.T) {
+	p := start(t, ready())
+	cleaning := ready()
+	cleaning.Phase = app.OverviewCleaning
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		p.ov.Set(cleaning)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Trashed: 10_000_000, Removed: 1}, RunID: "run-1", Undoable: true}, nil
+	}
+	p.Press("id:check-system-junk:caches")
+	p.Press("id:clean")
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.State().Phase == app.OverviewCleaning })
+	close(release)
+	p.WaitForGone("id:clean-overlay", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if p.Exists("id:drill-busy") {
+		t.Error("the view's own clean shows as another clean as it ends")
+	}
+	p.set(ready())
+	p.Settle()
+	if p.Exists("id:drill-busy") {
+		t.Error("正在清理其他项目… once nothing runs")
+	}
+	// Another clean after it still shows as one.
+	p.set(cleaning)
+	p.WaitFor("id:drill-busy", wait)
+}
+
 // Nothing of the source: the empty state; a failed source and unreadable places are told.
 func TestEmptyFailedAndDenied(t *testing.T) {
 	p := start(t, stateOf(other()))
