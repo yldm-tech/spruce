@@ -65,9 +65,10 @@ func Page(cx *core.Scope) core.Node {
 		return core.Group{}
 	})
 	return core.Group{
-		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, ScrollKey: nav.DevJunk, Header: kit.PageHeader{Route: nav.DevJunk}, Footer: footer, Children: []core.Node{
-			cleanflow.DrillStatus(d), cleanflow.DrillNotices(d, DeniedNotice), body,
-		}},
+		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, ScrollKey: nav.DevJunk, Header: kit.PageHeader{Route: nav.DevJunk, Actions: []core.Node{cleanflow.DrillRecheck(d)}},
+			Footer: footer, Children: []core.Node{
+				cleanflow.DrillStatus(d), cleanflow.DrillNotices(d, DeniedNotice), body,
+			}},
 		cleanflow.DrillLayers(d),
 	}
 }
@@ -164,12 +165,12 @@ func toolsTab(cx *core.Scope, d *cleanflow.Drill, l *lists, rev reveal) core.Nod
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return core.View{TestID: "section-tools", Style: core.Style{Gap: 10, FlexShrink: 0}, Children: []core.Node{
-					heading("工具缓存", "heading-tools"),
-					cleanflow.CategoryList{Categories: tools.Get, Selection: d.Selection.Get, Label: "工具缓存", Reveal: rev, Disabled: d.Cleaning, Open: d.Open, OnOpen: d.SetOpen,
-						OnChange: func(next cleanflow.Selection) {
-							d.Change(cleanflow.WithinGroup(d.Selection.GetUntracked(), tools.GetUntracked(), next))
-						},
-						Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "list-tools"},
+				heading("工具缓存", "heading-tools"),
+				cleanflow.CategoryList{Categories: tools.Get, Selection: d.Selection.Get, Label: "工具缓存", Reveal: rev, Disabled: d.Cleaning, Open: d.Open, OnOpen: d.SetOpen,
+					OnChange: func(next cleanflow.Selection) {
+						d.Change(cleanflow.WithinGroup(d.Selection.GetUntracked(), tools.GetUntracked(), next))
+					},
+					Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "list-tools"},
 			}}
 		})
 	})

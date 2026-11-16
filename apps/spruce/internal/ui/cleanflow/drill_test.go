@@ -778,3 +778,33 @@ func TestLeavingStopsTheClean(t *testing.T) {
 		t.Fatal("the clean goes on after the view went")
 	}
 }
+
+// The header's 重新检查 checks again on a result that may be cleaned, as the menu's 重新检查 (⌘R) does; both wait while a check or a clean runs.
+func TestRecheckFromTheHeader(t *testing.T) {
+	p := start(t, ready())
+	p.waitRecheck("重新检查")
+	if !p.nav.CanRefresh() {
+		t.Fatal("⌘R cannot check again")
+	}
+	p.Press("id:recheck")
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	p.Post(func() { p.nav.Commands().Refresh() })
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+
+	checking := ready()
+	checking.Phase = app.OverviewChecking
+	p.set(checking)
+	p.waitRecheck("正在检查…")
+	if !p.Find("id:recheck").Props.Disabled || p.nav.CanRefresh() {
+		t.Error("重新检查 can run while a check runs")
+	}
+}
+
+// waitRecheck waits until the header's 重新检查 reads want.
+func (p *page) waitRecheck(want string) {
+	p.tb.Helper()
+	p.WaitUntil(wait, func() bool {
+		v := p.Query("id:recheck")
+		return len(v) == 1 && len(v[0].Children) > 0 && p.Exists("id:recheck >> text:"+want)
+	})
+}

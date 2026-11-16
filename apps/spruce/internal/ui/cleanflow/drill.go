@@ -94,6 +94,8 @@ func NewDrill(cx *core.Scope, source string, toast Toaster) *Drill {
 		}
 		return nil
 	}, nil)
+	// The menu's 重新检查 (⌘R) checks again from the view, as its header's does.
+	nav.UseCommands(cx, nav.Commands{Refresh: d.CheckNow, Busy: func() bool { return d.Checking() || d.Busy() }})
 	decided := false
 	cx.Effect(func() {
 		st := d.State()
