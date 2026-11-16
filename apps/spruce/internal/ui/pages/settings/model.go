@@ -225,12 +225,19 @@ type License struct {
 	License string
 }
 
-// Licenses are the main libraries in the app (go.mod and the bundled fonts), kept by hand with the dependencies: every one is under a permissive licence.
+// Licenses are the third-party modules linked into the app on macOS or Windows (go list -deps of the app for each target) and the bundled fonts, kept by hand with the dependencies, each with the licence its LICENSE file states: every one is under a permissive licence.
 var Licenses = []License{
 	{"NSGo", "Apache-2.0"},
 	{"purego", "Apache-2.0"},
 	{"gopsutil", "BSD-3-Clause"},
+	{"go-sysconf", "BSD-3-Clause"},
+	{"battery", "MIT"},
+	{"plist", "BSD-2-Clause AND BSD-3-Clause"},
+	{"wmi", "MIT"},
+	{"go-ole", "MIT"},
+	{"go-yaml", "MIT AND Apache-2.0"},
 	{"Go x/sys", "BSD-3-Clause"},
 	{"Go x/text", "BSD-3-Clause"},
+	{"Go x/image", "BSD-3-Clause"},
 	{"Inter 字体", "OFL-1.1"},
 }
