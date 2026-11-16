@@ -2,6 +2,24 @@
 
 What changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.
 
+## 0.2.0 - 2026-11-17
+
+### Features
+
+- Keep each page's place, pin headers, add app shortcuts and safer dialogs
+- 全部清理, honest progress and clearer drill-down pages
+- Keep the page's state, stable order, undo after an uninstall
+- Rescan in place, ask before careless moves, keyboard lists
+
+### Fixes
+
+- Lay out the permissions group for Deps.GOOS
+- Report exit code -1 for a program stopped by its context on Windows
+- Use the real SID of TrustedInstaller when checking the exchange directory
+- Keep the newer Full Disk Access answer when an older check answers late
+- Keep choices across pages, clean only what a filter shows, pin the 清理 bar
+- Guard 保留天数, stop a maintenance run, keep 维护/历史/设置 state
+
 ## 0.1.1 - 2026-11-16
 
 ### Fixes

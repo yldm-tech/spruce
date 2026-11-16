@@ -1,7 +1,7 @@
 # Spruce's build configuration for the nsgo tool (go tool nsgo dev / build / test).
 name: Spruce
 id: ai.yldm.spruce
-version: 0.1.1
+version: 0.2.0
 appearance: dark
 build:
   output: build
