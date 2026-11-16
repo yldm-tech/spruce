@@ -556,6 +556,43 @@ func TestCheckingAgainKeepsTheLeftoversTheUserChanged(t *testing.T) {
 	}
 }
 
+func TestAPressOnALeftoversRowChecksIt(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	p.Press("id:leftover-row-agent")
+	if !p.Find("id:leftover-agent").Props.Checked {
+		t.Error("a press on the row left it unchecked")
+	}
+	// The checkbox still takes its own press, once.
+	p.Press("id:leftover-agent")
+	if p.Find("id:leftover-agent").Props.Checked {
+		t.Error("the checkbox's press did not uncheck it")
+	}
+	// The row's menu shows it in Finder.
+	p.RightClick("id:leftover-row-cache")
+	p.ChoosePopup("在访达中显示")
+	p.WaitUntil(wait, func() bool { return slices.Equal(p.files.Paths(), []string{"/Users/me/Library/caches/cache"}) })
+}
+
+func TestAnAppsMenuUninstallsRevealsAndCopies(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	p.RightClick("id:app-list >> text:Bar")
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != "/Applications/Bar.app" {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	p.RightClick("id:app-list >> text:Bar")
+	p.ChoosePopup("在访达中显示")
+	p.WaitUntil(wait, func() bool { return slices.Equal(p.files.Paths(), []string{"/Applications/Bar.app"}) })
+	// 卸载… picks the app and asks once its leftovers are found.
+	p.RightClick("id:app-list >> text:Foo")
+	p.ChoosePopup("卸载…")
+	p.WaitFor("id:confirm >> text:卸载「Foo」", wait)
+}
+
 func TestTheOrderHoldsWhileSizesStreamIn(t *testing.T) {
 	svc := macService()
 	sent := make(chan struct{})

@@ -8,6 +8,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/ui/kit"
@@ -212,7 +213,7 @@ func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 	return core.View{OnLayout: land, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)}, Children: []core.Node{list}}
 }
 
-// appRow is the look of one app of the list: its icon, name, version and last use, its badges and its size; the list's row around it takes the presses.
+// appRow is the look of one app of the list: its icon, name, version and last use, its badges and its size; the list's row around it takes the presses. A secondary click opens its menu: 卸载…, 在访达中显示, 拷贝路径.
 func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool) core.Node {
 	item := func() app.UninstallApp {
 		apps := s.Visible()
@@ -234,7 +235,19 @@ func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool) core
 		}
 		return strings.Join(parts, " · ")
 	}
-	return core.View{
+	menu := kit.RowMenu(cx, func() []desktop.MenuItem {
+		a := item()
+		if a.ID == "" {
+			return nil
+		}
+		items := []desktop.MenuItem{{Label: "卸载…", Disabled: s.Step.GetUntracked() != StepIdle || !s.Windows() && a.Running,
+			OnSelect: func() { s.UninstallApp(a.ID) }}}
+		if a.Path != "" {
+			items = append(items, kit.RevealItem(fileManagerName(s.Windows()), func() { s.Reveal(a.Path) }), kit.CopyPathItem(cx, a.Path))
+		}
+		return items
+	})
+	return core.View{OnContextMenu: menu,
 		StyleFunc: func() core.Style {
 			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Height: core.Pt(rowHeight), Padding: core.Symmetric(0, 12),
 				BorderWidth: 1, BorderColor: core.Transparent, CornerRadius: 14, Cursor: core.CursorPointer,
@@ -249,8 +262,14 @@ func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool) core
 		Children: []core.Node{
 			appIcon(cx, func() string { return details().Icon }, 36),
 			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
-				core.Text{ContentFunc: func() string { return item().Name }, MaxLines: 1,
-					Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontBody, FontWeight: kit.FaceWeight(kit.Semibold), Color: kit.ColorText}},
+				// A name too long for the row shows whole under the pointer.
+				core.View{Tooltip: core.Dynamic(func(*core.Scope) core.Node {
+					name := item().Name
+					return core.Func(func(*core.Scope) core.Node { return kit.Tooltip(name) })
+				}), Style: core.Style{MinWidth: core.Pt(0)}, Children: []core.Node{
+					core.Text{ContentFunc: func() string { return item().Name }, MaxLines: 1,
+						Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontBody, FontWeight: kit.FaceWeight(kit.Semibold), Color: kit.ColorText}},
+				}},
 				core.Show{When: func() bool { return sub() != "" }, Then: func(*core.Scope) core.Node {
 					return core.Text{ContentFunc: sub, MaxLines: 1, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorTextMuted}}
 				}},

@@ -117,8 +117,10 @@ func appDetail(cx *core.Scope, s *State) core.Node {
 			return core.View{Style: core.Style{GridColumn: core.GridLines{Start: core.GridLine(1), End: core.GridLine(-1)}, Gap: 2}, Children: []core.Node{
 				text("位置", kit.FontSmall, kit.Regular, kit.ColorTextMuted),
 				core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
-					core.Text{ContentFunc: func() string { return format.TruncateMiddle(current().Path, 56) }, MaxLines: 1,
-						Style: core.Style{FlexShrink: 1, MinWidth: core.Pt(0), FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}},
+					core.View{Tooltip: kit.Tooltip(current().Path), Style: core.Style{FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+						core.Text{ContentFunc: func() string { return format.TruncateMiddle(current().Path, 56) }, MaxLines: 1,
+							Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}},
+					}},
 					kit.IconButton{Glyph: "reveal", Label: "在" + fileManagerName(windows) + "中显示 " + name, TestID: "reveal-app",
 						OnPress: func() { s.Reveal(current().Path) }},
 				}},

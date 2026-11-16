@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/ui/format"
@@ -14,7 +15,7 @@ import (
 // kindText is the color of a leftover's kind before its name.
 var kindText = kit.ColorAccentBright
 
-// LeftoverList lists what an app left behind under 全选 and 全不选, each with its checkbox, kind, place, size and a button that shows it in Finder or Explorer.
+// LeftoverList lists what an app left behind under 全选 and 全不选, each with its checkbox, kind, place, size and a button that shows it in Finder or Explorer. A press anywhere on a row checks or unchecks it; a secondary click opens its menu: 在访达中显示, 勾选, 拷贝路径.
 type LeftoverList struct {
 	Leftovers func() []app.UninstallLeftover
 	Checked   func() map[string]bool
@@ -27,7 +28,7 @@ type LeftoverList struct {
 }
 
 // Render implements core.Node.
-func (l LeftoverList) Render(*core.Scope) core.Node {
+func (l LeftoverList) Render(cx *core.Scope) core.Node {
 	totals := func() string {
 		n, size := CheckedTotals(l.Leftovers(), l.Checked())
 		return fmt.Sprintf("已选 %d/%d 项，共 %s", n, len(l.Leftovers()), format.BytesIn(size, l.Windows))
@@ -42,7 +43,9 @@ func (l LeftoverList) Render(*core.Scope) core.Node {
 				OnPress: func() { l.OnSet(map[string]bool{}) }},
 		}}
 	rows := core.Each(l.Leftovers, func(x app.UninstallLeftover) string { return x.ID },
-		func(_ *core.Scope, item func() app.UninstallLeftover, _ func() int) core.Node { return l.row(item) })
+		func(cx *core.Scope, item func() app.UninstallLeftover, _ func() int) core.Node {
+			return l.row(cx, item)
+		})
 	list := core.View{Role: core.RoleGroup, Label: "相关文件", TestID: "leftovers",
 		Style: core.Style{Padding: core.Symmetric(4, 0), CornerRadius: 14, BorderWidth: 1, BorderColor: kit.BorderSubtle, Overflow: core.Hidden,
 			Background: kit.SurfaceList, TextAlign: core.TextAlignStart},
@@ -51,7 +54,7 @@ func (l LeftoverList) Render(*core.Scope) core.Node {
 }
 
 // row is one leftover.
-func (l LeftoverList) row(item func() app.UninstallLeftover) core.Node {
+func (l LeftoverList) row(cx *core.Scope, item func() app.UninstallLeftover) core.Node {
 	x := item()
 	name := format.BaseName(x.Path)
 	label := KindLabels[x.Kind]
@@ -63,9 +66,24 @@ func (l LeftoverList) row(item func() app.UninstallLeftover) core.Node {
 		}
 		return strings.Join(parts, " · ")
 	}
-	return core.View{Tooltip: kit.Tooltip(x.Path),
+	disabled := func() bool { return l.Disabled != nil && l.Disabled() }
+	checked := func() bool { return l.Checked()[item().ID] }
+	toggle := func() {
+		if !disabled() {
+			l.OnToggle(item().ID, !checked())
+		}
+	}
+	menu := kit.RowMenu(cx, func() []desktop.MenuItem {
+		path := item().Path
+		return []desktop.MenuItem{
+			kit.RevealItem(fileManagerName(l.Windows), func() { l.OnReveal(path) }),
+			{Label: "勾选", Checkable: true, Checked: core.Untracked(cx, checked), Disabled: core.Untracked(cx, disabled), OnSelect: toggle},
+			kit.CopyPathItem(cx, path),
+		}
+	})
+	return core.View{Tooltip: kit.Tooltip(x.Path), OnPress: func(core.PressEvent) { toggle() }, OnContextMenu: menu, TestID: "leftover-row-" + x.ID,
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(48), Padding: core.Edges{Right: 10, Left: 14},
-			Hover: &core.Style{Background: kit.SurfaceRowHover}},
+			Cursor: core.CursorPointer, Hover: &core.Style{Background: kit.SurfaceRowHover}},
 		Children: []core.Node{
 			kit.Checkbox{Label: label + "：" + name, TestID: "leftover-" + x.ID, Disabled: l.Disabled,
 				Checked:  func() bool { return l.Checked()[item().ID] },
