@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -908,5 +909,21 @@ func TestWindowsShowsADeclinedAdministratorPrompt(t *testing.T) {
 	p.Find("id:done >> text:卸载没有进行")
 	if got := p.doneLines(); !slices.Equal(got, []string{"没有获得管理员授权，卸载程序没有运行"}) {
 		t.Errorf("lines %q", got)
+	}
+}
+
+func TestComingBackLandsWhereTheListWasScrolled(t *testing.T) {
+	var apps []app.UninstallApp
+	for i := range 40 {
+		apps = append(apps, app.UninstallApp{ID: fmt.Sprint(i), Name: fmt.Sprintf("App %02d", i), Path: "/Applications/x.app"})
+	}
+	p := start(t, &uninstallfake.Service{List: apps}, uninstall.PlatformMac)
+	p.waitList()
+	p.Scroll("id:app-list >> nth=0", 900)
+	p.show(false)
+	p.show(true)
+	p.Settle()
+	if got := p.Find("id:app-list").Children[0].Offset.Y; got != 900 {
+		t.Errorf("the list came back at %v", got)
 	}
 }
