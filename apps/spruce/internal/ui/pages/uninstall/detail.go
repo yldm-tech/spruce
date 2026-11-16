@@ -49,8 +49,7 @@ func detail(cx *core.Scope, s *State) core.Node {
 		core.Dynamic(func(cx *core.Scope) core.Node {
 			if picked.Get() == "" {
 				return core.Func(func(*core.Scope) core.Node {
-					return kit.EmptyState{Title: "选择一个应用", Description: "在左侧列表中选择要卸载的应用，这里会列出它和它留下的文件。", Tone: kit.ToneBlue,
-						Glyph: "app", TestID: "detail-empty"}
+					return kit.EmptyState{Title: "选择一个应用", Tone: kit.ToneBlue, Glyph: "app", TestID: "detail-empty"}
 				})
 			}
 			// Each app picked fades in.
@@ -117,8 +116,10 @@ func appDetail(cx *core.Scope, s *State) core.Node {
 			return core.View{Style: core.Style{GridColumn: core.GridLines{Start: core.GridLine(1), End: core.GridLine(-1)}, Gap: 2}, Children: []core.Node{
 				text("位置", kit.FontSmall, kit.Regular, kit.ColorTextMuted),
 				core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{
-					core.Text{ContentFunc: func() string { return format.TruncateMiddle(current().Path, 56) }, MaxLines: 1,
-						Style: core.Style{FlexShrink: 1, MinWidth: core.Pt(0), FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}},
+					core.View{Tooltip: kit.Tooltip(current().Path), Style: core.Style{FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+						core.Text{ContentFunc: func() string { return format.TruncateMiddle(current().Path, 56) }, MaxLines: 1,
+							Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextSecondary}},
+					}},
 					kit.IconButton{Glyph: "reveal", Label: "在" + fileManagerName(windows) + "中显示 " + name, TestID: "reveal-app",
 						OnPress: func() { s.Reveal(current().Path) }},
 				}},
@@ -200,7 +201,7 @@ func macLeftovers(cx *core.Scope, s *State, current func() app.UninstallApp) cor
 				},
 				Checked:  s.Checked.Get,
 				OnToggle: s.Toggle,
-				OnSet:    func(set map[string]bool) { s.Checked.Set(set) },
+				OnSet:    s.SetChecked,
 				OnReveal: s.Reveal,
 				Windows:  false,
 			}
@@ -226,11 +227,6 @@ func macLeftovers(cx *core.Scope, s *State, current func() app.UninstallApp) cor
 		}},
 		core.Show{When: func() bool { return plan().Denied > 0 }, Then: func(*core.Scope) core.Node {
 			return note(func() string { return "部分位置没有权限读取，列出的文件和大小可能不完整。" }, false)
-		}},
-		core.Show{When: func() bool { return plan().Bundle != nil }, Then: func(*core.Scope) core.Node {
-			return note(func() string {
-				return "应用本身 " + format.BytesIn(s.BundleSize(), false) + "，会和勾选的文件一起移到废纸篓。"
-			}, false)
 		}},
 	}}
 }

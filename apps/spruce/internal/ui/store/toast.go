@@ -1,9 +1,12 @@
 package store
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+
+	"spruce/apps/spruce/internal/app"
 )
 
 // Toast is one message of the toast at the bottom of the main area: after a move to the Trash 「已移到废纸篓 3.1 GB」 with 撤销, after a clean that left items 查看.
@@ -51,4 +54,15 @@ func (t *Toasts) Dismiss() {
 	next := t.later
 	t.later = nil
 	t.current.Set(next)
+}
+
+// UndoneToast is the toast after a 撤销, from the toast or 应用卸载's done card: all put back, some put back with 查看 to read why the rest was not, or the error.
+func UndoneToast(out app.RestoreOutcome, err error) Toast {
+	switch {
+	case err != nil:
+		return Toast{Text: err.Error(), Duration: 6 * time.Second}
+	case out.Failed == 0:
+		return Toast{Text: fmt.Sprintf("已放回原处 %d 项", out.Restored), Duration: 6 * time.Second}
+	}
+	return Toast{Text: fmt.Sprintf("已放回 %d 项，%d 项没能放回", out.Restored, out.Failed), ViewRun: out.RunID, Duration: 10 * time.Second}
 }

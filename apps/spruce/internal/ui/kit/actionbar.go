@@ -7,14 +7,15 @@ type Stat struct {
 	Label, Value string
 }
 
-// ActionButton is the action bar's round button.
+// ActionButton is the action bar's round button. Tooltip, when set, shows on hover, also while the button is off (why it is).
 type ActionButton struct {
 	Label    string
 	OnPress  func()
 	Disabled func() bool
 	Ref      *core.Ref
 	TestID   string
-	// Why, when set, says why the button is disabled: its tooltip, and its name for assistive technology.
+	Tooltip  core.Node
+	// Why, when set, says why the button is disabled: its tooltip (over Tooltip), and its name for assistive technology.
 	Why string
 }
 
@@ -26,13 +27,17 @@ type ActionBar struct {
 
 // Render implements core.Node.
 func (a ActionBar) Render(*core.Scope) core.Node {
+	tip := a.Button.Tooltip
+	if a.Button.Why != "" {
+		tip = Tooltip(a.Button.Why)
+	}
 	return core.View{
 		Style: core.Style{AutoMargin: core.SideTop, Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, Gap: 28, Padding: core.Edges{Top: 18}},
 		Children: []core.Node{
 			statView(a.Start, true),
 			RunButton{Text: a.Button.Label, OnPress: a.Button.OnPress, Disabled: a.Button.Disabled, Ref: a.Button.Ref, TestID: a.Button.TestID,
-				Label: a.Button.Why, Tooltip: a.Button.Why},
+				Label: a.Button.Why, Tooltip: tip},
 			statView(a.End, false),
 		},
 	}

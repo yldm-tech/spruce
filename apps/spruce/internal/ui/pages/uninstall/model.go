@@ -14,6 +14,7 @@ import (
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/format"
+	"spruce/apps/spruce/internal/ui/store"
 )
 
 // AppDetails is what Measure has streamed for one app so far.
@@ -50,11 +51,11 @@ func MergeDetails(known map[string]AppDetails, updates []app.UninstallAppDetails
 // SortKey is how the list is ordered. On Windows the third order is by install date, since Windows keeps no record of last use.
 type SortKey uint8
 
-// The orders: by name, largest first (the default), most recent first.
+// The orders: by name, largest first (the default), and the longest unused first, the apps never used ahead of them (the oldest installed first on Windows).
 const (
 	SortName SortKey = iota
 	SortSize
-	SortRecent
+	SortUnused
 )
 
 // nameOrder orders names as Intl.Collator("zh-CN", {numeric: true, sensitivity: "base"}) does: pinyin for Chinese, digits by value, case and accents ignored, and Chinese before Latin. x/text's collation puts Latin first and cannot reorder scripts (collate.Reorder is not implemented), so where two names first differ in a Chinese and a non-Chinese letter the Chinese one goes first, as ICU's zh tailoring has it.
@@ -101,7 +102,7 @@ func (o nameOrder) compare(a, b string) int {
 // known reports whether t is a real time (not the zero time or year 1).
 func known(t time.Time) bool { return !t.IsZero() && t.Year() > 1 }
 
-// RecentTime is the time the 最近使用 order uses: the last use on macOS, the install date on Windows; false when unknown.
+// RecentTime is the time the 最久未用 order uses: the last use on macOS, the install date on Windows; false when unknown.
 func RecentTime(a app.UninstallApp, d AppDetails, windows bool) (time.Time, bool) {
 	if windows {
 		return a.InstallDate, known(a.InstallDate)
@@ -112,13 +113,29 @@ func RecentTime(a app.UninstallApp, d AppDetails, windows bool) (time.Time, bool
 	return time.Time{}, false
 }
 
-// VisibleApps filters the apps by the search text (name, bundle ID or publisher, ignoring case) and sorts them: by name, largest or most recent first; unknown sizes and times go last, ties by name. apps is left as it is.
+// unusedRank groups an app for the 最久未用 order: never used (macOS) first, then the apps whose time is known, then the rest.
+func unusedRank(a app.UninstallApp, d AppDetails, windows bool) int {
+	if !windows && d.Usage == app.UninstallNeverUsed {
+		return 0
+	}
+	if _, ok := RecentTime(a, d, windows); ok {
+		return 1
+	}
+	return 2
+}
+
+// matches reports whether a matches the search text q, already trimmed and in lower case: its name, bundle ID or publisher holds it.
+func matches(a app.UninstallApp, q string) bool {
+	return q == "" || strings.Contains(strings.ToLower(a.Name), q) || strings.Contains(strings.ToLower(a.BundleID), q) ||
+		strings.Contains(strings.ToLower(a.Publisher), q)
+}
+
+// VisibleApps filters the apps by the search text (name, bundle ID or publisher, ignoring case) and sorts them: by name, largest first, or the longest unused first; unknown sizes and times go last, ties by name. apps is left as it is.
 func VisibleApps(apps []app.UninstallApp, details map[string]AppDetails, query string, sort SortKey, windows bool) []app.UninstallApp {
 	q := strings.ToLower(strings.TrimSpace(query))
 	out := make([]app.UninstallApp, 0, len(apps))
 	for _, a := range apps {
-		if q == "" || strings.Contains(strings.ToLower(a.Name), q) || strings.Contains(strings.ToLower(a.BundleID), q) ||
-			strings.Contains(strings.ToLower(a.Publisher), q) {
+		if matches(a, q) {
 			out = append(out, a)
 		}
 	}
@@ -143,23 +160,52 @@ func VisibleApps(apps []app.UninstallApp, details map[string]AppDetails, query s
 			}
 			return byName(a, b)
 		})
-	case SortRecent:
+	case SortUnused:
 		slices.SortStableFunc(out, func(a, b app.UninstallApp) int {
-			ta, oka := RecentTime(a, details[a.ID], windows)
-			tb, okb := RecentTime(b, details[b.ID], windows)
-			switch {
-			case oka != okb:
-				if oka {
-					return -1
-				}
-				return 1
-			case !oka || ta.Equal(tb):
-				return byName(a, b)
-			case tb.After(ta):
-				return 1
+			if ra, rb := unusedRank(a, details[a.ID], windows), unusedRank(b, details[b.ID], windows); ra != rb {
+				return ra - rb
 			}
-			return -1
+			ta, _ := RecentTime(a, details[a.ID], windows)
+			tb, _ := RecentTime(b, details[b.ID], windows)
+			if c := ta.Compare(tb); c != 0 {
+				return c
+			}
+			return byName(a, b)
 		})
+	}
+	return out
+}
+
+// Order is the IDs of the apps in the order sort gives them now. The list keeps it while sizes and times stream in, so rows do not move under the pointer, and takes a new one when the list is read, the order is changed or the measure ends.
+func Order(apps []app.UninstallApp, details map[string]AppDetails, sort SortKey, windows bool) []string {
+	sorted := VisibleApps(apps, details, "", sort, windows)
+	ids := make([]string, len(sorted))
+	for i, a := range sorted {
+		ids[i] = a.ID
+	}
+	return ids
+}
+
+// Arrange is the apps the list shows: those matching the search text, in order, then any order does not hold yet in apps' own order.
+func Arrange(apps []app.UninstallApp, order []string, query string) []app.UninstallApp {
+	q := strings.ToLower(strings.TrimSpace(query))
+	byID := make(map[string]app.UninstallApp, len(apps))
+	for _, a := range apps {
+		byID[a.ID] = a
+	}
+	out := make([]app.UninstallApp, 0, len(apps))
+	for _, id := range order {
+		if a, ok := byID[id]; ok {
+			delete(byID, id)
+			if matches(a, q) {
+				out = append(out, a)
+			}
+		}
+	}
+	for _, a := range apps {
+		if _, ok := byID[a.ID]; ok && matches(a, q) {
+			out = append(out, a)
+		}
 	}
 	return out
 }
@@ -218,6 +264,17 @@ func DefaultChecked(leftovers []app.UninstallLeftover) map[string]bool {
 	out := map[string]bool{}
 	for _, l := range leftovers {
 		if l.Selected {
+			out[l.ID] = true
+		}
+	}
+	return out
+}
+
+// KeptChecked is what stays checked when the leftovers of an app the user changed the checks of are found again: what was checked and is still there. Leftovers found since stay unchecked.
+func KeptChecked(checked map[string]bool, leftovers []app.UninstallLeftover) map[string]bool {
+	out := map[string]bool{}
+	for _, l := range leftovers {
+		if checked[l.ID] {
 			out[l.ID] = true
 		}
 	}
@@ -331,6 +388,25 @@ func RemoveSummary(o app.UninstallOutcome, windows bool) DoneSummary {
 		title = "卸载已中断"
 	}
 	return DoneSummary{Title: title, Big: format.BytesIn(r.Trashed, windows), Lines: append([]string{head}, leftoverLines(r, bin, skip)...), Succeeded: ok}
+}
+
+// Toasts last 6 s, or 10 s with 撤销 or 查看, as the other pages' do.
+const (
+	toastShort = 6 * time.Second
+	toastLong  = 10 * time.Second
+)
+
+// RemoveToast is the toast that ends a removal that did all it was asked, with 撤销 when the run can be put back; false when anything stayed, was stopped or failed, which the done card explains instead.
+func RemoveToast(o app.UninstallOutcome, windows bool) (store.Toast, bool) {
+	r := o.Result
+	if o.BundleFailure != "" || !windows && !o.BundleRemoved || r.Interrupted || len(r.Failed) > 0 {
+		return store.Toast{}, false
+	}
+	t := store.Toast{Text: "已卸载「" + o.App + "」，" + format.BytesIn(r.Trashed, windows) + " 已移到" + trashName(windows), Duration: toastShort}
+	if o.Undoable && o.RunID != "" {
+		t.UndoRun, t.Duration = o.RunID, toastLong
+	}
+	return t, true
 }
 
 // UninstalledSummary is the done card of a Windows program its uninstaller removed and that left nothing behind (or whose leftovers the user kept).

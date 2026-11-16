@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/ui/kit"
@@ -21,11 +23,14 @@ var (
 	iconShadow        = core.RGBA(0x000000, 0.25)
 )
 
-// rowHeight is the height of one app row, which the list's estimate relies on.
+// nameFont is an app row's name's font.
+var nameFont = core.Font{Family: kit.FontFace(kit.Semibold), Size: kit.FontBody, Weight: kit.FaceWeight(kit.Semibold)}
+
+// rowHeight is the height of one app row, which the list's estimate and its reveal rely on.
 const rowHeight = 60
 
-// pageKeys is how many rows Page Up and Page Down move.
-const pageKeys = 8
+// listPad is the padding around the list's rows.
+const listPad = 6
 
 // listGroup names the list box for its rows' focus outline.
 const listGroup = "applist"
@@ -41,39 +46,45 @@ func sortOptions(windows bool) []struct {
 	label string
 	id    string
 } {
-	recent := "最近使用"
+	unused := "最久未用"
 	if windows {
-		recent = "安装时间"
+		unused = "安装时间"
 	}
 	return []struct {
 		key   SortKey
 		label string
 		id    string
-	}{{SortName, "名称", "sort-name"}, {SortSize, "大小", "sort-size"}, {SortRecent, recent, "sort-recent"}}
+	}{{SortName, "名称", "sort-name"}, {SortSize, "大小", "sort-size"}, {SortUnused, unused, "sort-unused"}}
 }
 
-// appList is the left column: the search field, the order, the count and the apps as a single-selection list box. While the list box has the keyboard's focus ↑ ↓ Home End Page Up and Page Down move the selection; on Windows, where only text fields take the focus, ↑ and ↓ also move it while the search field has it.
-func appList(cx *core.Scope, s *State, listRef *core.Ref, narrow func() bool) core.Node {
+// appList is the left column: the search field, the order, the count and the apps as a single-selection list box. In the search field ↑ and ↓ move the selection, Return picks the first match and Escape clears the search.
+func appList(cx *core.Scope, s *State, searchRef *core.Ref, narrow func() bool) core.Node {
 	searchFocused := core.NewSignal(cx, false)
 	search := core.View{
 		OnFocusIn:  func() { searchFocused.Set(true) },
 		OnFocusOut: func() { searchFocused.Set(false) },
 		Style:      core.Style{Direction: core.Row, FlexGrow: 1, FlexShrink: 1, FlexBasis: core.Pt(140), MinWidth: core.Pt(0)},
-		Children: []core.Node{kit.Field{Placeholder: "搜索应用", Label: "搜索应用", TestID: "search", Value: s.Query.Get,
-			OnChange: func(q string) { s.Query.Set(q) }}},
+		Children: []core.Node{
+			kit.Field{Placeholder: "搜索应用", Label: "搜索应用", TestID: "search", Value: s.Query.Get, Ref: searchRef,
+				OnChange: func(q string) { s.Query.Set(q) },
+				OnSubmit: func(string) { s.PickFirst() }},
+			core.Show{When: searchFocused.Get, Then: func(cx *core.Scope) core.Node {
+				always := core.KeyOptions{When: core.KeyAlways, Repeat: true}
+				cx.OnKeyWith("down", always, func() { s.Move(1) })
+				cx.OnKeyWith("up", always, func() { s.Move(-1) })
+				return core.Show{When: func() bool { return s.Query.Get() != "" }, Then: func(cx *core.Scope) core.Node {
+					cx.OnKeyWith("escape", core.KeyOptions{When: core.KeyAlways}, func() { s.Query.Set("") })
+					return nil
+				}}
+			}},
+		},
 	}
 	options := sortOptions(s.Windows())
 	buttons := make([]core.Node, len(options))
 	for i, o := range options {
 		buttons[i] = core.View{Role: core.RoleButton, Label: o.label, TestID: o.id,
 			Pressed: func() bool { return s.Sort.Get() == o.key },
-			OnPress: func(core.PressEvent) {
-				if s.Sort.GetUntracked() != o.key {
-					// The rows slide into the new order.
-					kit.SettleLayout(cx)
-					s.Sort.Set(o.key)
-				}
-			},
+			OnPress: func(core.PressEvent) { s.SetSort(o.key) },
 			Style: core.Style{MinHeight: core.Pt(28), Padding: core.Symmetric(0, 12), CornerRadius: 14, JustifyContent: core.JustifyCenter,
 				FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(1),
 				Pressed: &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText, FontFamily: kit.FontFace(kit.Semibold),
@@ -100,7 +111,7 @@ func appList(cx *core.Scope, s *State, listRef *core.Ref, narrow func() bool) co
 	empty := core.NewMemo(cx, func() bool { return len(s.Visible()) == 0 })
 	rows := core.Dynamic(func(cx *core.Scope) core.Node {
 		if !empty.Get() {
-			return core.Func(func(cx *core.Scope) core.Node { return listBox(cx, s, listRef, narrow, searchFocused.Get) })
+			return core.Func(func(cx *core.Scope) core.Node { return listBox(cx, s, narrow) })
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return core.Text{TestID: "list-empty",
@@ -118,95 +129,110 @@ func appList(cx *core.Scope, s *State, listRef *core.Ref, narrow func() bool) co
 		Children: []core.Node{tools, count, rows}}
 }
 
-// listBox is the apps as a virtualized list box of 60-point rows.
-func listBox(cx *core.Scope, s *State, listRef *core.Ref, narrow, searchFocused func() bool) core.Node {
-	focused := core.NewSignal(cx, false)
+// listBox is the apps as a virtualized list box of 60-point rows (base.List over Picked): a press or the keyboard picks an app, ↑ ↓ Home End and the page keys go on from the row pressed, typing a name goes to it, and Return or a double click asks to uninstall it. It lands where it was scrolled to when the page last went, and brings the picked row into view when the State asks (Reveals).
+func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 	scroll := new(core.Ref)
-	// first and last are the rows wholly shown, -1 before the list reports them.
-	first, last := -1, -1
 	reveal := func(i int) {
-		switch {
-		case first < 0:
-			scroll.ScrollToIndex(i, false)
-		case i < first:
+		if i < 0 {
+			return
+		}
+		pos, ok := scroll.ListPosition()
+		frame, framed := scroll.Bounds()
+		if !ok || !framed {
+			scroll.ScrollToIndexAt(i, 0.5, 0, false)
+			return
+		}
+		switch rowShown(i, pos, frame.Size.Height) {
+		case -1:
 			scroll.ScrollToIndexAt(i, 0, 0, false)
-		case i > last:
+		case 1:
 			scroll.ScrollToIndexAt(i, 1, 0, false)
 		}
 	}
-	index := func() int {
-		id := s.Selected.GetUntracked()
-		for i, a := range s.visible.GetUntracked() {
-			if a.ID == id {
-				return i
-			}
+	asked := core.Untracked(cx, s.Reveals)
+	cx.Effect(func() {
+		if n := s.Reveals(); n != asked {
+			asked = n
+			cx.Untrack(func() { reveal(s.Index()) })
 		}
-		return -1
-	}
-	move := func(to func(i, n int) int) func() {
-		return func() {
-			apps := s.visible.GetUntracked()
-			if len(apps) == 0 || s.Step.GetUntracked() != StepIdle {
+	})
+	landed := false
+	land := func(b core.Bounds) {
+		if landed {
+			return
+		}
+		landed = true
+		// The list comes back where it was scrolled to, unless the picked row would not show there: the order or the search changed meanwhile.
+		if p, ok := s.ListPos(); ok {
+			if i := s.Index(); i < 0 || rowShown(i, p, b.Size.Height) == 0 {
+				scroll.ScrollToIndexAt(p.Index, 0, -p.Offset, false)
 				return
 			}
-			i := min(max(to(index(), len(apps)), 0), len(apps)-1)
-			s.Select(apps[i].ID)
-			reveal(i)
 		}
+		reveal(s.Index())
 	}
-	down := move(func(i, _ int) int { return max(i+1, 0) })
-	up := move(func(i, _ int) int { return max(i-1, 0) })
-	repeat := core.KeyOptions{Repeat: true}
-	keys := core.Show{When: focused.Get, Then: func(cx *core.Scope) core.Node {
-		cx.OnKeyWith("down", repeat, down)
-		cx.OnKeyWith("up", repeat, up)
-		cx.OnKey("home", move(func(int, int) int { return 0 }))
-		cx.OnKey("end", move(func(_, n int) int { return n - 1 }))
-		cx.OnKeyWith("pagedown", repeat, move(func(i, _ int) int { return i + pageKeys }))
-		cx.OnKeyWith("pageup", repeat, move(func(i, _ int) int { return i - pageKeys }))
-		return core.Group{}
-	}}
-	searchKeys := core.Show{When: func() bool { return s.Windows() && searchFocused() }, Then: func(cx *core.Scope) core.Node {
-		always := core.KeyOptions{When: core.KeyAlways, Repeat: true}
-		cx.OnKeyWith("down", always, down)
-		cx.OnKeyWith("up", always, up)
-		return core.Group{}
-	}}
-	list := core.List{
+	cx.Cleanup(func() {
+		if p, ok := scroll.ListPosition(); ok {
+			s.SaveListPos(p)
+		}
+	})
+	id := func(i int) string {
+		if apps := s.visible.GetUntracked(); i >= 0 && i < len(apps) {
+			return apps[i].ID
+		}
+		return ""
+	}
+	list := base.List{
 		Count: func() int { return len(s.Visible()) },
 		Key: func(i int) any {
-			if apps := s.visible.GetUntracked(); i < len(apps) {
-				return apps[i].ID
+			if id := id(i); id != "" {
+				return id
 			}
 			return i
 		},
-		EstimatedSize:     rowHeight,
-		Ref:               scroll,
-		Style:             core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), Padding: core.All(6)},
-		ViewabilityConfig: core.ViewabilityConfig{ItemVisiblePercentThreshold: 100},
-		OnViewableItemsChange: func(v core.ViewableItems) {
-			first, last = -1, -1
-			for _, tok := range v.Viewable {
-				if first < 0 || tok.Index < first {
-					first = tok.Index
-				}
-				last = max(last, tok.Index)
+		Selection: s.Picked,
+		// A tap on a touch screen only picks the app; asking to uninstall it takes a second.
+		TapSelects: true,
+		OnActivate: func(i int) {
+			if id := id(i); id != "" {
+				s.UninstallApp(id)
 			}
 		},
+		RowLabel: func(i int) string {
+			if apps := s.Visible(); i >= 0 && i < len(apps) {
+				return apps[i].Name
+			}
+			return ""
+		},
+		EstimatedSize: rowHeight,
+		Label:         "应用",
+		Ref:           scroll,
+		TestID:        "app-list",
+		Style:         core.Style{Group: listGroup, FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
+		ListStyle:     core.Style{Padding: core.All(listPad)},
+		// A row gives a little under a press.
+		ItemStyle: kit.Pressable(core.Style{CornerRadius: 14}, 0.99),
 		Row: func(cx *core.Scope, row core.ListRow) core.Node {
-			return appRow(cx, s, row, narrow, func() { listRef.Focus() })
+			return appRow(cx, s, row, narrow)
 		},
 	}
-	return core.View{Role: core.RoleListbox, Label: "应用", TestID: "app-list", Ref: listRef,
-		Focusable: func() bool { return true },
-		OnFocus:   func() { focused.Set(true) },
-		OnBlur:    func() { focused.Set(false) },
-		Style:     core.Style{Group: listGroup, FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
-		Children:  []core.Node{list, keys, searchKeys}}
+	return core.View{OnLayout: land, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)}, Children: []core.Node{list}}
 }
 
-// appRow is one app of the list: its icon, name, version and last use, its badges and its size. A press picks it and gives the list box the keyboard's focus, so the arrow keys go on from it.
-func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool, focusList func()) core.Node {
+// rowShown says where row i is in a list of height scrolled to pos: -1 above what it shows, 1 below, 0 shown whole.
+func rowShown(i int, pos core.ListPosition, height core.Points) int {
+	top := core.Points(pos.Index)*rowHeight + pos.Offset
+	switch {
+	case core.Points(i)*rowHeight < top:
+		return -1
+	case core.Points(i+1)*rowHeight > top+height-2*listPad:
+		return 1
+	}
+	return 0
+}
+
+// appRow is the look of one app of the list: its icon, name, version and last use, its badges and its size; the list's row around it takes the presses. A secondary click opens its menu: 卸载…, 在访达中显示, 拷贝路径.
+func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool) core.Node {
 	item := func() app.UninstallApp {
 		apps := s.Visible()
 		if i := row.Index(); i >= 0 && i < len(apps) {
@@ -227,13 +253,21 @@ func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool, focu
 		}
 		return strings.Join(parts, " · ")
 	}
-	return core.View{Role: core.RoleOption, NoFocus: true, Selected: selected, LabelFunc: func() string { return item().Name },
-		OnPress: func(core.PressEvent) {
-			if id := item().ID; id != "" {
-				s.Select(id)
-				focusList()
-			}
-		},
+	// nameWidth is the width the name has in the row, 0 before the first layout.
+	nameWidth := core.NewSignal(cx, core.Points(0))
+	menu := kit.RowMenu(cx, func() []desktop.MenuItem {
+		a := item()
+		if a.ID == "" {
+			return nil
+		}
+		items := []desktop.MenuItem{{Label: "卸载…", Disabled: s.Step.GetUntracked() != StepIdle || !s.Windows() && a.Running,
+			OnSelect: func() { s.UninstallApp(a.ID) }}}
+		if a.Path != "" {
+			items = append(items, kit.RevealItem(fileManagerName(s.Windows()), func() { s.Reveal(a.Path) }), kit.CopyPathItem(cx, a.Path))
+		}
+		return items
+	})
+	return core.View{OnContextMenu: menu,
 		StyleFunc: func() core.Style {
 			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Height: core.Pt(rowHeight), Padding: core.Symmetric(0, 12),
 				BorderWidth: 1, BorderColor: core.Transparent, CornerRadius: 14, Cursor: core.CursorPointer,
@@ -248,8 +282,17 @@ func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool, focu
 		Children: []core.Node{
 			appIcon(cx, func() string { return details().Icon }, 36),
 			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
-				core.Text{ContentFunc: func() string { return item().Name }, MaxLines: 1,
-					Style: core.Style{FontFamily: kit.FontFace(kit.Semibold), FontSize: kit.FontBody, FontWeight: kit.FaceWeight(kit.Semibold), Color: kit.ColorText}},
+				// A name too long for the row, and only such a name, shows whole under the pointer.
+				core.View{OnLayout: func(b core.Bounds) { nameWidth.Set(b.Size.Width) }, Tooltip: core.Dynamic(func(*core.Scope) core.Node {
+					name, width := item().Name, nameWidth.Get()
+					if width <= 0 || cx.MeasureText(name, nameFont).Width <= float32(width) {
+						return core.Group{}
+					}
+					return core.Func(func(*core.Scope) core.Node { return kit.Tooltip(name) })
+				}), Style: core.Style{MinWidth: core.Pt(0)}, Children: []core.Node{
+					core.Text{ContentFunc: func() string { return item().Name }, MaxLines: 1,
+						Style: core.Style{FontFamily: nameFont.Family, FontSize: nameFont.Size, FontWeight: nameFont.Weight, Color: kit.ColorText}},
+				}},
 				core.Show{When: func() bool { return sub() != "" }, Then: func(*core.Scope) core.Node {
 					return core.Text{ContentFunc: sub, MaxLines: 1, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorTextMuted}}
 				}},

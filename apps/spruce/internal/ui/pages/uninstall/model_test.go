@@ -49,9 +49,10 @@ func TestVisibleAppsSorts(t *testing.T) {
 	}{
 		{SortName, false, "c,b,d,a"},
 		{SortSize, false, "b,d,a,c"},
-		{SortRecent, false, "a,c,b,d"},
-		// Windows orders by install date.
-		{SortRecent, true, "c,b,d,a"},
+		// Never used first, then the longest unused; unknown last.
+		{SortUnused, false, "b,c,a,d"},
+		// Windows orders by install date, oldest first.
+		{SortUnused, true, "b,c,d,a"},
 	} {
 		if got := ids(VisibleApps(apps, details, "", tc.sort, tc.windows)); got != tc.want {
 			t.Errorf("sort %d windows %v = %s, want %s", tc.sort, tc.windows, got, tc.want)
@@ -73,6 +74,60 @@ func TestVisibleAppsKeepsItsInput(t *testing.T) {
 	VisibleApps(input, testDetails(), "", SortSize, false)
 	if ids(input) != ids(testApps()) {
 		t.Errorf("input reordered: %s", ids(input))
+	}
+}
+
+func TestArrangeKeepsTheOrderItWasGiven(t *testing.T) {
+	apps, details := testApps(), testDetails()
+	order := Order(apps, details, SortSize, false)
+	if got := strings.Join(order, ","); got != "b,d,a,c" {
+		t.Fatalf("order %s", got)
+	}
+	// Sizes that came in since do not move the rows: only a new Order does.
+	details["c"] = AppDetails{Size: 5000, HasSize: true}
+	if got := ids(Arrange(apps, order, "")); got != "b,d,a,c" {
+		t.Errorf("arranged %s", got)
+	}
+	if got := ids(Arrange(apps, order, "TENCENT")); got != "c" {
+		t.Errorf("searched %s", got)
+	}
+	// An app the order does not know yet goes last.
+	more := append(testApps(), app.UninstallApp{ID: "e", Name: "Figma"})
+	if got := ids(Arrange(more, order, "")); got != "b,d,a,c,e" {
+		t.Errorf("with a new app %s", got)
+	}
+}
+
+func TestKeptCheckedLeavesNewLeftoversUnchecked(t *testing.T) {
+	checked := map[string]bool{"x": true, "gone": true}
+	got := KeptChecked(checked, []app.UninstallLeftover{leftover("x", 1, true), leftover("y", 1, false), leftover("new", 1, true)})
+	if len(got) != 1 || !got["x"] {
+		t.Errorf("kept %v", got)
+	}
+}
+
+func TestRemoveToastOnlyForAWholeUninstall(t *testing.T) {
+	whole := app.UninstallOutcome{App: "Foo", BundleRemoved: true, RunID: "run", Undoable: true, Result: result(cleanup.CleanResult{Trashed: 5_000_000, Removed: 2})}
+	toast, ok := RemoveToast(whole, false)
+	if !ok || toast.Text != "已卸载「Foo」，5 MB 已移到废纸篓" || toast.UndoRun != "run" || toast.Duration != 10*time.Second {
+		t.Errorf("toast %+v %v", toast, ok)
+	}
+	whole.Undoable = false
+	if toast, _ := RemoveToast(whole, false); toast.UndoRun != "" || toast.Duration != 6*time.Second {
+		t.Errorf("without undo %+v", toast)
+	}
+	for name, out := range map[string]app.UninstallOutcome{
+		"stayed":      {App: "Foo", BundleFailure: "需要管理员权限。", Result: result(cleanup.CleanResult{})},
+		"interrupted": {App: "Foo", BundleRemoved: true, Result: result(cleanup.CleanResult{Interrupted: true})},
+		"failed":      {App: "Foo", BundleRemoved: true, Result: result(cleanup.CleanResult{Failed: []cleanup.Failure{{Path: "/x", Reason: "被占用"}}})},
+	} {
+		if _, ok := RemoveToast(out, false); ok {
+			t.Errorf("%s ends in a toast", name)
+		}
+	}
+	// On Windows the uninstaller removed the program; the move is of its leftovers.
+	if toast, ok := RemoveToast(app.UninstallOutcome{App: "Foo", Result: result(cleanup.CleanResult{Trashed: 3000, Removed: 1})}, true); !ok || toast.Text != "已卸载「Foo」，3 KB 已移到回收站" {
+		t.Errorf("windows %+v %v", toast, ok)
 	}
 }
 
