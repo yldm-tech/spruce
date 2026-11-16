@@ -55,14 +55,18 @@ func TestPlatformChildEnv(t *testing.T) {
 	if env.channel != viaFile || env.checkDir == nil {
 		t.Fatalf("env %+v", env)
 	}
-	// A directory this (unelevated or elevated) test process creates is owned by its user, or by Administrators when the test runs elevated.
+	// A directory this test process creates is owned by its token's default owner: its user when it runs unelevated, Administrators when it runs elevated through UAC, but the account itself for the built-in Administrator (as on the GitHub runners) or under the object-creator policy. checkDir refuses it exactly when that owner is privileged.
 	d, err := os.MkdirTemp("", exchangeDirPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(d)
-	if err := env.checkDir(d); (err == nil) == windows.GetCurrentProcessToken().IsElevated() {
-		t.Errorf("checkDir(%q) = %v with an elevated token %v; the directory's owner is %s, the token's default owner %s, its elevation type %s", d, err, windows.GetCurrentProcessToken().IsElevated(), ownerOf(d), tokenOwner(), elevationType())
+	owner, err := tokenOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.checkDir(d); (err == nil) == privilegedOwner(owner) {
+		t.Errorf("checkDir(%q) = %v; the directory's owner is %s, the token's default owner %s, its elevation type %s, elevated %v", d, err, ownerOf(d), accountName(owner), elevationType(), windows.GetCurrentProcessToken().IsElevated())
 	}
 	if sys := os.Getenv("SystemRoot"); env.checkDir(sys) == nil {
 		t.Errorf("checkDir accepted the Windows directory %q, owned by %s", sys, ownerOf(sys))
@@ -88,12 +92,13 @@ func TestPrivilegedOwner(t *testing.T) {
 			t.Errorf("%s is not treated as privileged", sid)
 		}
 	}
-	ti, err := windows.StringToSid(trustedInstallerSID)
+	// The account as Windows names it, so that a wrong constant cannot agree with itself.
+	ti, _, _, err := windows.LookupSID("", `NT SERVICE\TrustedInstaller`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !privilegedOwner(ti) {
-		t.Error("TrustedInstaller is not treated as privileged")
+	if ti.String() != trustedInstallerSID || !privilegedOwner(ti) {
+		t.Errorf("TrustedInstaller %s is not treated as privileged (trustedInstallerSID %s)", ti, trustedInstallerSID)
 	}
 	user, err := windows.StringToSid("S-1-5-21-1004336348-1177238915-682003330-1001")
 	if err != nil {
@@ -117,17 +122,17 @@ func ownerOf(path string) string {
 	return accountName(owner)
 }
 
-// tokenOwner names the default owner of the objects this process creates (TokenOwner).
-func tokenOwner() string {
+// tokenOwner is the default owner of the objects this process creates (TokenOwner).
+func tokenOwner() (*windows.SID, error) {
 	n := uint32(256)
 	for {
 		b := make([]byte, n)
 		err := windows.GetTokenInformation(windows.GetCurrentProcessToken(), windows.TokenOwner, &b[0], n, &n)
 		if err == nil {
-			return accountName((*struct{ Owner *windows.SID })(unsafe.Pointer(&b[0])).Owner)
+			return (*struct{ Owner *windows.SID })(unsafe.Pointer(&b[0])).Owner.Copy()
 		}
 		if err != windows.ERROR_INSUFFICIENT_BUFFER || n <= uint32(len(b)) {
-			return err.Error()
+			return nil, err
 		}
 	}
 }
