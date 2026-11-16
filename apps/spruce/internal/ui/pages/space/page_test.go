@@ -14,6 +14,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/maintenance"
+	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/space"
 	"spruce/apps/spruce/internal/ui/pages/space/spacefake"
@@ -52,6 +53,8 @@ func mount(t *testing.T, p *page, shown bool, opts ...nsgotest.Option) *page {
 		p.nav = nav.NewNavigator(cx, nav.Space)
 		nav.Key.Provide(cx, p.nav)
 		space.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
+		// The shell's toast raises a page's footer.
+		kit.ToastShownKey.Provide(cx, func() bool { return p.stores.Toasts.Current() != nil })
 		p.shown = core.NewSignal(cx, shown)
 		return core.Show{When: p.shown.Get, Then: space.Page}
 	}, append([]nsgotest.Option{nsgotest.Size(1052, 820), wallNow}, opts...)...)
@@ -544,7 +547,8 @@ func TestLargeFilesTab(t *testing.T) {
 	}
 	p.Find(`role:group "大文件" >> text:big.iso`)
 	p.Find(`role:group "大文件" >> text:"` + spacefake.Home + `/Projects"`)
-	p.Find("text:「个人文件夹」中 500 MB 以上的文件，最多列出 200 个。可以在「设置」中调整大小。")
+	p.Find("id:space-large-note >> text:「个人文件夹」中 500 MB 以上的文件，最多列出 200 个。可以在")
+	p.Find("id:space-large-settings >> text:设置")
 	if p.Exists("id:treemap") {
 		t.Error("the map shows on the 大文件 tab")
 	}

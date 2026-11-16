@@ -54,6 +54,8 @@ type State struct {
 	Err *core.Signal[string]
 	// Choosing is set while the system's folder picker is open.
 	Choosing *core.Signal[bool]
+	// results is the controller of the results showing, nil while none show, for the action bar pinned under them.
+	results *core.Signal[*Results]
 
 	// stopped is set by Stop, so a scan the user stopped goes back without an error.
 	stopped bool
@@ -122,6 +124,7 @@ func NewState(cx *core.Scope, svc Service) *State {
 		Progress: core.NewSignalFunc[*app.SpaceProgress](cx, nil, nil),
 		Err:      core.NewSignal(cx, ""),
 		Choosing: core.NewSignal(cx, false),
+		results:  core.NewSignal[*Results](cx, nil),
 		undo:     undoWatchFor(svc),
 	}
 	async.Do(cx, s.ctx, func(context.Context) (*app.SpaceSummary, error) { return svc.Current(), nil },
@@ -147,6 +150,14 @@ func (s *State) Phase() Phase {
 		return PhaseResults
 	}
 	return PhaseStart
+}
+
+// summary is the last scan, the zero summary before the first; reading it subscribes.
+func (s *State) summary() app.SpaceSummary {
+	if sum := s.Current.Get(); sum != nil {
+		return *sum
+	}
+	return app.SpaceSummary{}
 }
 
 // InPlace reports whether the running scan is of the location of the last scan (重新扫描, an undo), whose results then stay while it runs; reading it subscribes.

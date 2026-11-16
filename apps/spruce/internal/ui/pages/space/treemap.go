@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/ui/format"
@@ -37,7 +38,7 @@ func entryKey(e app.SpaceEntry) string {
 	return e.Path
 }
 
-// Treemap draws a folder's children (largest first) as a squarified treemap (LayoutTreemap) of absolutely positioned cells: a cell's area is its share of the folder. Folders are buttons that open them; large cells show the name and size, the others show them as a tooltip. The list beside the map holds the same entries for the keyboard and screen readers, so the cells take no keyboard focus.
+// Treemap draws a folder's children (largest first) as a squarified treemap (LayoutTreemap) of absolutely positioned cells: a cell's area is its share of the folder. Folders are buttons that open them; a file or a folded group picks its row in the list beside the map (OnPick); folders and files have a context menu (Menu). Large cells show the name and size, the others show them as a tooltip. The list beside the map holds the same entries for the keyboard and screen readers, so the cells take no keyboard focus.
 type Treemap struct {
 	Entries func() []app.SpaceEntry
 	// Total is the folder's size, for the share in each tooltip.
@@ -45,6 +46,8 @@ type Treemap struct {
 	// Label is the folder's name, for the map's accessible name.
 	Label  func() string
 	OnOpen func(app.SpaceEntry)
+	OnPick func(app.SpaceEntry)
+	Menu   func(cx *core.Scope, e app.SpaceEntry) []desktop.MenuItem
 }
 
 // Render implements core.Node.
@@ -62,13 +65,13 @@ func (m Treemap) Render(cx *core.Scope) core.Node {
 		Style: core.Style{Position: core.Relative, Height: core.Pct(100), MinWidth: core.Pt(0), Overflow: core.Hidden, CornerRadius: kit.RadiusCard,
 			Background: kit.SurfaceList, BorderWidth: 1, BorderColor: kit.BorderCard},
 		Children: []core.Node{core.Each(cells.Get, func(c Cell[app.SpaceEntry]) string { return entryKey(c.Item) },
-			func(_ *core.Scope, cell func() Cell[app.SpaceEntry], index func() int) core.Node {
-				return treemapCell(cell, index, m)
+			func(cx *core.Scope, cell func() Cell[app.SpaceEntry], index func() int) core.Node {
+				return treemapCell(cx, cell, index, m)
 			})}}
 }
 
-// treemapCell is one cell: a button for a folder, a picture for anything else. A cell keeps its entry's key (its path, or a group's kind) and with it its kind; its sizes follow the entry.
-func treemapCell(cell func() Cell[app.SpaceEntry], index func() int, m Treemap) core.Node {
+// treemapCell is one cell: a button for a folder; for anything else a picture that picks its row in the list. A cell keeps its entry's key (its path, or a group's kind) and with it its kind; its sizes follow the entry.
+func treemapCell(cx *core.Scope, cell func() Cell[app.SpaceEntry], index func() int, m Treemap) core.Node {
 	kind := cell().Item.Kind
 	entry := func() app.SpaceEntry { return cell().Item }
 	name := func() string { return EntryLabel(entry()) }
@@ -96,10 +99,8 @@ func treemapCell(cell func() Cell[app.SpaceEntry], index func() int, m Treemap) 
 			st.Gradients = []core.Gradient{cellGradient(index())}
 			st.Shadows = []core.BoxShadow{{Spread: 1, Color: cellEdge, Inset: true}}
 		}
-		if kind == app.SpaceDir {
-			st.Cursor = core.CursorPointer
-			st.Hover = &core.Style{Filters: []core.Filter{core.Brightness(1.15)}}
-		}
+		st.Cursor = core.CursorPointer
+		st.Hover = &core.Style{Filters: []core.Filter{core.Brightness(1.15)}}
 		return st
 	}
 	body := core.Show{When: func() bool { c := cell(); return CellShowsLabel(c.Width, c.Height) }, Then: func(*core.Scope) core.Node {
@@ -110,13 +111,22 @@ func treemapCell(cell func() Cell[app.SpaceEntry], index func() int, m Treemap) 
 				Style: core.Style{MaxWidth: core.Pct(100), FontFamily: kit.FontSans, FontSize: 11, FontVariant: core.FontTabularNums, Opacity: core.Alpha(0.85)}},
 		}
 	}}
-	v := core.View{StyleFunc: style, Tooltip: core.Dynamic(func(*core.Scope) core.Node { return kit.Tooltip(tip()) }), Children: []core.Node{body}}
+	v := core.View{StyleFunc: style, Tooltip: core.Dynamic(func(*core.Scope) core.Node { return kit.Tooltip(tip()) }), Children: []core.Node{body}, NoFocus: true}
+	if m.Menu != nil && !group {
+		v.OnContextMenu = kit.RowMenu(cx, func() []desktop.MenuItem { return m.Menu(cx, entry()) })
+	}
 	if kind == app.SpaceDir {
-		v.Role, v.NoFocus = core.RoleButton, true
+		v.Role = core.RoleButton
 		v.LabelFunc = func() string { return "打开 " + name() + "，" + size() }
 		v.OnPress = func(core.PressEvent) { m.OnOpen(entry()) }
 	} else {
+		// The list holds the same entry for assistive technology.
 		v.AccessibilityElementsHidden = func() bool { return true }
+		v.OnPress = func(core.PressEvent) {
+			if m.OnPick != nil {
+				m.OnPick(entry())
+			}
+		}
 	}
 	return v
 }

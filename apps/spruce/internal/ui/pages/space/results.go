@@ -2,11 +2,19 @@ package space
 
 import (
 	"context"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
 
+	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/ui/async"
+	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/store"
 )
@@ -35,6 +43,12 @@ type Notice struct {
 	Text string
 }
 
+// A move to the Trash that can be undone still asks first for what is easy to move by mistake: a folder from bigFolder up or right under the scanned location, and a file changed within recentFile, which may be in use.
+const (
+	bigFolder  = 1e9
+	recentFile = time.Hour
+)
+
 // Results is the controller of a location's results: the open folder, the tab, the large files and a move to the Trash. Make it in the scope that shows them (NewResults); a newer scan of the same location moves it onto that scan (Rescanned), a scan of another location replaces it. Its methods run on the engine goroutine.
 type Results struct {
 	cx    *core.Scope
@@ -54,8 +68,14 @@ type Results struct {
 	// Large is the scan's large files, nil until the 大文件 tab first shows (or after an error, LargeErr).
 	Large    *core.Signal[[]app.SpaceEntry]
 	LargeErr *core.Signal[string]
-	// Confirming is the entry the move to the Trash waits to be confirmed for, nil when none.
-	Confirming *core.Signal[*app.SpaceEntry]
+	// Cursor is the row chosen in the 空间分布 list (by entryKey): the keyboard's, a pressed row's, the folder just left's or a treemap cell's.
+	Cursor *base.Selection
+	// Chosen are the rows chosen in the 大文件 list, to move to the Trash together.
+	Chosen *base.Selection
+	// List is the 空间分布 list's, for where it is scrolled to.
+	List *core.Ref
+	// Confirming are the entries the move to the Trash waits to be confirmed for, nil when none.
+	Confirming *core.Signal[[]app.SpaceEntry]
 	// Trashing is set while a move to the Trash runs, confirmed or not.
 	Trashing  *core.Signal[bool]
 	Notice    *core.Signal[Notice]
@@ -66,11 +86,13 @@ type Results struct {
 	settle bool
 	// largeStale is set when a move to the Trash changed the large files while the 大文件 tab was not showing.
 	largeStale bool
+	// positions are where the list was scrolled to in each folder left, by path, so going back up lands there again.
+	positions map[string]core.ListPosition
 }
 
 // Moves is how a move to the Trash goes on around the page: whether it asks first and what it does after.
 type Moves struct {
-	// Undo reports whether a move can be undone from Spruce (macOS with 概览's controller, OverviewState.CanUndo): then it happens at once and the toast offers 撤销; otherwise it is confirmed first.
+	// Undo reports whether a move can be undone from Spruce (macOS with 概览's controller, OverviewState.CanUndo): then it happens at once and the toast offers 撤销, unless it is easy to make by mistake (needsCare); otherwise it is confirmed first.
 	Undo func() bool
 	// Bump runs after every move (the Trash's size changed).
 	Bump func()
@@ -92,10 +114,14 @@ func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, 
 		Fetching:   core.NewSignal(cx, false),
 		Large:      core.NewSignalFunc[[]app.SpaceEntry](cx, nil, nil),
 		LargeErr:   core.NewSignal(cx, ""),
-		Confirming: core.NewSignal[*app.SpaceEntry](cx, nil),
+		Cursor:     base.NewSelection(cx, false),
+		Chosen:     base.NewSelection(cx, true),
+		List:       new(core.Ref),
+		Confirming: core.NewSignalFunc[[]app.SpaceEntry](cx, nil, nil),
 		Trashing:   core.NewSignal(cx, false),
 		Notice:     core.NewSignal(cx, Notice{}),
 		RevealErr:  core.NewSignal(cx, ""),
+		positions:  map[string]core.ListPosition{},
 	}
 	if at.folder != "" {
 		r.openPath(at.folder)
@@ -158,7 +184,7 @@ func (r *Results) openPath(path string) {
 	r.loadListing(func() (app.SpaceListing, error) { return r.svc.Folder(scanID, path) })
 }
 
-// loadListing asks for a folder with fetch; only the latest answer counts, and the folder shown stays until it comes.
+// loadListing asks for a folder with fetch; only the latest answer counts, and the folder shown stays until it comes. Before leaving a folder the list's position in it is kept, and the list then lands where it should in the folder that came (land).
 func (r *Results) loadListing(fetch func() (app.SpaceListing, error)) {
 	r.listSeq++
 	seq := r.listSeq
@@ -175,14 +201,50 @@ func (r *Results) loadListing(fetch func() (app.SpaceListing, error)) {
 				return
 			}
 			r.ListingErr.Set("")
+			prev := r.Listing.GetUntracked()
 			if r.settle {
 				r.settle = false
-				if cur := r.Listing.GetUntracked(); cur != nil && cur.Entry.Path == l.Entry.Path {
+				if prev != nil && prev.Entry.Path == l.Entry.Path {
 					kit.SettleLayout(r.cx)
 				}
 			}
+			if prev != nil && prev.Entry.Path != l.Entry.Path {
+				if pos, ok := r.List.ListPosition(); ok {
+					r.positions[prev.Entry.Path] = pos
+				}
+			}
 			r.Listing.Set(&l)
+			if prev != nil {
+				r.land(prev.Entry.Path, l)
+			}
 		})
+}
+
+// land puts the list where it belongs in the folder l, opened from the folder at from: back up where it was in a folder above, the row of the folder just left chosen; at the top in a folder further down. The same folder again (a move, a rescan) stays where it is.
+func (r *Results) land(from string, l app.SpaceListing) {
+	to := l.Entry.Path
+	switch {
+	case from == to:
+		return
+	case within(from, to):
+		for _, c := range l.Children {
+			if c.Kind == app.SpaceDir && within(from, c.Path) {
+				r.Cursor.Set(entryKey(c))
+				break
+			}
+		}
+		if pos, ok := r.positions[to]; ok {
+			r.List.ScrollToIndexAt(pos.Index, 0, -pos.Offset, false)
+		}
+	default:
+		r.Cursor.Clear()
+		r.List.ScrollToIndex(0, false)
+	}
+}
+
+// within reports whether path is dir or inside it.
+func within(path, dir string) bool {
+	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator))
 }
 
 // loadLarge asks for the large files.
@@ -220,6 +282,36 @@ func (r *Results) Open(e app.SpaceEntry) {
 	r.open(e.ID)
 }
 
+// OpenParent opens the folder holding e on the 空间分布 tab (a large file's location).
+func (r *Results) OpenParent(e app.SpaceEntry) {
+	r.Notice.Set(Notice{})
+	r.SetTab(TabMap)
+	r.openPath(filepath.Dir(e.Path))
+}
+
+// Up opens the folder above the open one on the 空间分布 tab, if there is one; it reports whether it did.
+func (r *Results) Up() bool {
+	l := r.Listing.GetUntracked()
+	if r.Tab.GetUntracked() != TabMap || l == nil || len(l.Ancestors) < 2 {
+		return false
+	}
+	r.Open(l.Ancestors[len(l.Ancestors)-2])
+	return true
+}
+
+// Highlight chooses e's row in the 空间分布 list and scrolls it to the middle of the list (a treemap cell pressed).
+func (r *Results) Highlight(e app.SpaceEntry) {
+	l := r.Listing.GetUntracked()
+	if l == nil {
+		return
+	}
+	key := entryKey(e)
+	if i := slices.IndexFunc(l.Children, func(c app.SpaceEntry) bool { return entryKey(c) == key }); i >= 0 {
+		r.Cursor.Set(key)
+		r.List.ScrollToIndexAt(i, 0.5, 0, true)
+	}
+}
+
 // Reveal shows e in Finder or Explorer.
 func (r *Results) Reveal(e app.SpaceEntry) {
 	r.RevealErr.Set("")
@@ -231,18 +323,111 @@ func (r *Results) Reveal(e app.SpaceEntry) {
 		})
 }
 
-// RequestTrash moves e to the Trash at once when the move can be undone, else asks to confirm it; an entry the page may not move says why instead.
-func (r *Results) RequestTrash(e app.SpaceEntry) {
+// Menu is the context menu of e, a cell or a row: 打开 for a folder, 在访达中显示, 拷贝路径 and 移到废纸篓, which goes through RequestTrash; for an entry that cannot be moved the item is disabled and the reason follows it.
+func (r *Results) Menu(cx *core.Scope, e app.SpaceEntry) []desktop.MenuItem {
+	if IsGroup(e) {
+		return nil
+	}
+	var items []desktop.MenuItem
+	if e.Kind == app.SpaceDir {
+		items = append(items, desktop.MenuItem{Label: "打开", OnSelect: func() { r.Open(e) }})
+	}
+	items = append(items, kit.RevealItem(format.FileManagerName(), func() { r.Reveal(e) }), kit.CopyPathItem(cx, e.Path), desktop.MenuItem{Separator: true})
+	trash := desktop.MenuItem{Label: "移到" + format.TrashName(), Disabled: e.Locked != "" || r.Trashing.GetUntracked(), OnSelect: func() { r.RequestTrash(e) }}
+	items = append(items, trash)
 	if e.Locked != "" {
+		items = append(items, desktop.MenuItem{Label: e.Locked, Disabled: true})
+	}
+	return items
+}
+
+// Selected are the entries the keyboard's move to the Trash (Mod+Backspace) takes: the 空间分布 list's chosen row, or the 大文件 rows chosen.
+func (r *Results) Selected() []app.SpaceEntry {
+	if r.Tab.GetUntracked() == TabLarge {
+		return r.ChosenEntries()
+	}
+	l := r.Listing.GetUntracked()
+	if l == nil || r.Cursor.Len() == 0 {
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(l.Children), func(e app.SpaceEntry) bool { return !r.Cursor.Has(entryKey(e)) || IsGroup(e) })
+}
+
+// ChosenEntries are the large files chosen that can be moved, largest first; reading it subscribes.
+func (r *Results) ChosenEntries() []app.SpaceEntry {
+	var out []app.SpaceEntry
+	for _, e := range r.Large.Get() {
+		if e.Locked == "" && r.Chosen.Has(entryKey(e)) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// RequestTrash moves entries to the Trash at once when the move can be undone and none of them is easy to move by mistake (needsCare), else asks to confirm it; an entry the page may not move says why instead.
+func (r *Results) RequestTrash(entries ...app.SpaceEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	if e := entries[0]; len(entries) == 1 && e.Locked != "" {
 		r.Notice.Set(Notice{Kind: NoticeError, Text: "「" + EntryLabel(e) + "」不能移走：" + e.Locked})
 		return
 	}
+	entries = slices.DeleteFunc(slices.Clone(entries), func(e app.SpaceEntry) bool { return e.Locked != "" || IsGroup(e) })
 	r.Notice.Set(Notice{})
-	if r.moves.Undo != nil && r.moves.Undo() {
-		r.trash(e)
+	now := time.Now()
+	if r.undoable() && !slices.ContainsFunc(entries, func(e app.SpaceEntry) bool { return r.needsCare(e, now) }) {
+		r.trash(entries)
 		return
 	}
-	r.Confirming.Set(&e)
+	r.Confirming.Set(entries)
+}
+
+// undoable reports whether a move can be undone from Spruce.
+func (r *Results) undoable() bool { return r.moves.Undo != nil && r.moves.Undo() }
+
+// needsCare reports whether moving e asks first even where it can be undone: a folder from bigFolder up or right under the scanned location, or a file changed within recentFile of now.
+func (r *Results) needsCare(e app.SpaceEntry, now time.Time) bool {
+	switch e.Kind {
+	case app.SpaceDir:
+		return e.Size >= bigFolder || filepath.Dir(e.Path) == filepath.Clean(r.root)
+	case app.SpaceFile:
+		return !e.ModTime.IsZero() && now.Sub(e.ModTime) < recentFile
+	}
+	return false
+}
+
+// ConfirmMessage is what the confirmation says about entries: what moves and how much, a file changed lately, and how to get it back.
+func (r *Results) ConfirmMessage(entries []app.SpaceEntry, now time.Time) string {
+	trash := format.TrashName()
+	var size int64
+	recent := 0
+	var changed time.Time
+	for _, e := range entries {
+		size += e.Size
+		if e.Kind == app.SpaceFile && r.needsCare(e, now) {
+			recent++
+			changed = e.ModTime
+		}
+	}
+	var b strings.Builder
+	if len(entries) == 1 {
+		b.WriteString("将把「" + EntryLabel(entries[0]) + "」（" + format.Bytes(size) + "）移到" + trash + "。")
+	} else {
+		b.WriteString("将把 " + strconv.Itoa(len(entries)) + " 项（" + format.Bytes(size) + "）移到" + trash + "。")
+	}
+	switch {
+	case recent == 1 && len(entries) == 1:
+		b.WriteString("它" + format.RelativeTime(changed, now) + "还在修改，可能正在使用。")
+	case recent > 0:
+		b.WriteString("其中 " + strconv.Itoa(recent) + " 个文件一小时内还在修改，可能正在使用。")
+	}
+	if r.undoable() {
+		b.WriteString("移走后可以撤销。")
+	} else {
+		b.WriteString("需要时可以从" + trash + "放回原处。")
+	}
+	return b.String()
 }
 
 // CancelTrash closes the confirmation.
@@ -252,23 +437,27 @@ func (r *Results) CancelTrash() {
 	}
 }
 
-// ConfirmTrash moves the entry waiting for confirmation to the Trash.
+// ConfirmTrash moves the entries waiting for confirmation to the Trash.
 func (r *Results) ConfirmTrash() {
-	if e := r.Confirming.GetUntracked(); e != nil {
-		r.trash(*e)
+	if entries := r.Confirming.GetUntracked(); len(entries) > 0 {
+		r.trash(entries)
 	}
 }
 
-// trash moves entry to the Trash, one move at a time, then corrects the sizes the page shows and says what happened: the toast when something moved, the notice when nothing did.
-func (r *Results) trash(entry app.SpaceEntry) {
-	if r.Trashing.GetUntracked() {
+// trash moves entries to the Trash in one call, one move at a time, then corrects the sizes the page shows and says what happened: the toast when something moved, the notice when nothing did.
+func (r *Results) trash(entries []app.SpaceEntry) {
+	if r.Trashing.GetUntracked() || len(entries) == 0 {
 		return
 	}
-	undo := r.moves.Undo != nil && r.moves.Undo()
+	undo := r.undoable()
 	r.Trashing.Set(true)
 	scanID := r.scanID
+	paths := make([]string, len(entries))
+	for i, e := range entries {
+		paths[i] = e.Path
+	}
 	async.Do(r.cx, r.ctx, func(ctx context.Context) (app.SpaceTrashResult, error) {
-		return r.svc.Trash(ctx, scanID, []string{entry.Path})
+		return r.svc.Trash(ctx, scanID, paths)
 	}, func(res app.SpaceTrashResult, err error) {
 		r.Trashing.Set(false)
 		r.Confirming.Set(nil)
@@ -276,6 +465,7 @@ func (r *Results) trash(entry app.SpaceEntry) {
 			r.Notice.Set(Notice{Kind: NoticeError, Text: err.Error()})
 			return
 		}
+		r.Chosen.Clear()
 		r.settle = true
 		r.page.trashed(scanID, res.Root)
 		r.page.Moved(res.RunID)
@@ -298,6 +488,10 @@ func (r *Results) trash(entry app.SpaceEntry) {
 		if len(res.Failed) > 0 {
 			reason = res.Failed[0].Reason
 		}
-		r.Notice.Set(Notice{Kind: NoticeError, Text: "「" + EntryLabel(entry) + "」没有移走：" + reason})
+		what := "「" + EntryLabel(entries[0]) + "」"
+		if len(entries) > 1 {
+			what = strconv.Itoa(len(entries)) + " 项都"
+		}
+		r.Notice.Set(Notice{Kind: NoticeError, Text: what + "没有移走：" + reason})
 	})
 }
