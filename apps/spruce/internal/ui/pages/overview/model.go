@@ -176,10 +176,21 @@ func ActionLabel(a advice.Action, partial bool, bytes int64) string {
 	return s
 }
 
-// CleanProgressText is a card's progress line while its clean of total bytes runs: 已处理 {done}/{total} over several items; one item reports nothing until it ends, so it reads how much is freed (or moved to the Trash, for a move) of total, which at least says how much is being handled.
+// CleanProgressText is a card's progress line while its clean of total bytes runs: 已处理 {done}/{total} over several items. One item (or a command) reports nothing until it ends, so until then it says what is being handled (正在删除 17.2 GB, 正在运行清理命令) rather than a 0 B freed that reads as stuck, and once bytes come how much is freed (or moved to the Trash, for a move) of total.
 func CleanProgressText(a advice.Action, pr cleanup.Progress, total int64) string {
 	if pr.Total > 1 {
 		return "已处理 " + strconv.Itoa(pr.Done) + "/" + strconv.Itoa(pr.Total)
+	}
+	if pr.Bytes == 0 {
+		switch a {
+		case advice.ActionDelete:
+			return "正在删除 " + format.Bytes(total)
+		case advice.ActionCommand:
+			return "正在运行清理命令"
+		case advice.ActionMixed:
+			return "正在清理 " + format.Bytes(total)
+		}
+		return "正在移到" + format.TrashName() + " " + format.Bytes(total)
 	}
 	verb := "已释放 "
 	if a == advice.ActionTrash {

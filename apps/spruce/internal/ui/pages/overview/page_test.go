@@ -808,7 +808,7 @@ func TestCleanAllOnlyWhenItHelps(t *testing.T) {
 	}
 }
 
-// One big item reports nothing until it ends: the card's progress says how much it handles rather than 0/1.
+// One big item reports nothing until it ends: the card's progress says what it handles rather than 0/1 or 0 B freed.
 func TestCardProgressOfOneItem(t *testing.T) {
 	p := open(t, ready())
 	release := make(chan struct{})
@@ -822,7 +822,7 @@ func TestCardProgressOfOneItem(t *testing.T) {
 	}
 	p.Press("id:rec-installers-act")
 	p.ticking(func() bool { return p.Exists("id:rec-installers-progress") })
-	p.waitText("id:rec-installers-progress-text", "已移到废纸篓 0 B / 600 MB")
+	p.waitText("id:rec-installers-progress-text", "正在移到废纸篓 600 MB")
 	close(release)
 	p.ticking(func() bool { return p.toast() != nil })
 }

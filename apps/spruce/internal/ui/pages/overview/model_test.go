@@ -489,7 +489,7 @@ func TestMaintenanceDue(t *testing.T) {
 	}
 }
 
-// A clean of several items counts them; one item reports nothing until it ends, so the row says how much it handles and the bar goes by bytes.
+// A clean of several items counts them; one item (or a command) reports nothing until it ends, so the row says what it handles until bytes come, then how much of it is done, and the bar goes by bytes.
 func TestCleanProgress(t *testing.T) {
 	skipOnWindows(t)
 	const gb = 1_000_000_000
@@ -501,10 +501,12 @@ func TestCleanProgress(t *testing.T) {
 		frac  float64
 	}{
 		{advice.ActionDelete, cleanup.Progress{Done: 3, Total: 10, Bytes: 2 * gb}, 17 * gb, "已处理 3/10", 0.3},
-		{advice.ActionDelete, cleanup.Progress{Done: 0, Total: 1}, 17 * gb, "已释放 0 B / 17 GB", 0},
-		{advice.ActionCommand, cleanup.Progress{}, 1 * gb, "已释放 0 B / 1 GB", 0},
+		{advice.ActionDelete, cleanup.Progress{Done: 0, Total: 1}, 17 * gb, "正在删除 17 GB", 0},
+		{advice.ActionCommand, cleanup.Progress{}, 1 * gb, "正在运行清理命令", 0},
+		{advice.ActionMixed, cleanup.Progress{Done: 0, Total: 1}, 1 * gb, "正在清理 1 GB", 0},
 		{advice.ActionMixed, cleanup.Progress{Done: 1, Total: 1, Bytes: gb / 2}, 1 * gb, "已释放 500 MB / 1 GB", 0.5},
-		{advice.ActionTrash, cleanup.Progress{Done: 0, Total: 1}, 600_000_000, "已移到废纸篓 0 B / 600 MB", 0},
+		{advice.ActionTrash, cleanup.Progress{Done: 0, Total: 1}, 600_000_000, "正在移到废纸篓 600 MB", 0},
+		{advice.ActionTrash, cleanup.Progress{Done: 1, Total: 1, Bytes: 600_000_000}, 600_000_000, "已移到废纸篓 600 MB / 600 MB", 1},
 	} {
 		if got := CleanProgressText(tc.a, tc.pr, tc.total); got != tc.text {
 			t.Errorf("%+v: text %q, want %q", tc, got, tc.text)
