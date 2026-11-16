@@ -321,7 +321,10 @@ func TestCleanSub(t *testing.T) {
 
 // A category the user did not change follows each newer check; one changed on a card keeps what is still there and counts what the check adds; a change in a drill-down view covers every category of its source, also one a newer check adds.
 func TestChoice(t *testing.T) {
-	src := func(c cleanup.Category, source string) cleanup.Category { c.ID, c.Source = source+":"+c.ID, source; return c }
+	src := func(c cleanup.Category, source string) cleanup.Category {
+		c.ID, c.Source = source+":"+c.ID, source
+		return c
+	}
 	caches := src(category("caches", true, item("a", 1), item("b", 2)), "system-junk")
 	logs := src(category("logs", true, item("c", 3)), "system-junk")
 	disk := src(category("dmg", true, item("e", 5)), "installers")
