@@ -2,6 +2,12 @@
 
 What changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.
 
+## 0.1.1 - 2026-11-16
+
+### Fixes
+
+- Name the licences of the linked code exactly and ship their texts
+
 ## 0.1.0 - 2026-11-16
 
 ### Features
