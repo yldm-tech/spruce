@@ -695,7 +695,7 @@ func (s *State) Undo() {
 	stores.Overview.Undo(s.cx, run, nil, func(out app.RestoreOutcome, err error) {
 		stores.Trash.Bump()
 		stores.Locations.Bump()
-		stores.Toasts.Show(UndoneToast(out, err))
+		stores.Toasts.Show(store.UndoneToast(out, err))
 	})
 }
 

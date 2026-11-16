@@ -409,17 +409,6 @@ func RemoveToast(o app.UninstallOutcome, windows bool) (store.Toast, bool) {
 	return t, true
 }
 
-// UndoneToast is the toast after the done card's 撤销: what was put back, or why not.
-func UndoneToast(out app.RestoreOutcome, err error) store.Toast {
-	switch {
-	case err != nil:
-		return store.Toast{Text: err.Error(), Duration: toastShort}
-	case out.Failed == 0:
-		return store.Toast{Text: fmt.Sprintf("已放回原处 %d 项", out.Restored), Duration: toastShort}
-	}
-	return store.Toast{Text: fmt.Sprintf("已放回 %d 项，%d 项没能放回", out.Restored, out.Failed), ViewRun: out.RunID, Duration: toastLong}
-}
-
 // UninstalledSummary is the done card of a Windows program its uninstaller removed and that left nothing behind (or whose leftovers the user kept).
 func UninstalledSummary(name string, leftoversFound int) DoneSummary {
 	second := "没有找到它留下的文件"

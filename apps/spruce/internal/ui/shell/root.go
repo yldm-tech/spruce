@@ -1,9 +1,6 @@
 package shell
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
 
@@ -11,12 +8,6 @@ import (
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/store"
-)
-
-// Toast times: a message alone stays 6 seconds, one with 撤销 or 查看 10.
-const (
-	toastShort = 6 * time.Second
-	toastLong  = 10 * time.Second
 )
 
 // Root is the window's root view: the sidebar and the page area over the page background, with the toast at the bottom of the page area, above the pages and below the dialogs. It shows the page of the navigator the app provides (nav.Key), which outlives the window, so a window opened again shows the page the last one did; it hides the system's title bar (the sidebar and the page headers drag the window) and reports the window's frame to keepFrame as it moves. Escape (back) leaves a drill-down view unless an overlay holds the sidebar. While asking is set it asks before quitting during a run, whose 停止并退出 calls quit.
@@ -94,7 +85,7 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 			undoing.Set(false)
 			stores.Trash.Bump()
 			stores.Locations.Bump()
-			toasts.Show(undoToast(out, err))
+			toasts.Show(store.UndoneToast(out, err))
 		}, nil)
 	}
 	return core.View{PointerEvents: core.PointerEventsBoxNone,
@@ -122,15 +113,4 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 			}
 			return kit.Toast{Text: text, Actions: actions, Duration: t.Duration, OnClose: toasts.Dismiss, Leaving: leaving.Get, OnGone: gone}
 		})}}
-}
-
-// undoToast is the toast after a 撤销: all put back, some put back with 查看 to read why the rest was not, or the error.
-func undoToast(out app.RestoreOutcome, err error) store.Toast {
-	switch {
-	case err != nil:
-		return store.Toast{Text: err.Error(), Duration: toastShort}
-	case out.Failed == 0:
-		return store.Toast{Text: fmt.Sprintf("已放回原处 %d 项", out.Restored), Duration: toastShort}
-	}
-	return store.Toast{Text: fmt.Sprintf("已放回 %d 项，%d 项没能放回", out.Restored, out.Failed), ViewRun: out.RunID, Duration: toastLong}
 }
