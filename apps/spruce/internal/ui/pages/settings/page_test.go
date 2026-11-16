@@ -44,6 +44,8 @@ type options struct {
 	files *settingsfake.Files
 	// goos is the platform the page lays out for; "" is macOS.
 	goos string
+	// mac runs the page in a macOS environment, where Tab moves the keyboard's focus.
+	mac bool
 }
 
 // wallClock is the date and time the page reads (core.Scope.WallTime) in these tests.
@@ -61,12 +63,16 @@ func start(t *testing.T, o options) *page {
 		o.files = &settingsfake.Files{}
 	}
 	p := &page{t: t, svc: o.svc, files: o.files, fakes: o.fakes}
+	opts := []nsgotest.Option{nsgotest.Size(1052, 2600), func(a *nsgotest.App) { a.Clock.SetWallTime(wallClock) }}
+	if o.mac {
+		opts = append(opts, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, o.svc.Use(o.fakes.Deps()))
 		settings.DepsKey.Provide(cx, settings.Deps{Files: o.files, GOOS: cmp.Or(o.goos, "darwin")})
 		p.shown = core.NewSignal(cx, true)
 		return core.Show{When: p.shown.Get, Then: func(*core.Scope) core.Node { return core.Func(settings.Page) }}
-	}, nsgotest.Size(1052, 2600), func(a *nsgotest.App) { a.Clock.SetWallTime(wallClock) })
+	}, opts...)
 	p.WaitFor("id:settings-tab-general", wait)
 	return p
 }
@@ -308,7 +314,16 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	if p.Exists("id:retention-days-error") {
 		t.Errorf("error %q stays", p.text("retention-days-error"))
 	}
+	// 保留天数 waits for Return; with no record older than 30 days it saves without asking.
 	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("保留天数 saved %d times before Return", n)
+	}
+	p.Submit("id:retention-days-field")
+	if p.Exists("id:retention-dialog") {
+		t.Error("asks although no record is deleted")
+	}
 	want := settingsfake.Defaults()
 	want.History.RetentionDays = 30
 	if got := p.updates(1); !equal(got, want) {
@@ -379,25 +394,89 @@ func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 
 func TestLeavingThePageSendsThePendingSave(t *testing.T) {
 	p := start(t, options{})
-	p.tab("history")
-	p.Clear("id:retention-days-field")
-	p.Type("id:retention-days-field", "90")
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "900")
 	p.Post(func() { p.shown.Set(false) })
 	p.WaitForGone("id:settings-page", wait)
-	if got := p.updates(1).History.RetentionDays; got != 90 {
-		t.Fatalf("retention %d", got)
+	if got := p.updates(1).Cleanup.LargeFileMinMB; got != 900 {
+		t.Fatalf("large files %d", got)
 	}
 }
 
 // Another tab is another part of the page: a save still waiting goes out as its tab goes.
 func TestSwitchingTabsSendsThePendingSave(t *testing.T) {
 	p := start(t, options{})
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "900")
+	p.tab("about")
+	if got := p.updates(1).Cleanup.LargeFileMinMB; got != 900 {
+		t.Fatalf("large files %d", got)
+	}
+}
+
+// More days are saved on Return without a question.
+func TestLongerRetentionSavesOnReturn(t *testing.T) {
+	p := start(t, options{})
 	p.tab("history")
 	p.Clear("id:retention-days-field")
-	p.Type("id:retention-days-field", "90")
-	p.tab("about")
-	if got := p.updates(1).History.RetentionDays; got != 90 {
+	p.Type("id:retention-days-field", "365")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times while typing", n)
+	}
+	p.Submit("id:retention-days-field")
+	if got := p.updates(1).History.RetentionDays; got != 365 {
 		t.Fatalf("retention %d", got)
+	}
+	if p.Exists("id:retention-dialog") {
+		t.Error("asks before keeping more")
+	}
+}
+
+// Fewer days that would delete records ask first, saying how many; 取消 shows the stored value again, 删除记录 saves.
+func TestShorterRetentionAsksFirst(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	day := 24 * time.Hour
+	fakes.Runs = []history.Run{
+		{ID: "a", Kind: history.KindSmartScan, StartedAt: wallClock.Add(-10 * day)},
+		{ID: "b", Kind: history.KindSmartScan, StartedAt: wallClock.Add(-40 * day)},
+		{ID: "c", Kind: history.KindMaintenance, StartedAt: wallClock.Add(-100 * day)},
+	}
+	p := start(t, options{fakes: fakes, mac: true})
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Submit("id:retention-days-field")
+	p.WaitFor("id:retention-dialog", wait)
+	want := "只保留最近 30 天，更早的 2 条操作记录会立即删除，无法恢复。这些记录中移到" + format.TrashName() + "的项目也不能再在操作历史里放回原处。"
+	if got := p.text("retention-message"); got != want {
+		t.Errorf("message %q", got)
+	}
+	p.Press("id:retention-dialog >> id:confirm-cancel")
+	p.WaitForGone("id:retention-dialog", wait)
+	if got := p.field("retention-days"); got != "180" {
+		t.Errorf("after 取消 the field shows %q", got)
+	}
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times after 取消", n)
+	}
+
+	// Leaving the field asks as Return does.
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Key("Tab")
+	p.WaitFor("id:retention-dialog", wait)
+	p.Press("id:retention-dialog >> id:confirm-ok")
+	if got := p.updates(1).History.RetentionDays; got != 30 {
+		t.Fatalf("retention %d", got)
+	}
+	p.WaitForGone("id:retention-dialog", wait)
+	if got := p.field("retention-days"); got != "30" {
+		t.Errorf("field shows %q", got)
 	}
 }
 

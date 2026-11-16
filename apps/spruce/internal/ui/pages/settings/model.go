@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/rules"
 	"spruce/apps/spruce/internal/engine/settings"
@@ -167,6 +168,27 @@ func ParseWhole(text string) (int, bool) {
 
 // InRange reports whether n is within r.
 func InRange(n int, r app.SettingRange) bool { return n >= r.Min && n <= r.Max }
+
+// RetentionDrops counts the runs that keeping days days of history deletes as of now, as history.Store.Prune does.
+func RetentionDrops(runs []history.Run, days int, now time.Time) int {
+	cutoff := history.RetentionCutoff(now, days)
+	n := 0
+	for _, r := range runs {
+		if r.StartedAt.Before(cutoff) {
+			n++
+		}
+	}
+	return n
+}
+
+// RetentionText is what the question before lowering 保留天数 to days says it deletes: drops runs, or, with drops < 0, the runs that could not be counted.
+func RetentionText(days, drops int, trash string) string {
+	what := "更早的操作记录"
+	if drops >= 0 {
+		what = "更早的 " + strconv.Itoa(drops) + " 条操作记录"
+	}
+	return "只保留最近 " + strconv.Itoa(days) + " 天，" + what + "会立即删除，无法恢复。这些记录中移到" + trash + "的项目也不能再在操作历史里放回原处。"
+}
 
 // RangeText is what a number field shows when its text is not a whole number within r.
 func RangeText(r app.SettingRange) string {

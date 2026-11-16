@@ -8,6 +8,8 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"spruce/apps/spruce/internal/app"
+	enginehist "spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/rules"
 	"spruce/apps/spruce/internal/ui/async"
@@ -294,11 +296,72 @@ func historyTab(st *store.Settings, clearRef *core.Ref, onClear func()) []core.N
 	limits := st.Limits()
 	return []core.Node{
 		group("", "section-history",
-			numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: limits.RetentionDays, Unit: "天",
-				TestID: "retention-days"},
+			retentionSetting{Range: limits.RetentionDays},
 			row{Label: "清空历史", Description: "删除全部操作记录，无法恢复。", TestID: "clear-history",
 				Control: []core.Node{kit.Button{Text: "清空历史…", Variant: kit.ButtonGhost, Ref: clearRef, OnPress: onClear, TestID: "clear-history-button"}}},
 		),
+	}
+}
+
+// retentionSetting is 保留天数. Fewer days delete the records older than that at once, which cannot be undone, so the number is saved only on Return or as the field loses the focus, and only after a question when it would delete records the history holds.
+type retentionSetting struct {
+	Range app.SettingRange
+}
+
+// retentionAsk is a lower 保留天数 waiting for the user's answer: the days, how many runs it deletes (-1 when they could not be counted) and what the field does on either answer.
+type retentionAsk struct {
+	days, drops  int
+	save, revert func()
+}
+
+// Render implements core.Node.
+func (c retentionSetting) Render(cx *core.Scope) core.Node {
+	stores := store.Use(cx)
+	ask := core.NewSignal[*retentionAsk](cx, nil)
+	// checking is set while the runs are counted, so the blur that follows a Return does not ask twice.
+	checking := false
+	confirm := func(n int, save, revert func()) {
+		if checking || ask.GetUntracked() != nil {
+			return
+		}
+		if n > stores.Settings.Value().History.RetentionDays {
+			save()
+			return
+		}
+		checking = true
+		stores.History.Load(cx, cx.Context(), enginehist.MaxRuns, func(runs []enginehist.Run, err error) {
+			checking = false
+			drops := -1
+			if err == nil {
+				drops = RetentionDrops(runs, n, cx.WallTime())
+			}
+			if drops == 0 {
+				save()
+				return
+			}
+			ask.Set(&retentionAsk{days: n, drops: drops, save: save, revert: revert})
+		})
+	}
+	answer := func(yes bool) {
+		a := ask.GetUntracked()
+		ask.Set(nil)
+		if yes {
+			a.save()
+		} else {
+			a.revert()
+		}
+	}
+	return core.Group{
+		numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: c.Range, Unit: "天", Confirm: confirm,
+			TestID: "retention-days"},
+		kit.ConfirmDialog{Open: func() bool { return ask.Get() != nil }, Title: "缩短保留天数？", ConfirmLabel: "删除记录", Danger: true, TestID: "retention-dialog",
+			Message: core.Text{ContentFunc: func() string {
+				if a := ask.Get(); a != nil {
+					return RetentionText(a.days, a.drops, format.TrashName())
+				}
+				return ""
+			}, TestID: "retention-message"},
+			OnConfirm: func() { answer(true) }, OnCancel: func() { answer(false) }},
 	}
 }
 

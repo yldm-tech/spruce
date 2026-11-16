@@ -135,13 +135,19 @@ type numberSetting struct {
 	Label, Description string
 	Range              app.SettingRange
 	// Unit is what follows the field, e.g. "天" or "MB".
-	Unit   string
-	TestID string
+	Unit string
+	// Confirm, when set, holds a valid number until Return or the field losing the focus, never saving it as the user types, and then decides what becomes of it: save stores it, revert shows the stored value again. A number that is the stored one is not handed to it.
+	Confirm func(n int, save, revert func())
+	TestID  string
 }
 
 // Render implements core.Node.
 func (c numberSetting) Render(cx *core.Scope) core.Node {
-	s := newSetting(cx, store.Use(cx).Settings, c.Field, saveDebounce, equalInt, func(v int) string { return "已调整为 " + strconv.Itoa(v) + " " + c.Unit })
+	debounce := saveDebounce
+	if c.Confirm != nil {
+		debounce = 0
+	}
+	s := newSetting(cx, store.Use(cx).Settings, c.Field, debounce, equalInt, func(v int) string { return "已调整为 " + strconv.Itoa(v) + " " + c.Unit })
 	// text is what is being edited; nil shows the setting's value.
 	text := core.NewSignal[*string](cx, nil)
 	invalid := func() bool {
@@ -151,6 +157,49 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 		}
 		n, ok := ParseWhole(*t)
 		return !ok || !InRange(n, c.Range)
+	}
+	// submit hands the number typed to Confirm.
+	submit := func() {
+		t := text.GetUntracked()
+		if t == nil || core.Untracked(cx, invalid) {
+			return
+		}
+		n, _ := ParseWhole(*t)
+		if n == core.Untracked(cx, s.value) {
+			text.Set(nil)
+			return
+		}
+		c.Confirm(n, func() {
+			s.change(n)
+			text.Set(nil)
+		}, func() { text.Set(nil) })
+	}
+	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid,
+		Value: func() string {
+			if t := text.Get(); t != nil {
+				return *t
+			}
+			return strconv.Itoa(s.value())
+		},
+		OnChange: func(raw string) {
+			text.Set(&raw)
+			if n, ok := ParseWhole(raw); ok && InRange(n, c.Range) {
+				s.change(n)
+			} else {
+				s.drop()
+			}
+		},
+		OnBlur: func() {
+			if core.Untracked(cx, invalid) {
+				return
+			}
+			s.flush()
+			text.Set(nil)
+		}}
+	if c.Confirm != nil {
+		field.OnChange = func(raw string) { text.Set(&raw) }
+		field.OnBlur = submit
+		field.OnSubmit = func(string) { submit() }
 	}
 	return row{Label: c.Label, Description: c.Description, TestID: c.TestID,
 		Error: func() string {
@@ -165,28 +214,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 			}
 			return s.note.Get()
 		},
-		Control: []core.Node{kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid,
-			Value: func() string {
-				if t := text.Get(); t != nil {
-					return *t
-				}
-				return strconv.Itoa(s.value())
-			},
-			OnChange: func(raw string) {
-				text.Set(&raw)
-				if n, ok := ParseWhole(raw); ok && InRange(n, c.Range) {
-					s.change(n)
-				} else {
-					s.drop()
-				}
-			},
-			OnBlur: func() {
-				if core.Untracked(cx, invalid) {
-					return
-				}
-				s.flush()
-				text.Set(nil)
-			}}}}
+		Control: []core.Node{field}}
 }
 
 // folderListSetting is a list of folders as rows of its group: its label and description, a row per folder with a remove button, and 添加文件夹…, which opens the system's folder picker. Each change is saved at once.
