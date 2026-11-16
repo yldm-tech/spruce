@@ -1,8 +1,8 @@
 package history
 
 import (
+	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -160,37 +160,6 @@ func TestKindMeta(t *testing.T) {
 	}
 }
 
-func TestTaskLines(t *testing.T) {
-	catalog := []app.TaskView{{ID: "dns", Title: "刷新 DNS 缓存"}, {ID: "icons", Title: "重建图标缓存"}, {ID: "databases", Title: "优化应用数据库"}}
-	lines := TaskLines([]taskresult.Result{
-		result("dns", taskresult.Applied, "已刷新 DNS 缓存", false),
-		result("icons", taskresult.Applied, "注销后生效", true),
-		result("databases", taskresult.Skipped, "Safari 仍在运行，已跳过", false),
-		result("gone", taskresult.Unavailable, "这台电脑上没有这项", false),
-	}, catalog)
-	var got []string
-	for _, l := range lines {
-		got = append(got, strings.Join([]string{l.Title, l.Status, l.Message}, "|")+map[bool]string{true: "|!", false: ""}[l.Attention])
-	}
-	want := []string{
-		"重建图标缓存|部分完成|注销后生效|!",
-		"优化应用数据库|已跳过|Safari 仍在运行|!",
-		"gone|不可用|这台电脑上没有这项|!",
-		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("TaskLines = %q", got)
-	}
-}
-
-func TestStatusLabels(t *testing.T) {
-	for o, want := range map[taskresult.Outcome]string{taskresult.Unchanged: "无需处理", taskresult.Failed: "失败", "odd": "odd"} {
-		if got := StatusLabel(taskresult.Result{Outcome: o}); got != want {
-			t.Errorf("StatusLabel(%s) = %q", o, got)
-		}
-	}
-}
-
 func TestTimes(t *testing.T) {
 	start := time.Date(2026, time.November, 14, 9, 5, 7, 0, time.Local)
 	r := enginehist.Run{StartedAt: start.UTC(), EndedAt: start.Add(28 * time.Second).UTC()}
@@ -278,5 +247,31 @@ func TestRestoreSummaryNoteAndToast(t *testing.T) {
 	}
 	if text, view, d := RestoreToast(app.RestoreOutcome{RunID: "x", Restored: 1, Failed: 2}); text != "已放回 1 项，2 项没能放回" || view != "x" || d != 10*time.Second {
 		t.Errorf("toast %q %q %v", text, view, d)
+	}
+}
+
+func TestDetailPath(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator)+"Users", "me")
+	// An absolute path on every platform; a path from the root alone is not one on Windows.
+	abs := filepath.Join(t.TempDir(), "Logs", "x.log")
+	type want struct {
+		path  string
+		moved bool
+	}
+	for line, w := range map[string]want{
+		"~/Library/Caches/x：文件正在使用，已跳过": {path: filepath.Join(home, "Library", "Caches", "x")},
+		abs + "：没有权限":                   {path: abs},
+		"系统缓存：已清理 34 项":                 {},
+		"另有 3 项未能处理":                    {},
+		"~：奇怪":                          {path: home},
+		"~other/x：不是家目录":                {},
+		"已移到废纸篓：~/Movies/a.mov":         {path: filepath.Join(home, "Movies", "a.mov"), moved: true},
+	} {
+		if path, moved := DetailPath(line, home); path != w.path || moved != w.moved {
+			t.Errorf("DetailPath(%q) = %q, %v, want %q, %v", line, path, moved, w.path, w.moved)
+		}
+	}
+	if got, _ := DetailPath("~/x：y", ""); got != "" {
+		t.Errorf("without a home %q", got)
 	}
 }

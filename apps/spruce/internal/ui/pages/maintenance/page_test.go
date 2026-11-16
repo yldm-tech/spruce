@@ -3,6 +3,7 @@ package maintenance_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,20 @@ func start(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services
 	return p
 }
 
+// startKept mounts the page as the shell does, with Provide, so what it keeps outlives a showing.
+func startKept(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services) *page {
+	t.Helper()
+	p := &page{svc: svc, fakes: fakes}
+	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		p.stores = storefake.Provide(cx, fakes.Deps())
+		maintenance.Provide(cx, maintenance.Deps{Maintenance: svc})
+		p.shown = core.NewSignal(cx, true)
+		return core.Show{When: p.shown.Get, Then: maintenance.Page}
+	}, nsgotest.Size(1052, 820))
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) > 0 })
+	return p
+}
+
 // waitTicking settles until selector matches one view, moving the manual clock so throttled progress (async.Batch) comes through.
 func (p *page) waitTicking(selector string) {
 	p.WaitUntil(wait, func() bool {
@@ -61,7 +76,15 @@ func (p *page) checked(name string) bool { return p.Find("role:switch " + name).
 
 func (p *page) selected() string { return p.Find("text:/^\\d+ 项$/").Text }
 
-func (p *page) doneLines() []string { return strings.Split(p.Find("id:done-lines").Text, "\n") }
+// doneTasks are the done card's tasks in order, each as title|status|message.
+func (p *page) doneTasks() []string {
+	cells := p.Find("id:done-tasks").Children
+	var rows []string
+	for i := 0; i+2 < len(cells); i += 3 {
+		rows = append(rows, cells[i].Text+"|"+cells[i+1].Text+"|"+cells[i+2].Text)
+	}
+	return rows
+}
 
 func TestIdle(t *testing.T) {
 	p := start(t, &maintenancefake.Service{Tasks: maintenancefake.MacCatalog()}, newFakes(t))
@@ -83,6 +106,21 @@ func TestIdle(t *testing.T) {
 	}
 	// 5 + 5 + 20 + 30 seconds.
 	p.Find("text:约 1 分钟")
+}
+
+// The choices on the cards survive leaving the page and coming back.
+func TestChoicesOutliveTheVisit(t *testing.T) {
+	p := startKept(t, &maintenancefake.Service{Tasks: maintenancefake.MacCatalog()}, newFakes(t))
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) == 6 })
+	p.Press("role:switch 刷新 DNS 缓存")
+	p.Press("role:switch 校验 Spotlight 索引")
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("role:switch", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) == 6 })
+	if p.checked("刷新 DNS 缓存") || !p.checked("校验 Spotlight 索引") {
+		t.Errorf("DNS %v, Spotlight %v after coming back", p.checked("刷新 DNS 缓存"), p.checked("校验 Spotlight 索引"))
+	}
 }
 
 func TestSwitchesCountAndDisableRun(t *testing.T) {
@@ -170,14 +208,17 @@ func TestRunShowsProgressThenTheSummary(t *testing.T) {
 	p.Find("text:维护完成")
 	p.Find("text:4 项 >> nth=0")
 	want := []string{
-		"优化应用数据库：Safari 仍在运行，已跳过",
-		"刷新 DNS 缓存：已刷新 DNS 缓存",
-		"刷新 QuickLook 预览：已刷新 QuickLook",
-		"重建图标缓存：已重建图标缓存",
-		"修复「打开方式」：没有需要清理的登记",
+		"优化应用数据库|已跳过|Safari 仍在运行",
+		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
+		"刷新 QuickLook 预览|已完成|已刷新 QuickLook",
+		"重建图标缓存|已完成|已重建图标缓存",
+		"修复「打开方式」|无需处理|没有需要清理的登记",
 	}
-	if got := p.doneLines(); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("lines %q", got)
+	if got := p.doneTasks(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("tasks %q", got)
+	}
+	if p.Exists("id:done-lines") {
+		t.Error("an empty line block under the big number")
 	}
 	// Full Disk Access is granted, so the skip was not about the permission.
 	if p.Exists("role:button 去授权") {
@@ -193,6 +234,48 @@ func TestRunShowsProgressThenTheSummary(t *testing.T) {
 	}
 	if p.stores.Block.Blocked() {
 		t.Error("the shell is still blocked")
+	}
+}
+
+// 停止 ends the run: the overlay says 正在停止… until the run returns, then the done card says it was stopped.
+func TestStopEndsTheRun(t *testing.T) {
+	stopped := make(chan struct{})
+	first := true
+	svc := &maintenancefake.Service{Tasks: maintenancefake.MacCatalog(),
+		OnRun: func(ctx context.Context, ids []string, progress func(app.ProgressEvent)) (app.RunSummary, error) {
+			if !first {
+				return maintenancefake.Summary(maintenancefake.Result("quicklook", taskresult.Applied, "已刷新 QuickLook")), nil
+			}
+			first = false
+			progress(app.ProgressEvent{Kind: app.ProgressStarted, TaskID: "dns", Done: 0, Total: len(ids)})
+			<-ctx.Done()
+			<-stopped
+			sum := maintenancefake.Summary(
+				maintenancefake.Result("dns", taskresult.Skipped, enginemaint.StoppedUncertain),
+				maintenancefake.Result("quicklook", taskresult.Skipped, "维护已中断，未执行"),
+			)
+			sum.Interrupted = true
+			return sum, nil
+		}}
+	p := start(t, svc, newFakes(t))
+	p.Press("id:run")
+	p.WaitFor("id:run-overlay", wait)
+	p.waitTicking("id:run-overlay >> text:刷新 DNS 缓存 · 已完成 0/4")
+	p.Find("text:部分任务需要管理员权限，请在系统弹出的授权窗口中确认")
+	p.Press("id:run-overlay >> id:overlay-cancel")
+	p.WaitFor("id:run-overlay >> text:正在停止…", wait)
+	if p.Exists("text:/管理员权限/") {
+		t.Error("the prompt note stays while stopping")
+	}
+	close(stopped)
+	p.WaitFor("id:done", wait)
+	p.Find("id:done >> role:header 维护已中断")
+
+	// The admin batch may still be running as root, so running again leaves its task out.
+	p.Press("id:rerun")
+	p.WaitUntil(wait, func() bool { return len(svc.Runs()) == 2 })
+	if got := strings.Join(svc.Runs()[1], ","); got != "quicklook" {
+		t.Errorf("ran again %q", got)
 	}
 }
 
@@ -215,8 +298,11 @@ func TestCompletedMessagesAreListed(t *testing.T) {
 		maintenancefake.Result("icons", taskresult.Applied, "已重建图标缓存并刷新程序坞；如果访达里仍有旧图标，注销并重新登录即可"),
 		maintenancefake.Result("launchservices", taskresult.Unchanged, "没有需要清理的登记"),
 	), nil)
-	if !strings.Contains(p.Find("id:done-lines").Text, "重建图标缓存：已重建图标缓存并刷新程序坞；如果访达里仍有旧图标，注销并重新登录即可") {
-		t.Errorf("lines %q", p.doneLines())
+	if !slices.Contains(p.doneTasks(), "重建图标缓存|已完成|已重建图标缓存并刷新程序坞；如果访达里仍有旧图标，注销并重新登录即可") {
+		t.Errorf("tasks %q", p.doneTasks())
+	}
+	if p.Exists("id:rerun") {
+		t.Error("重新运行未完成的项目 offered after a run that finished everything")
 	}
 	if p.Exists("text:/无需重启/") {
 		t.Error("the card claims 无需重启 on its own")
@@ -228,9 +314,13 @@ func TestPartlyAppliedComesFirst(t *testing.T) {
 	partial.Partial = true
 	p := runWith(t, "维护完成", maintenancefake.Summary(maintenancefake.Result("dns", taskresult.Applied, "已刷新 DNS 缓存"), partial), nil)
 	p.Find("text:2 项 >> nth=0")
-	want := "重建图标缓存：已清除图标缓存，但未能重启图标服务和程序坞；注销并重新登录后生效|刷新 DNS 缓存：已刷新 DNS 缓存"
-	if got := strings.Join(p.doneLines(), "|"); got != want {
-		t.Errorf("lines %q", got)
+	want := "重建图标缓存|部分完成|已清除图标缓存，但未能重启图标服务和程序坞；注销并重新登录后生效\n刷新 DNS 缓存|已完成|已刷新 DNS 缓存"
+	if got := strings.Join(p.doneTasks(), "\n"); got != want {
+		t.Errorf("tasks %q", got)
+	}
+	// What needs attention stands out from what completed.
+	if p.Find("id:task-icons-status").TextStyle.Color == p.Find("id:task-dns-status").TextStyle.Color {
+		t.Error("部分完成 is drawn like 已完成")
 	}
 }
 
@@ -243,9 +333,45 @@ func TestDeclinedAdminPromptIsOneLine(t *testing.T) {
 		maintenancefake.Result("launchservices", taskresult.Failed, "lsregister 运行失败"),
 	), nil)
 	p.Find("text:1 项 >> nth=0")
-	want := "刷新 DNS 缓存、重建图标缓存：已取消管理员授权，未执行\n修复「打开方式」：lsregister 运行失败\n刷新 QuickLook 预览：已刷新 QuickLook"
-	if got := p.Find("id:done-lines").Text; got != want {
-		t.Errorf("lines %q", got)
+	want := "刷新 DNS 缓存|已跳过|已取消管理员授权，未执行\n重建图标缓存|已跳过|已取消管理员授权，未执行\n修复「打开方式」|失败|lsregister 运行失败\n刷新 QuickLook 预览|已完成|已刷新 QuickLook"
+	if got := strings.Join(p.doneTasks(), "\n"); got != want {
+		t.Errorf("tasks %q", got)
+	}
+}
+
+// 重新运行未完成的项目 runs only the tasks left unfinished, not 不可用 ones and not what the cards choose, and leaves the cards as they were.
+func TestRerunTheUnfinishedTasks(t *testing.T) {
+	first := true
+	svc := &maintenancefake.Service{Tasks: maintenancefake.MacCatalog(),
+		OnRun: func(_ context.Context, ids []string, _ func(app.ProgressEvent)) (app.RunSummary, error) {
+			if !first {
+				var results []taskresult.Result
+				for _, id := range ids {
+					results = append(results, maintenancefake.Result(id, taskresult.Applied, "好"))
+				}
+				return maintenancefake.Summary(results...), nil
+			}
+			first = false
+			return maintenancefake.Summary(
+				maintenancefake.Result("dns", taskresult.Skipped, "已取消管理员授权，未执行"),
+				maintenancefake.Result("quicklook", taskresult.Applied, "已刷新 QuickLook"),
+				maintenancefake.Result("icons", taskresult.Failed, "失败了"),
+				maintenancefake.Result("launchservices", taskresult.Unavailable, "这台电脑上没有"),
+			), nil
+		}}
+	p := start(t, svc, newFakes(t))
+	p.Press("id:run")
+	p.WaitFor("id:done", wait)
+	p.Press("id:rerun")
+	p.WaitUntil(wait, func() bool { return len(svc.Runs()) == 2 })
+	if got := strings.Join(svc.Runs()[1], ","); got != "dns,icons" {
+		t.Errorf("ran again %q", got)
+	}
+	p.WaitFor("id:done >> role:header 维护完成", wait)
+	p.Press("id:done-close")
+	p.WaitForGone("id:done", wait)
+	if got := p.selected(); got != "4 项" {
+		t.Errorf("selection after running again %q", got)
 	}
 }
 
@@ -344,8 +470,8 @@ func TestDoneCardDoesNotBlameThePermissionForAnotherSkip(t *testing.T) {
 	p.Press("id:run")
 	p.WaitFor("id:done", wait)
 	p.Find("text:维护未完成")
-	if got := strings.Join(p.doneLines(), "|"); got != "优化应用数据库：Safari 仍在运行，已跳过；退出后再运行一次" {
-		t.Errorf("lines %q", got)
+	if got := strings.Join(p.doneTasks(), "\n"); got != "优化应用数据库|已跳过|Safari 仍在运行，已跳过；退出后再运行一次" {
+		t.Errorf("tasks %q", got)
 	}
 	if p.Exists("text:/完全磁盘访问权限/") || p.Exists("role:button 去授权") {
 		t.Error("the card blames the permission")

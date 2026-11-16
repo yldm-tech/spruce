@@ -2,12 +2,18 @@
 package history
 
 import (
+	"context"
+	"strconv"
+
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	enginehist "spruce/apps/spruce/internal/engine/history"
+	"spruce/apps/spruce/internal/ui/async"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
+	"spruce/apps/spruce/internal/ui/pages/maintenance"
 	"spruce/apps/spruce/internal/ui/shared"
 	"spruce/apps/spruce/internal/ui/store"
 )
@@ -50,7 +56,7 @@ func Page(cx *core.Scope) core.Node {
 	}}
 
 	return core.Group{
-		kit.Page{Header: header, Children: []core.Node{loadErr, empty, content}},
+		kit.Page{ScrollKey: nav.History, Header: header, Children: []core.Node{loadErr, empty, content}},
 		shared.ClearHistoryDialog{Open: clearing.Get, Count: func() int { return len(s.Runs.Get()) }, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef},
 	}
 }
@@ -122,20 +128,21 @@ func rowTitle(s string) core.Text {
 const enterRows = 12
 
 func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core.Node {
-	open := core.NewSignal(cx, run.ID == s.Opened.GetUntracked())
-	// GoHistory asking for this run opens it, also while the page is open.
-	cx.Effect(func() {
-		if s.Opened.Get() == run.ID {
-			cx.Untrack(func() { open.Set(true) })
-		}
-	})
+	open := func() bool { return s.IsOpen(run.ID) }
 	meta := KindMeta(run.Kind)
 	title := RunTitle(run)
 	summary := RunSummary(run)
 	reduce := cx.Env().ReduceMotion
 	head := core.View{Role: core.RoleButton, Label: title + "，" + summary + "，" + Clock(run.StartedAt, false), TestID: "run-" + run.ID + "-head",
-		Expanded: open.Get,
-		OnPress:  func(core.PressEvent) { open.Update(func(v bool) bool { return !v }) },
+		Expanded: open,
+		OnPress:  func(core.PressEvent) { s.SetOpen(run.ID, !s.open.GetUntracked()[run.ID]) },
+		// A run 放回原处 can put back offers it on a right click as well, while nothing is being cleaned or put back.
+		OnContextMenu: kit.RowMenu(cx, func() []desktop.MenuItem {
+			if !core.Untracked(cx, func() bool { return s.CanRestore(run.ID) && s.Restoring.Get() == "" && !s.stores.Overview.Busy() }) {
+				return nil
+			}
+			return []desktop.MenuItem{{Label: "放回原处", OnSelect: func() { s.Restore(run.ID) }}}
+		}),
 		Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Cursor: core.CursorPointer,
 			Hover:        &core.Style{Background: kit.SurfaceRowHover},
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: -2, OutlineColor: kit.ColorText}}}
@@ -178,14 +185,14 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 				if !reduce() {
 					st.Transition = core.Transition{Duration: 150_000_000, Easing: core.Ease, Properties: core.TransitionTransform}
 				}
-				if open.Get() {
+				if open() {
 					st.Transform.Rotate = 90
 				}
 				return st
 			}, Children: []core.Node{kit.Glyph{Name: "chevron-right", Size: 16, Color: core.CurrentColor}}},
 		}}
-	details := core.Show{When: open.Get, Then: func(*core.Scope) core.Node {
-		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{runDetails(s, run)}}
+	details := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
+		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{runDetails(cx, s, run)}}
 	}}
 	// The first rows come in one after another; the ones further down, out of view, just show.
 	var enter *core.AnimatedStyle
@@ -200,26 +207,20 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 	}, Children: []core.Node{core.View{Children: []core.Node{head, line}}, details}}
 }
 
-// runDetails is what a run's row shows when open: a maintenance run's tasks with how each ended, another run's detail lines, and the run's start, end and duration.
-func runDetails(s *State, run enginehist.Run) core.Node {
+// runDetails is what a run's row shows when open: a maintenance run's tasks with how each ended, another run's detail lines, and the run's start, end and duration, all selectable to copy. A line that names a path offers 在访达中显示 and 拷贝路径 on a right click.
+func runDetails(cx *core.Scope, s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
 	if run.Kind == enginehist.KindMaintenance {
-		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title. Its cells are its direct children, made again when the catalog (the titles) arrives. The cells align at the start, not on their baseline: baseline alignment in a grid misplaces whole rows when a cell's text can wrap (https://github.com/nsgo-dev/nsgo/issues/280), so taskLine sets the smaller status on the title's baseline itself.
-		grid := list
-		grid.Display, grid.GridTemplateColumns, grid.Gap, grid.ColumnGap, grid.RowGap, grid.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 0, 12, 8, core.AlignStart
+		// The grid is made again when the catalog (the titles) arrives.
 		body = core.Dynamic(func(*core.Scope) core.Node {
-			var cells []core.Node
-			for _, l := range TaskLines(run.Results, s.Catalog.Get()) {
-				cells = append(cells, taskLine(l)...)
-			}
-			return core.View{Style: grid, TestID: "run-tasks", Children: cells}
+			return maintenance.TaskGrid(maintenance.TaskLines(run.Results, s.Catalog.Get()), core.Style{Padding: core.Edges{Top: 8}}, "run-tasks")
 		})
 	} else if len(run.Details) > 0 {
+		deps := DepsKey.Use(cx)
 		lines := make([]core.Node, len(run.Details))
 		for i, line := range run.Details {
-			lines[i] = core.Text{Content: line, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
-				Color: kit.ColorTextSecondary}}
+			lines[i] = detailLine(cx, s, deps, run.ID, line, "run-line-"+strconv.Itoa(i))
 		}
 		body = core.View{Style: list, TestID: "run-lines", Children: lines}
 	}
@@ -227,25 +228,31 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 		kit.FontSmall, kit.Regular, kit.ColorTextMuted))
 	times.Style.Margin = core.Edges{Top: 10}
 	times.TestID = "run-times"
-	return core.View{TestID: "run-details", Style: core.Style{Padding: core.Edges{Top: 4, Right: 18, Bottom: 16, Left: 70}, Background: kit.SurfaceList,
+	return core.View{TestID: "run-details", Selectable: true, Style: core.Style{Padding: core.Edges{Top: 4, Right: 18, Bottom: 16, Left: 70}, Background: kit.SurfaceList,
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
 }
 
-// taskLine is one task of a maintenance run, three cells of the run's task grid: its title (TestID task-<id>), how it ended (in the warning color when it needs attention; task-<id>-status) and its message (task-<id>-message).
-func taskLine(l TaskLine) []core.Node {
-	id := "task-" + l.TaskID
-	text := func(content string, size core.Points, weight core.FontWeight, color core.Color, st core.Style, testID string) core.Node {
-		st.FontFamily, st.FontWeight, st.FontSize, st.LineHeightMultiple, st.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color
-		return core.Text{Content: content, TestID: testID, Style: st}
+// detailLine is one line of the details of the run with ID id. One that names a path (DetailPath) reveals it or copies it from its right-click menu; a reveal that fails says so in the toast. A path something was moved from is not revealed while the run can put it back, since the item is then in the Trash.
+func detailLine(cx *core.Scope, s *State, deps Deps, id, line, testID string) core.Node {
+	text := core.Text{Content: line, TestID: testID, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
+		Color: kit.ColorTextSecondary}}
+	path, moved := DetailPath(line, deps.Home)
+	if path == "" {
+		return text
 	}
-	status := kit.ColorTextMuted
-	if l.Attention {
-		status = kit.ColorWarning
+	toasts := s.stores.Toasts
+	reveal := func() {
+		async.Do(cx, cx.Context(), func(ctx context.Context) (struct{}, error) { return struct{}{}, deps.Files.Reveal(ctx, path) },
+			func(_ struct{}, err error) {
+				if err != nil {
+					toasts.Show(store.Toast{Text: err.Error(), Duration: toastShort})
+				}
+			})
 	}
-	return []core.Node{
-		text(l.Title, kit.FontBody, kit.Semibold, kit.ColorText, core.Style{}, id),
-		// The smaller status sits on the title's baseline: its line starts lower by what the larger lines take more.
-		text(l.Status, kit.FontSmall, kit.Regular, status, core.Style{Padding: core.Edges{Top: (kit.FontBody - kit.FontSmall) * 1.5}}, id+"-status"),
-		text(l.Message, kit.FontBody, kit.Regular, kit.ColorTextSecondary, core.Style{MinWidth: core.Pt(0)}, id+"-message"),
-	}
+	return core.View{OnContextMenu: kit.RowMenu(cx, func() []desktop.MenuItem {
+		if moved && core.Untracked(cx, func() bool { return s.CanRestore(id) }) {
+			return []desktop.MenuItem{kit.CopyPathItem(cx, path)}
+		}
+		return []desktop.MenuItem{kit.RevealItem(format.FileManagerName(), reveal), kit.CopyPathItem(cx, path)}
+	}), Children: []core.Node{text}}
 }

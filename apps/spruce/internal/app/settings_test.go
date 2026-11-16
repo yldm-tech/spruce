@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"spruce/apps/spruce/internal/engine/health"
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/settings"
+	"spruce/apps/spruce/internal/host/loginitem"
 )
 
 type fakeLogin struct {
@@ -69,11 +71,16 @@ func TestSettingsService(t *testing.T) {
 	v = s.Get()
 	v.General.LaunchAtLogin = true
 	v.History.RetentionDays = 30
-	if _, err := s.Update(v); err == nil || err.Error() != "无法更改「登录时启动」，其他设置没有保存" {
+	if _, err := s.Update(v); err == nil || err.Error() != "无法更改「登录时启动」" {
 		t.Errorf("failed login item: %v", err)
 	}
 	if st.Get().History.RetentionDays == 30 {
 		t.Error("settings were saved although the update failed")
+	}
+	// macOS waits for the user to allow it in Login Items.
+	login.err = fmt.Errorf("register: %w", loginitem.ErrNeedsApproval)
+	if _, err := s.Update(v); !errors.Is(err, ErrLoginNeedsApproval) {
+		t.Errorf("login item waiting for approval: %v", err)
 	}
 
 	login.err, login.open = nil, true

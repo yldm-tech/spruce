@@ -101,7 +101,7 @@ func (s *Service) Catalog() []Task {
 //
 // Order: every Precheck first (in the app process); then the NeedsAdmin tasks that passed, as one elevated batch behind one prompt (a declined prompt makes them Skipped, a failed launch makes them Failed); then the other tasks one by one. progress, when non-nil, is called synchronously from the calling goroutine.
 //
-// When ctx is cancelled the tasks not yet run are reported Skipped and Run returns the results together with ctx's error. A precheck is not started once ctx is cancelled, and one that ends after the cancellation is reported as interrupted instead of with its own verdict. An elevated batch that has been launched is waited for even after ctx is cancelled (it cannot be stopped, see package elevate), so its results are recorded as the child reported them.
+// When ctx is cancelled the tasks not yet run are reported Skipped and Run returns the results together with ctx's error. A precheck is not started once ctx is cancelled, and one that ends after the cancellation is reported as interrupted instead of with its own verdict. An elevated batch sees the cancellation too: the launcher stops waiting, which on macOS closes a system prompt the user has not answered, and its tasks are reported Skipped as stopped without knowing whether they ran, since a child already running as root cannot be stopped (see package elevate). A batch that answered anyway keeps the results the child reported.
 func (s *Service) Run(ctx context.Context, ids []string, progress func(Event)) ([]taskresult.Result, error) {
 	selected, err := s.selection(ids)
 	if err != nil {
@@ -237,9 +237,14 @@ func (r *run) runElevated(tasks []TaskImpl) {
 		}
 		return
 	}
-	// The elevated batch is not cancellable once launched: on macOS the root shell that "do shell script ... with administrator privileges" started cannot be signalled by this user-level process, and on Windows TerminateProcess may lack the right to stop the elevated child. Waiting for it keeps the recorded outcomes true to what the child did; the user tasks after it still stop on r.ctx.
-	results, err := r.s.elevator.Run(context.WithoutCancel(r.ctx), ids)
+	// Stopping the run must close a system prompt the user has not answered (it may be hidden behind another window, holding the whole run), so the batch gets r.ctx. Once the user answered, the root child cannot be stopped from here: on macOS the root shell that "do shell script ... with administrator privileges" started cannot be signalled by this user-level process, and on Windows TerminateProcess may lack the right. Its tasks are then reported as not known to have run rather than as skipped.
+	results, err := r.s.elevator.Run(r.ctx, ids)
 	switch {
+	case err != nil && r.ctx.Err() != nil:
+		for _, t := range tasks {
+			r.finished(t, taskresult.Result{Outcome: taskresult.Skipped, Message: StoppedUncertain, Detail: err.Error()}, 0)
+		}
+		return
 	case errors.Is(err, elevate.ErrCancelled):
 		for _, t := range tasks {
 			r.finished(t, taskresult.Result{Outcome: taskresult.Skipped, Message: "已取消管理员授权，未执行", Detail: err.Error()}, 0)
@@ -256,6 +261,14 @@ func (r *run) runElevated(tasks []TaskImpl) {
 	for i, t := range tasks {
 		r.finished(t, results[i], 0)
 	}
+}
+
+// StoppedUncertain is the message of an admin task whose batch was stopped once the system prompt may have been answered: its root child may have run it, or may still be running it.
+const StoppedUncertain = "已停止，无法确认是否执行"
+
+// MayStillRun reports whether r is an admin task stopped while its batch may still be running as root, so running it again at once could run it twice side by side.
+func MayStillRun(r taskresult.Result) bool {
+	return r.Outcome == taskresult.Skipped && r.Message == StoppedUncertain
 }
 
 func interrupted() taskresult.Result {

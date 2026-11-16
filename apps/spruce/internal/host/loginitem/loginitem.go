@@ -3,6 +3,11 @@
 // The locations are those earlier builds of Spruce used (their framework's login item code for macOS and Windows), so a user who turned it on there sees it on here: the same SMAppService, the same launch agent label and the same Run value name, the app ID. Their Run value carried an extra --…-opened-at-login argument; any value under the name counts as on, and the next change rewrites it.
 package loginitem
 
+import "errors"
+
+// ErrNeedsApproval is what SetOpenAtLogin returns on macOS 13 and later when the system registered the app but waits for the user to allow it in System Settings > General > Login Items.
+var ErrNeedsApproval = errors.New("loginitem: allow Spruce to open at login in System Settings > General > Login Items")
+
 // Item is the app's login item.
 type Item struct {
 	// id is the app's ID, as nsgo.yaml's: the launch agent's label and the Run value's name.

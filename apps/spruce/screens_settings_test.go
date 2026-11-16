@@ -8,6 +8,7 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/ui/pages/settings"
 	"spruce/apps/spruce/internal/ui/pages/settings/settingsfake"
@@ -15,7 +16,7 @@ import (
 	"spruce/apps/spruce/internal/ui/store/storefake"
 )
 
-// TestScreensSettings shows each tab of the 设置 page (自动清理 with its rules off and two of them on), the line under 空间不足时提醒我 when notifications are refused, a number out of range on 清理 and the reset dialog, for comparison with the design.
+// TestScreensSettings shows each tab of the 设置 page (自动清理 with its rules off and two of them on), the line under 空间不足时提醒我 when notifications are refused, 登录时启动 waiting for approval in Login Items, a number out of range on 清理, the CPU thresholds off with their alert, the question before fewer days of history delete records and the reset dialog, for comparison with the design.
 func TestScreensSettings(t *testing.T) {
 	const wait = 10 * time.Second
 	fakes := storefake.New(t.TempDir())
@@ -28,6 +29,12 @@ func TestScreensSettings(t *testing.T) {
 			{ID: "build-output", Matching: 7, MatchingBytes: 11_800_000_000},
 			{ID: "incomplete-downloads"},
 		}})
+	// Two records are older than 30 days, which a shorter 保留天数 would delete.
+	fakes.Runs = []history.Run{
+		{ID: "r1", Kind: history.KindSmartScan, StartedAt: time.Now().Add(-3 * 24 * time.Hour)},
+		{ID: "r2", Kind: history.KindSmartScan, StartedAt: time.Now().Add(-45 * 24 * time.Hour)},
+		{ID: "r3", Kind: history.KindMaintenance, StartedAt: time.Now().Add(-90 * 24 * time.Hour)},
+	}
 	svc := settingsfake.New("/Users/me/Library/Application Support/Spruce")
 	// The page asks a fake for the notification permission: on the target the system's own prompt would show for the test's bundle. Asked, the user refuses.
 	permission := core.NotificationsNotAsked
@@ -50,6 +57,13 @@ func TestScreensSettings(t *testing.T) {
 	a.Screenshot("settings-notify-denied")
 	a.Press("role:switch 空间不足时提醒我")
 	a.WaitForGone("id:notify-denied", wait)
+
+	// macOS registered Spruce to open at login but waits for the user to allow it.
+	svc.SetUpdateErr(app.ErrLoginNeedsApproval)
+	a.Press("role:switch 登录时启动 Spruce")
+	a.WaitFor("id:open-login-items", wait)
+	a.Screenshot("settings-login-approval")
+	svc.SetUpdateErr(nil)
 
 	a.Press("id:tab-auto")
 	a.WaitFor("id:rule-app-caches-status", wait)
@@ -76,10 +90,23 @@ func TestScreensSettings(t *testing.T) {
 	a.Press("id:tab-health")
 	a.WaitFor("id:section-health", wait)
 	a.Screenshot("settings-health")
+	a.Press("role:switch 启用高 CPU 提醒")
+	a.WaitUntil(wait, func() bool { return !a.Enabled("role:adjustable 持续时间") })
+	a.Advance(time.Second)
+	a.Screenshot("settings-health-off")
+	a.Press("role:switch 启用高 CPU 提醒")
+	a.WaitUntil(wait, func() bool { return a.Enabled("role:adjustable 持续时间") })
 
 	a.Press("id:tab-history")
 	a.WaitFor("id:section-history", wait)
 	a.Screenshot("settings-history")
+	a.Clear("id:retention-days-field")
+	a.Type("id:retention-days-field", "30")
+	a.Submit("id:retention-days-field")
+	a.WaitFor("id:retention-dialog", wait)
+	a.Screenshot("settings-retention-confirm")
+	a.Press("id:retention-dialog >> id:confirm-cancel")
+	a.WaitForGone("id:retention-dialog", wait)
 
 	a.Press("id:tab-about")
 	a.WaitFor("id:license-list", wait)

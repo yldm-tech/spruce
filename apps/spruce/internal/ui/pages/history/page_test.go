@@ -2,6 +2,7 @@ package history_test
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
+	"spruce/apps/spruce/internal/app"
 	enginehist "spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/taskresult"
 	"spruce/apps/spruce/internal/ui/format"
@@ -77,6 +79,12 @@ type page struct {
 type options struct {
 	overview *storefake.Overview
 	before   func(n *nav.Navigator)
+	// kept mounts the page as the shell does, with Provide, and only while the navigator is on 操作历史, so a test can leave it and come back.
+	kept bool
+	// files reveals the paths of the details.
+	files *historyfake.Files
+	// mac runs the page on a macOS desktop, where rows have context menus.
+	mac bool
 }
 
 func start(t *testing.T, svc *historyfake.Service) *page { return startWith(t, svc, options{}) }
@@ -86,6 +94,10 @@ func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 	fakes := storefake.New(t.TempDir())
 	fakes.Overview = o.overview
 	p := &page{svc: svc}
+	opts := []nsgotest.Option{nsgotest.Size(1052, 820)}
+	if o.mac {
+		opts = append(opts, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		d := fakes.Deps()
 		d.History = svc
@@ -95,9 +107,19 @@ func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 			o.before(p.nav)
 		}
 		nav.Key.Provide(cx, p.nav)
-		history.DepsKey.Provide(cx, history.Deps{Catalog: catalog})
-		return history.Page(cx)
-	}, nsgotest.Size(1052, 820))
+		deps := history.Deps{Catalog: catalog, Files: o.files, Home: "/Users/me"}
+		if !o.kept {
+			history.DepsKey.Provide(cx, deps)
+			return history.Page(cx)
+		}
+		history.Provide(cx, deps)
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if p.nav.Current() != nav.History {
+				return core.Text{Content: "elsewhere"}
+			}
+			return core.Func(history.Page)
+		})
+	}, opts...)
 	return p
 }
 
@@ -225,6 +247,116 @@ func TestFiltersByTheKindsPresent(t *testing.T) {
 	p.Find("id:history-total >> text:" + format.Bytes(1_500_000_000))
 	p.Press("id:chip-all")
 	p.WaitUntil(wait, func() bool { return len(p.rows("role:region")) == 3 })
+}
+
+// The filter and the runs shown open survive going to another page and back; a GoHistory request made meanwhile still wins.
+func TestFilterAndOpenRunsOutliveTheVisit(t *testing.T) {
+	p := startWith(t, historyfake.New(runs()...), options{kept: true})
+	p.WaitFor("id:chip-uninstall", wait)
+	p.Press("id:chip-uninstall")
+	p.Press("id:run-u1-head")
+	p.WaitFor("id:run-u1 >> id:run-details", wait)
+	away := func() {
+		p.Post(func() { p.nav.Go(nav.Space) })
+		p.WaitFor("text:elsewhere", wait)
+	}
+	away()
+	p.Post(func() { p.nav.Go(nav.History) })
+	p.WaitFor("id:run-u1 >> id:run-details", wait)
+	if got := p.rows("role:region"); !reflect.DeepEqual(got, []string{"u1"}) {
+		t.Errorf("rows %v after coming back", got)
+	}
+	if !p.Find("id:chip-uninstall").Props.Pressed {
+		t.Error("应用卸载 is not the pressed chip")
+	}
+
+	away()
+	p.Post(func() { p.nav.GoHistory("", "j1") })
+	p.WaitFor("id:run-j1 >> id:run-details", wait)
+	if got := p.rows("role:region"); len(got) != 3 {
+		t.Errorf("rows %v after a request for every kind", got)
+	}
+	p.Find("id:run-u1 >> id:run-details")
+}
+
+// A run's details can be selected, and a line that starts with a path reveals it or copies it from its right-click menu.
+func TestDetailsSelectAndOfferTheirPaths(t *testing.T) {
+	files := &historyfake.Files{}
+	p := startWith(t, historyfake.New(runs()...), options{files: files, mac: true})
+	p.WaitFor("id:run-j1-head", wait)
+	p.Press("id:run-j1-head")
+	p.WaitFor("id:run-j1 >> id:run-details", wait)
+	if !p.Find("id:run-j1 >> id:run-details").Props.SelectionArea {
+		t.Error("the details cannot be selected")
+	}
+	p.RightClick("id:run-line-1")
+	var labels []string
+	for _, it := range p.PopupMenu {
+		labels = append(labels, it.Label)
+	}
+	if want := []string{"在" + format.FileManagerName() + "中显示", "拷贝路径"}; !reflect.DeepEqual(labels, want) {
+		t.Fatalf("menu %q", labels)
+	}
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != filepath.FromSlash("/Users/me/Library/Caches/x") {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	p.RightClick("id:run-line-1")
+	p.ChoosePopup("在" + format.FileManagerName() + "中显示")
+	p.WaitUntil(wait, func() bool { return len(files.Revealed()) == 1 })
+	if got := files.Revealed()[0]; got != filepath.FromSlash("/Users/me/Library/Caches/x") {
+		t.Errorf("revealed %q", got)
+	}
+}
+
+// A line naming where an item was moved from offers only 拷贝路径 while the run can put the item back, since it is in the Trash; once it cannot, the item may be back in its place, so 在访达中显示 returns.
+func TestMovedItemsAreNotRevealedFromTheTrash(t *testing.T) {
+	moved := span("s1", enginehist.KindSpace, daysAgo(0, 8, 0, 0), 2)
+	moved.Summary = &enginehist.Totals{Trashed: 4_000_000_000, Items: 1}
+	moved.Details = []string{"已移到废纸篓：~/Movies/a.mov"}
+	svc := historyfake.New(moved)
+	svc.SetRestorable("s1")
+	p := startWith(t, svc, options{files: &historyfake.Files{}, mac: true})
+	p.WaitFor("id:run-s1-restore", wait)
+	p.Press("id:run-s1-head")
+	p.WaitFor("id:run-s1 >> id:run-details", wait)
+	menu := func() []string {
+		p.RightClick("id:run-line-0")
+		var labels []string
+		for _, it := range p.PopupMenu {
+			labels = append(labels, it.Label)
+		}
+		return labels
+	}
+	if got := menu(); !reflect.DeepEqual(got, []string{"拷贝路径"}) {
+		t.Errorf("menu while the run can put it back %q", got)
+	}
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != filepath.FromSlash("/Users/me/Movies/a.mov") {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	svc.SetRestorable()
+	p.Post(p.stores.History.Bump)
+	p.WaitForGone("id:run-s1-restore", wait)
+	if got := menu(); len(got) != 2 {
+		t.Errorf("menu once the run cannot put it back %q", got)
+	}
+}
+
+// A run 放回原处 can put back offers it on a right click too; another run has no menu.
+func TestRestoreFromTheRowMenu(t *testing.T) {
+	svc := historyfake.New(runs()...)
+	svc.SetRestorable("u1")
+	ov := storefake.NewOverview(app.OverviewState{})
+	p := startWith(t, svc, options{overview: ov, mac: true})
+	p.WaitFor("id:run-u1-restore", wait)
+	p.RightClick("id:run-j1-head")
+	if p.PopupMenu != nil {
+		t.Errorf("a run without anything to put back has a menu %v", p.PopupMenu)
+	}
+	p.RightClick("id:run-u1-head")
+	p.ChoosePopup("放回原处")
+	p.WaitUntil(wait, func() bool { _, _, _, undos, _ := ov.Calls(); return len(undos) == 1 && undos[0] == "u1" })
 }
 
 func TestRefreshesWhenARunIsRecorded(t *testing.T) {

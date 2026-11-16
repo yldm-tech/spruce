@@ -263,13 +263,11 @@ type fakePermissions struct{}
 
 func (fakePermissions) FullDiskAccess() (PermissionState, error) { return PermissionGranted, nil }
 
-// TestRunWaitsForTheElevatedBatchAfterCancel closes the page while the elevated child runs: the child cannot be stopped, so its results must be recorded as it reported them instead of as failures, and the user tasks after it stop.
-func TestRunWaitsForTheElevatedBatchAfterCancel(t *testing.T) {
+// TestRunKeepsTheResultsOfABatchThatFinishedAsItWasStopped stops the run while the elevated child runs, and the child answers anyway: its results are recorded as it reported them, and the user tasks after it stop.
+func TestRunKeepsTheResultsOfABatchThatFinishedAsItWasStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	var batchCtxErr error
-	el := elevatorFunc(func(bctx context.Context, ids []string) ([]taskresult.Result, error) {
+	el := elevatorFunc(func(_ context.Context, ids []string) ([]taskresult.Result, error) {
 		cancel()
-		batchCtxErr = bctx.Err()
 		out := make([]taskresult.Result, len(ids))
 		for i, id := range ids {
 			out[i] = taskresult.Result{TaskID: id, Outcome: taskresult.Applied, Message: "已刷新 DNS 缓存"}
@@ -282,11 +280,30 @@ func TestRunWaitsForTheElevatedBatchAfterCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	if batchCtxErr != nil {
-		t.Errorf("the elevated batch saw a cancelled context: %v", batchCtxErr)
-	}
 	if got[0].Outcome != taskresult.Applied || got[0].Message != "已刷新 DNS 缓存" {
 		t.Errorf("admin result %+v, want the child's own", got[0])
+	}
+	if got[1].Outcome != taskresult.Skipped || len(r.ran) != 0 {
+		t.Errorf("user result %+v, ran %v", got[1], r.ran)
+	}
+}
+
+// TestStoppingEndsTheElevatedBatch stops the run while the elevated batch waits (on macOS, for the user to answer the system's prompt): the batch sees the cancellation, so the launcher kills osascript and the prompt closes, and its tasks are recorded as stopped without knowing whether they ran.
+func TestStoppingEndsTheElevatedBatch(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	el := elevatorFunc(func(bctx context.Context, ids []string) ([]taskresult.Result, error) {
+		cancel()
+		<-bctx.Done()
+		return nil, bctx.Err()
+	})
+	r := &recorder{}
+	s := newTestService(t, []TaskImpl{r.task("dns", true, ""), r.task("quicklook", false, taskresult.Applied)}, el)
+	got, err := s.Run(ctx, []string{"dns", "quicklook"}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if got[0].Outcome != taskresult.Skipped || !MayStillRun(got[0]) {
+		t.Errorf("admin result %+v", got[0])
 	}
 	if got[1].Outcome != taskresult.Skipped || len(r.ran) != 0 {
 		t.Errorf("user result %+v, ran %v", got[1], r.ran)

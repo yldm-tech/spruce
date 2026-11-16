@@ -44,6 +44,8 @@ type options struct {
 	files *settingsfake.Files
 	// goos is the platform the page lays out for; "" is macOS.
 	goos string
+	// mac runs the page in a macOS environment, where Tab moves the keyboard's focus.
+	mac bool
 }
 
 // wallClock is the date and time the page reads (core.Scope.WallTime) in these tests.
@@ -61,12 +63,16 @@ func start(t *testing.T, o options) *page {
 		o.files = &settingsfake.Files{}
 	}
 	p := &page{t: t, svc: o.svc, files: o.files, fakes: o.fakes}
+	opts := []nsgotest.Option{nsgotest.Size(1052, 2600), func(a *nsgotest.App) { a.Clock.SetWallTime(wallClock) }}
+	if o.mac {
+		opts = append(opts, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, o.svc.Use(o.fakes.Deps()))
 		settings.DepsKey.Provide(cx, settings.Deps{Files: o.files, GOOS: cmp.Or(o.goos, "darwin")})
 		p.shown = core.NewSignal(cx, true)
 		return core.Show{When: p.shown.Get, Then: func(*core.Scope) core.Node { return core.Func(settings.Page) }}
-	}, nsgotest.Size(1052, 2600), func(a *nsgotest.App) { a.Clock.SetWallTime(wallClock) })
+	}, opts...)
 	p.WaitFor("id:settings-tab-general", wait)
 	return p
 }
@@ -182,15 +188,71 @@ func TestFollowsChangesFromElsewhereAndShowsWhatGoStored(t *testing.T) {
 
 func TestRefusedSaveShowsTheReasonAndTheStoredValue(t *testing.T) {
 	svc := settingsfake.New(dataDir)
-	svc.UpdateErr = errors.New("无法更改「登录时启动」，其他设置没有保存")
+	svc.UpdateErr = errors.New("无法更改「登录时启动」")
 	p := start(t, options{svc: svc})
 	p.Press("role:switch 登录时启动 Spruce")
 	got := p.WaitFor("id:section-general >> id:launch-at-login-error", wait)
-	if got.Text != "无法更改「登录时启动」，其他设置没有保存" {
+	if got.Text != "无法更改「登录时启动」" {
 		t.Errorf("error %q", got.Text)
 	}
 	// The stored settings come back.
 	p.WaitUntil(wait, func() bool { return !p.checked("登录时启动 Spruce") })
+}
+
+// macOS waiting for the user to allow Spruce in Login Items says where, and 打开登录项 opens it; flipping the switch again takes both away.
+func TestLaunchAtLoginWaitingForApproval(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.UpdateErr = app.ErrLoginNeedsApproval
+	p := start(t, options{svc: svc})
+	if p.Exists("id:open-login-items") {
+		t.Fatal("打开登录项 shows before anything failed")
+	}
+	p.Press("role:switch 登录时启动 Spruce")
+	if got := p.WaitFor("id:launch-at-login-error", wait).Text; got != "需要在系统设置 → 通用 → 登录项中允许 Spruce" {
+		t.Errorf("error %q", got)
+	}
+	p.Press("id:open-login-items")
+	if len(p.OpenedURLs) != 1 || p.OpenedURLs[0] != "x-apple.systempreferences:com.apple.LoginItems-Settings.extension" {
+		t.Errorf("opened %q", p.OpenedURLs)
+	}
+	p.WaitUntil(wait, func() bool { return !p.checked("登录时启动 Spruce") })
+	svc.SetUpdateErr(nil)
+	p.Press("role:switch 登录时启动 Spruce")
+	p.WaitForGone("id:open-login-items", wait)
+	p.WaitForGone("id:launch-at-login-error", wait)
+}
+
+// What the user allows in System Settings is not announced: as Spruce comes back to the front the page reads the settings again, and the switch is on with nothing left to fix.
+func TestLaunchAtLoginAllowedInSystemSettings(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.UpdateErr = app.ErrLoginNeedsApproval
+	p := start(t, options{svc: svc})
+	p.Press("role:switch 登录时启动 Spruce")
+	p.WaitFor("id:open-login-items", wait)
+	p.Press("id:open-login-items")
+	p.SetEnvironment(core.Environment{Lifecycle: core.LifecycleInactive})
+	svc.SetSystem(func(v *enginesettings.AppSettings) { v.General.LaunchAtLogin = true })
+	p.SetEnvironment(core.Environment{Lifecycle: core.LifecycleActive})
+	p.WaitUntil(wait, func() bool { return p.checked("登录时启动 Spruce") })
+	p.WaitForGone("id:launch-at-login-error", wait)
+	p.WaitForGone("id:open-login-items", wait)
+	if n := len(svc.Updates()); n != 1 {
+		t.Errorf("saved %d times, want only the refused one", n)
+	}
+}
+
+// A switch Go stored the other way says so in words.
+func TestAdjustedSwitchSaysOnOrOff(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.Clamp = func(next enginesettings.AppSettings) enginesettings.AppSettings {
+		next.Background.Enabled = true
+		return next
+	}
+	p := start(t, options{svc: svc})
+	p.Press("role:switch 在后台定期检查")
+	if got := p.WaitFor("id:background-check-note", wait).Text; got != "已调整为开启" {
+		t.Errorf("note %q", got)
+	}
 }
 
 func TestOnlyTheLatestSaveCounts(t *testing.T) {
@@ -270,6 +332,25 @@ func TestSlidersSaveOnceTheUserStops(t *testing.T) {
 	}
 }
 
+// A threshold is off while its alert is: 提醒阈值 under 空间不足时提醒我, and the CPU sliders under 启用高 CPU 提醒.
+func TestThresholdsFollowTheirAlert(t *testing.T) {
+	p := start(t, options{})
+	if p.Enabled("id:low-disk-threshold-field") {
+		t.Error("提醒阈值 is on while 空间不足时提醒我 is off")
+	}
+	p.Press("role:switch 空间不足时提醒我")
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:low-disk-threshold-field") })
+
+	p.tab("health")
+	for _, name := range []string{"提醒阈值", "持续时间"} {
+		if !p.Enabled(p.slider(name)) {
+			t.Errorf("%s is off while the alert is on", name)
+		}
+	}
+	p.Press("role:switch 启用高 CPU 提醒")
+	p.WaitUntil(wait, func() bool { return !p.Enabled(p.slider("提醒阈值")) && !p.Enabled(p.slider("持续时间")) })
+}
+
 func TestClampedValueSaysSo(t *testing.T) {
 	svc := settingsfake.New(dataDir)
 	svc.Clamp = func(next enginesettings.AppSettings) enginesettings.AppSettings {
@@ -308,7 +389,16 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	if p.Exists("id:retention-days-error") {
 		t.Errorf("error %q stays", p.text("retention-days-error"))
 	}
+	// 保留天数 waits for Return; with no record older than 30 days it saves without asking.
 	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("保留天数 saved %d times before Return", n)
+	}
+	p.Submit("id:retention-days-field")
+	if p.Exists("id:retention-dialog") {
+		t.Error("asks although no record is deleted")
+	}
 	want := settingsfake.Defaults()
 	want.History.RetentionDays = 30
 	if got := p.updates(1); !equal(got, want) {
@@ -336,6 +426,30 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	}
 }
 
+// A number that turns invalid on its way to another (500 → 50 → 5) drops the save it scheduled: 50 is never saved.
+func TestASlipOnTheWayIsNotSaved(t *testing.T) {
+	p := start(t, options{})
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "50")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "5")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times: %+v", n, p.svc.Updates())
+	}
+	p.Focus("id:dev-artifact-min-age-field")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times on blur", n)
+	}
+	if got := p.field("large-file-min"); got != "5" {
+		t.Errorf("large files shows %q", got)
+	}
+}
+
 func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 	p := start(t, options{})
 	p.tab("history")
@@ -355,25 +469,113 @@ func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 
 func TestLeavingThePageSendsThePendingSave(t *testing.T) {
 	p := start(t, options{})
-	p.tab("history")
-	p.Clear("id:retention-days-field")
-	p.Type("id:retention-days-field", "90")
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "900")
 	p.Post(func() { p.shown.Set(false) })
 	p.WaitForGone("id:settings-page", wait)
-	if got := p.updates(1).History.RetentionDays; got != 90 {
-		t.Fatalf("retention %d", got)
+	if got := p.updates(1).Cleanup.LargeFileMinMB; got != 900 {
+		t.Fatalf("large files %d", got)
 	}
 }
 
 // Another tab is another part of the page: a save still waiting goes out as its tab goes.
 func TestSwitchingTabsSendsThePendingSave(t *testing.T) {
 	p := start(t, options{})
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "900")
+	p.tab("about")
+	if got := p.updates(1).Cleanup.LargeFileMinMB; got != 900 {
+		t.Fatalf("large files %d", got)
+	}
+}
+
+// More days are saved on Return without a question.
+func TestLongerRetentionSavesOnReturn(t *testing.T) {
+	p := start(t, options{})
 	p.tab("history")
 	p.Clear("id:retention-days-field")
-	p.Type("id:retention-days-field", "90")
-	p.tab("about")
-	if got := p.updates(1).History.RetentionDays; got != 90 {
+	p.Type("id:retention-days-field", "365")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times while typing", n)
+	}
+	p.Submit("id:retention-days-field")
+	if got := p.updates(1).History.RetentionDays; got != 365 {
 		t.Fatalf("retention %d", got)
+	}
+	if p.Exists("id:retention-dialog") {
+		t.Error("asks before keeping more")
+	}
+}
+
+// A click on another tab or page does not take the focus, so nothing submits 保留天数: more days still typed are saved as the field goes, since they delete nothing; fewer are dropped rather than deleting records without asking.
+func TestRetentionLeftTypedIsSavedOnlyWhenItKeepsMore(t *testing.T) {
+	p := start(t, options{})
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "365")
+	p.tab("about")
+	if got := p.updates(1).History.RetentionDays; got != 365 {
+		t.Fatalf("retention %d", got)
+	}
+
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:settings-page", wait)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 1 {
+		t.Fatalf("saved %d times, want 1", n)
+	}
+}
+
+// Fewer days that would delete records ask first, saying how many; 取消 shows the stored value again, 删除记录 saves.
+func TestShorterRetentionAsksFirst(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	day := 24 * time.Hour
+	fakes.Runs = []history.Run{
+		{ID: "a", Kind: history.KindSmartScan, StartedAt: wallClock.Add(-10 * day)},
+		{ID: "b", Kind: history.KindSmartScan, StartedAt: wallClock.Add(-40 * day)},
+		{ID: "c", Kind: history.KindMaintenance, StartedAt: wallClock.Add(-100 * day)},
+	}
+	p := start(t, options{fakes: fakes, mac: true})
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Submit("id:retention-days-field")
+	p.WaitFor("id:retention-dialog", wait)
+	want := "只保留最近 30 天，更早的 2 条操作记录会立即删除，无法恢复。这些记录中移到" + format.TrashName() + "的项目也不能再在操作历史里放回原处。"
+	if got := p.text("retention-message"); got != want {
+		t.Errorf("message %q", got)
+	}
+	p.Press("id:retention-dialog >> id:confirm-cancel")
+	p.WaitForGone("id:retention-dialog", wait)
+	if got := p.field("retention-days"); got != "180" {
+		t.Errorf("after 取消 the field shows %q", got)
+	}
+	// The keyboard goes back to the field it came from.
+	p.WaitUntil(wait, func() bool { return p.Find("id:retention-days-field").Focused })
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times after 取消", n)
+	}
+
+	// Leaving the field asks as Return does.
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Key("Tab")
+	p.WaitFor("id:retention-dialog", wait)
+	p.Press("id:retention-dialog >> id:confirm-ok")
+	if got := p.updates(1).History.RetentionDays; got != 30 {
+		t.Fatalf("retention %d", got)
+	}
+	p.WaitForGone("id:retention-dialog", wait)
+	if got := p.field("retention-days"); got != "30" {
+		t.Errorf("field shows %q", got)
 	}
 }
 
@@ -721,21 +923,53 @@ func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
 		t.Error("清理 is not the selected tab")
 	}
 
+	// Mounted without Provide, a visit without a link opens on 通用.
 	p.Post(func() { n.Go(nav.Health) })
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })
 	p.WaitFor("id:settings-tab-general", wait)
 
-	// A link made while 设置 is open switches the tab in place and leaves nothing pending for the next visit.
+	// A link made while 设置 is open switches the tab in place.
 	p.Post(func() { n.GoSettings(nav.SettingsAuto) })
 	p.WaitFor("id:settings-tab-auto", wait)
 	if !p.Find("id:tab-auto").Props.Selected {
 		t.Error("自动清理 is not the selected tab")
 	}
-	p.Post(func() { n.Go(nav.Health) })
+}
+
+// With Provide, 设置 opens on the tab it showed last, whether the visit comes from the sidebar or from a link without a tab; a link with a tab still wins.
+func TestComesBackOnTheTabItShowed(t *testing.T) {
+	var n *nav.Navigator
+	p := &page{t: t, svc: settingsfake.New(dataDir), files: &settingsfake.Files{}, fakes: storefake.New(t.TempDir())}
+	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		p.stores = storefake.Provide(cx, p.svc.Use(p.fakes.Deps()))
+		settings.Provide(cx, settings.Deps{Files: p.files})
+		n = nav.NewNavigator(cx, nav.Settings)
+		nav.Key.Provide(cx, n)
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if n.Current() != nav.Settings {
+				return core.Text{Content: "elsewhere"}
+			}
+			return core.Func(settings.Page)
+		})
+	}, nsgotest.Size(1052, 2600))
+	p.tab("health")
+	p.Post(func() { n.Go(nav.History) })
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })
-	p.WaitFor("id:settings-tab-general", wait)
+	p.WaitFor("id:settings-tab-health", wait)
+
+	p.Post(func() { n.Go(nav.History) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.GoSettings("") })
+	p.WaitFor("id:settings-tab-health", wait)
+
+	p.Post(func() { n.GoSettings(nav.SettingsCleanup) })
+	p.WaitFor("id:settings-tab-cleanup", wait)
+	p.Post(func() { n.Go(nav.History) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.Go(nav.Settings) })
+	p.WaitFor("id:settings-tab-cleanup", wait)
 }
 
 func TestGeneralTabOnMacOS(t *testing.T) {
@@ -809,6 +1043,9 @@ func TestLowDiskAlertAsksForNotificationsAndSaysWhenDenied(t *testing.T) {
 	p.updates(2)
 	p.WaitForGone("id:notify-denied", wait)
 
+	// The threshold takes a number again once the alert is back on.
+	p.Press("role:switch 空间不足时提醒我")
+	p.updates(3)
 	p.Clear("id:low-disk-threshold-field")
 	p.Type("id:low-disk-threshold-field", "0")
 	if got := p.text("low-disk-threshold-error"); got != "请输入 1 到 500 之间的整数" {
@@ -817,7 +1054,7 @@ func TestLowDiskAlertAsksForNotificationsAndSaysWhenDenied(t *testing.T) {
 	p.Clear("id:low-disk-threshold-field")
 	p.Type("id:low-disk-threshold-field", "50")
 	p.Advance(debounce)
-	if got := p.updates(3).General.LowDiskGB; got != 50 {
+	if got := p.updates(4).General.LowDiskGB; got != 50 {
 		t.Errorf("threshold saved as %d", got)
 	}
 }

@@ -73,12 +73,14 @@ func (s *Store) Update(fn func(*AppSettings)) (AppSettings, error) {
 	return s.setLocked(next)
 }
 
-// Reset stores the defaults.
+// Reset stores the defaults, but for a RetentionDays longer than the default, which stays: resetting the settings leaves the history as it is, and the default would delete its older runs at once.
 func (s *Store) Reset() (AppSettings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadLocked()
-	return s.setLocked(s.defaults())
+	next := s.defaults()
+	next.History.RetentionDays = max(next.History.RetentionDays, s.cur.History.RetentionDays)
+	return s.setLocked(next)
 }
 
 func (s *Store) setLocked(next AppSettings) (AppSettings, error) {

@@ -103,6 +103,13 @@ func (s *Settings) Change(fn func(*settings.AppSettings)) {
 	s.announce(v)
 }
 
+// SetSystem changes the stored settings as the system does, with no announcement: the login item the user allows in System Settings.
+func (s *Settings) SetSystem(fn func(*settings.AppSettings)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn(&s.Stored)
+}
+
 // Updates returns what Update received, oldest first.
 func (s *Settings) Updates() []settings.AppSettings {
 	s.mu.Lock()

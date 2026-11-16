@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -31,7 +32,7 @@ type State struct {
 
 	// Catalog is the platform's tasks in display order, nil until loaded.
 	Catalog *core.Signal[[]app.TaskView]
-	// overrides are the user's choices; a task without one keeps its DefaultOn.
+	// overrides are the user's choices; a task without one keeps its DefaultOn. Provide keeps them in the app's scope, so they outlive the page.
 	overrides *core.Signal[map[string]bool]
 	Phase     *core.Signal[Phase]
 	Progress  *core.Signal[RunProgress]
@@ -42,22 +43,32 @@ type State struct {
 	RunErr  *core.Signal[string]
 	// Guided is set once the Full Disk Access guide granted the permission since the run started, so the done card may say that running again helps.
 	Guided *core.Signal[bool]
+	// Stopping is set once 停止 was pressed, until the run ends.
+	Stopping *core.Signal[bool]
+
+	// cancel ends the run going on; nil when none is.
+	cancel context.CancelFunc
 
 	// onSettled runs after each run, to read the permission again.
 	onSettled func()
 }
 
-// NewState makes the controller in cx, the page's scope, and loads the catalog.
+// NewState makes the controller in cx, the page's scope, and loads the catalog. The choices are the ones Provide keeps, or the page's own when it is mounted without Provide.
 func NewState(cx *core.Scope, svc Service, onSettled func()) *State {
+	overrides := choicesKey.Use(cx)
+	if overrides == nil {
+		overrides = core.NewSignalFunc(cx, map[string]bool{}, nil)
+	}
 	s := &State{cx: cx, ctx: cx.Context(), svc: svc, onSettled: onSettled,
 		Catalog:   core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
-		overrides: core.NewSignalFunc(cx, map[string]bool{}, nil),
+		overrides: overrides,
 		Phase:     core.NewSignal(cx, PhaseIdle),
 		Progress:  core.NewSignalFunc(cx, RunProgress{}, nil),
 		RunTasks:  core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
 		Summary:   core.NewSignalFunc[*app.RunSummary](cx, nil, nil),
 		RunErr:    core.NewSignal(cx, ""),
 		Guided:    core.NewSignal(cx, false),
+		Stopping:  core.NewSignal(cx, false),
 	}
 	async.Do(cx, s.ctx, func(context.Context) ([]app.TaskView, error) { return svc.Catalog(), nil },
 		func(tasks []app.TaskView, _ error) { s.Catalog.Set(tasks) })
@@ -106,8 +117,30 @@ func (s *State) Estimate() int {
 
 // Run starts the chosen tasks; it does nothing when none is chosen or a run goes on.
 func (s *State) Run() {
-	tasks := core.Untracked(s.cx, s.Selected)
-	if len(tasks) == 0 || s.Phase.GetUntracked() != PhaseIdle {
+	if s.Phase.GetUntracked() != PhaseIdle {
+		return
+	}
+	s.start(core.Untracked(s.cx, s.Selected))
+}
+
+// Rerun closes the done card and runs again the tasks with IDs ids (Unfinished), whatever is chosen on the cards.
+func (s *State) Rerun(ids []string) {
+	if s.Phase.GetUntracked() != PhaseDone {
+		return
+	}
+	var tasks []app.TaskView
+	for _, t := range s.Catalog.GetUntracked() {
+		if slices.Contains(ids, t.ID) {
+			tasks = append(tasks, t)
+		}
+	}
+	s.Finish()
+	s.start(tasks)
+}
+
+// start runs tasks, in catalog order; it does nothing for none.
+func (s *State) start(tasks []app.TaskView) {
+	if len(tasks) == 0 {
 		return
 	}
 	ids := make([]string, len(tasks))
@@ -129,11 +162,14 @@ func (s *State) Run() {
 		s.Progress.Set(p)
 	})
 	run, cancel := context.WithCancel(s.ctx)
+	s.cancel = cancel
 	async.Do(s.cx, run, func(ctx context.Context) (app.RunSummary, error) {
 		defer events.Flush()
 		return s.svc.Run(ctx, ids, events.Send)
 	}, func(sum app.RunSummary, err error) {
 		cancel()
+		s.cancel = nil
+		s.Stopping.Set(false)
 		if err != nil {
 			s.RunErr.Set(err.Error())
 		} else {
@@ -144,6 +180,15 @@ func (s *State) Run() {
 			s.onSettled()
 		}
 	})
+}
+
+// Stop ends the run going on after its current task, and closes a system prompt for administrator rights the user has not answered; the done card then says the run was stopped.
+func (s *State) Stop() {
+	if s.cancel == nil || s.Stopping.GetUntracked() {
+		return
+	}
+	s.Stopping.Set(true)
+	s.cancel()
 }
 
 // Finish closes the done card and returns to choosing tasks.

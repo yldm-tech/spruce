@@ -3,6 +3,7 @@ package settings
 import (
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -24,18 +25,29 @@ type row struct {
 	Below       []core.Node
 	Error, Note func() string
 	Control     []core.Node
-	TestID      string
+	// Disabled, when set, dims the row while it reports true: its control is off then, as a threshold is while its alert is.
+	Disabled func() bool
+	TestID   string
 }
 
 // Render implements core.Node.
 func (r row) Render(*core.Scope) core.Node {
 	return core.View{TestID: r.TestID,
-		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding},
+		StyleFunc: func() core.Style {
+			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding, Transition: rowFade}
+			if r.Disabled != nil && r.Disabled() {
+				st.Opacity = core.Alpha(0.45)
+			}
+			return st
+		},
 		Children: []core.Node{
 			rowText(r.Label, r.Description, r.DescriptionFunc, r.Below, r.Error, r.Note, r.TestID),
 			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, FlexShrink: 0}, Children: r.Control},
 		}}
 }
+
+// rowFade is how a row dims as its control turns off and back.
+var rowFade = core.Transition{Duration: 150 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionOpacity}
 
 // rowText is a row's label over its description and the lines below it, then its error and note lines; it takes the room the control leaves.
 func rowText(label, description string, descriptionFunc func() string, below []core.Node, err, note func() string, testID string) core.Node {
@@ -79,20 +91,27 @@ type switchSetting struct {
 	Below []core.Node
 	// OnTurnOn runs as the user turns the switch on, in the same action: asking for a permission the setting needs belongs there.
 	OnTurnOn func()
-	TestID   string
+	// Fix, when set, is shown left of the switch, given the error the last save failed with (nil after a save that did not): a way out of an error it knows, such as 打开登录项.
+	Fix    func(failure func() error) core.Node
+	TestID string
 }
 
 // Render implements core.Node.
 func (c switchSetting) Render(cx *core.Scope) core.Node {
-	s := newSetting(cx, store.Use(cx).Settings, c.Field, 0, equalBool, func(v bool) string { return "已调整为 " + strconv.FormatBool(v) })
+	s := newSetting(cx, store.Use(cx).Settings, c.Field, 0, equalBool, func(v bool) string { return "已调整为" + OnOff(v) })
 	change := func(v bool) {
 		s.change(v)
 		if v && c.OnTurnOn != nil {
 			c.OnTurnOn()
 		}
 	}
+	var control []core.Node
+	if c.Fix != nil {
+		control = append(control, c.Fix(s.failure.Get))
+	}
+	control = append(control, kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: change})
 	return row{Label: c.Label, Description: c.Description, DescriptionFunc: c.DescriptionFunc, Below: c.Below, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
-		Control: []core.Node{kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: change}}}
+		Control: control}
 }
 
 // statusLine is a grey line under a row's description that follows text.
@@ -115,33 +134,47 @@ type sliderSetting struct {
 	Step               int
 	// Format is the value as shown and read out, e.g. "40%" or "10 分钟".
 	Format func(int) string
-	TestID string
+	// Disabled, when set, turns the slider off and dims its row while it reports true.
+	Disabled func() bool
+	TestID   string
 }
 
 // Render implements core.Node.
 func (c sliderSetting) Render(cx *core.Scope) core.Node {
 	s := newSetting(cx, store.Use(cx).Settings, c.Field, saveDebounce, equalInt, func(v int) string { return "已调整为 " + c.Format(v) })
-	return row{Label: c.Label, Description: c.Description, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
-		Control: []core.Node{kit.Slider{Label: c.Label, TestID: c.TestID + "-slider",
+	return row{Label: c.Label, Description: c.Description, Error: s.err.Get, Note: s.note.Get, Disabled: c.Disabled, TestID: c.TestID,
+		Control: []core.Node{kit.Slider{Label: c.Label, TestID: c.TestID + "-slider", Disabled: c.Disabled,
 			Min: float64(c.Range.Min), Max: float64(c.Range.Max), Step: float64(c.Step),
 			Value:     func() float64 { return float64(s.value()) },
 			OnChange:  func(v float64) { s.change(int(math.Round(v))) },
 			ValueText: func(v float64) string { return c.Format(int(math.Round(v))) }}}}
 }
 
-// numberSetting is a whole number typed into a field. Text that is not a whole number in range shows the allowed range and is not saved; a valid number is saved once the user stops typing, or when the field loses the focus.
+// numberSetting is a whole number typed into a field. Text that is not a whole number in range shows the allowed range and is not saved, and drops the save a number typed before it was waiting for; a valid number is saved once the user stops typing, or when the field loses the focus.
 type numberSetting struct {
 	Field              Field[int]
 	Label, Description string
 	Range              app.SettingRange
 	// Unit is what follows the field, e.g. "天" or "MB".
-	Unit   string
+	Unit string
+	// Confirm, when set, holds a valid number until Return or the field losing the focus, never saving it as the user types, and then decides what becomes of it: save stores it, revert shows the stored value again. A number that is the stored one is not handed to it.
+	Confirm func(n int, save, revert func())
+	// SaveOnLeave, with Confirm, reports whether a valid number still typed in the field as it goes (the user clicked another tab or page, which does not take the focus) may be saved without asking; one it refuses is dropped.
+	SaveOnLeave func(n int) bool
+	// Disabled, when set, turns the field off and dims its row while it reports true.
+	Disabled func() bool
+	// Ref, when set, is the field's, for a dialog Confirm opens to give the focus back to.
+	Ref    *core.Ref
 	TestID string
 }
 
 // Render implements core.Node.
 func (c numberSetting) Render(cx *core.Scope) core.Node {
-	s := newSetting(cx, store.Use(cx).Settings, c.Field, saveDebounce, equalInt, func(v int) string { return "已调整为 " + strconv.Itoa(v) + " " + c.Unit })
+	debounce := saveDebounce
+	if c.Confirm != nil {
+		debounce = 0
+	}
+	s := newSetting(cx, store.Use(cx).Settings, c.Field, debounce, equalInt, func(v int) string { return "已调整为 " + strconv.Itoa(v) + " " + c.Unit })
 	// text is what is being edited; nil shows the setting's value.
 	text := core.NewSignal[*string](cx, nil)
 	invalid := func() bool {
@@ -152,7 +185,59 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 		n, ok := ParseWhole(*t)
 		return !ok || !InRange(n, c.Range)
 	}
-	return row{Label: c.Label, Description: c.Description, TestID: c.TestID,
+	// submit hands the number typed to Confirm.
+	submit := func() {
+		t := text.GetUntracked()
+		if t == nil || core.Untracked(cx, invalid) {
+			return
+		}
+		n, _ := ParseWhole(*t)
+		if n == core.Untracked(cx, s.value) {
+			text.Set(nil)
+			return
+		}
+		c.Confirm(n, func() {
+			s.change(n)
+			text.Set(nil)
+		}, func() { text.Set(nil) })
+	}
+	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid, Disabled: c.Disabled, Ref: c.Ref,
+		Value: func() string {
+			if t := text.Get(); t != nil {
+				return *t
+			}
+			return strconv.Itoa(s.value())
+		},
+		OnChange: func(raw string) {
+			text.Set(&raw)
+			if n, ok := ParseWhole(raw); ok && InRange(n, c.Range) {
+				s.change(n)
+			} else {
+				s.drop()
+			}
+		},
+		OnBlur: func() {
+			if core.Untracked(cx, invalid) {
+				return
+			}
+			s.flush()
+			text.Set(nil)
+		}}
+	if c.Confirm != nil {
+		field.OnChange = func(raw string) { text.Set(&raw) }
+		field.OnBlur = submit
+		field.OnSubmit = func(string) { submit() }
+		cx.Cleanup(func() {
+			t := text.GetUntracked()
+			if t == nil || c.SaveOnLeave == nil {
+				return
+			}
+			if n, ok := ParseWhole(*t); ok && InRange(n, c.Range) && c.SaveOnLeave(n) {
+				s.commit(n)
+			}
+		})
+	}
+	return row{Label: c.Label, Description: c.Description, Disabled: c.Disabled, TestID: c.TestID,
 		Error: func() string {
 			if invalid() {
 				return RangeText(c.Range)
@@ -165,26 +250,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 			}
 			return s.note.Get()
 		},
-		Control: []core.Node{kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid,
-			Value: func() string {
-				if t := text.Get(); t != nil {
-					return *t
-				}
-				return strconv.Itoa(s.value())
-			},
-			OnChange: func(raw string) {
-				text.Set(&raw)
-				if n, ok := ParseWhole(raw); ok && InRange(n, c.Range) {
-					s.change(n)
-				}
-			},
-			OnBlur: func() {
-				if core.Untracked(cx, invalid) {
-					return
-				}
-				s.flush()
-				text.Set(nil)
-			}}}}
+		Control: []core.Node{field}}
 }
 
 // folderListSetting is a list of folders as rows of its group: its label and description, a row per folder with a remove button, and 添加文件夹…, which opens the system's folder picker. Each change is saved at once.

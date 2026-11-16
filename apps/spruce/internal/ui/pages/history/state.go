@@ -35,44 +35,46 @@ type State struct {
 	Restorable *core.Signal[map[string]bool]
 	// Restoring is the run being put back, "" for none.
 	Restoring *core.Signal[string]
-	// Opened is the run GoHistory asked last to show expanded, "" for none; every request notifies, so a row opens again when asked again.
-	Opened *core.Signal[string]
+
+	// open holds the IDs of the runs shown open.
+	open *core.Signal[map[string]bool]
 
 	kinds *core.Memo[[]enginehist.Kind]
 	// seq numbers the loads, so only the latest one's answer is shown.
 	seq int
 }
 
-// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation. The filter and the expanded run start as GoHistory asked, when it did, and follow every later request while the page is open (查看 in a toast shown over it); nav is nil in tests that mount the page alone.
+// NewState makes the controller in cx, the page's scope, loads the catalog, and loads the runs now and on every change of the history's generation. The filter and the runs shown open are the ones Provide keeps (the page's own when it is mounted without Provide), so a visit comes back to them; a GoHistory request made since the page last took one sets the filter and opens the run it names, as does every later request while the page is open (查看 in a toast shown over it). nav is nil in tests that mount the page alone.
 func NewState(cx *core.Scope, stores *store.Stores, catalog Catalog, n *nav.Navigator) *State {
 	hist := stores.History
+	k := keptKey.Use(cx)
+	if k == nil {
+		k = newKept(cx)
+	}
 	s := &State{cx: cx, ctx: cx.Context(), hist: hist, stores: stores,
 		Runs:       core.NewSignalFunc[[]enginehist.Run](cx, nil, nil),
 		Loaded:     core.NewSignal(cx, false),
 		LoadErr:    core.NewSignal(cx, ""),
-		Filter:     core.NewSignal[enginehist.Kind](cx, ""),
+		Filter:     k.filter,
 		Catalog:    core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
 		Restorable: core.NewSignalFunc[map[string]bool](cx, nil, nil),
 		Restoring:  core.NewSignal(cx, ""),
-		Opened:     core.NewSignalFunc(cx, "", nil),
+		open:       k.open,
 	}
 	if n != nil {
 		take := func() {
 			kind, run := n.TakeHistoryFilter()
 			s.Filter.Set(kind)
-			s.Opened.Set(run)
+			if run != "" {
+				s.SetOpen(run, true)
+			}
 		}
-		var seen int
-		cx.Untrack(func() {
-			seen = n.HistoryAsked()
-			take()
-		})
 		cx.Effect(func() {
 			asked := n.HistoryAsked()
-			if asked == seen {
+			if asked == k.asked {
 				return
 			}
-			seen = asked
+			k.asked = asked
 			cx.Untrack(take)
 		})
 	}
@@ -108,6 +110,27 @@ func (s *State) Load() {
 				s.Restorable.Set(ids)
 			}
 		})
+	})
+}
+
+// IsOpen reports whether the run id shows its details; reading it subscribes.
+func (s *State) IsOpen(id string) bool { return s.open.Get()[id] }
+
+// SetOpen shows or hides the details of the run id.
+func (s *State) SetOpen(id string, open bool) {
+	s.open.Update(func(m map[string]bool) map[string]bool {
+		next := make(map[string]bool, len(m)+1)
+		for k, v := range m {
+			if v {
+				next[k] = v
+			}
+		}
+		if open {
+			next[id] = true
+		} else {
+			delete(next, id)
+		}
+		return next
 	})
 }
 

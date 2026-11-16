@@ -344,8 +344,8 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 	}
 }
 
-// 设置 opens on 通用 again, so where another tab was scrolled to means nothing there: it opens at the top until the tab it was on is kept as well.
-func TestSettingsComesBackAtTheTop(t *testing.T) {
+// 设置 comes back on the tab it showed, scrolled where it was left; a link to a tab opens that tab at its top.
+func TestSettingsComesBackWhereItWasLeft(t *testing.T) {
 	a, _ := startShell(t, storefake.New(t.TempDir()), nav.Settings)
 	a.Resize(960, 420)
 	// 清理 is long on every platform; 自动清理 is one note on Windows.
@@ -362,11 +362,16 @@ func TestSettingsComesBackAtTheTop(t *testing.T) {
 	a.Press("id:nav-history")
 	a.WaitFor("role:header 操作历史", wait)
 	a.ChooseMenu("前往", "设置")
-	a.WaitFor("id:settings-tab-general", wait)
+	a.WaitFor("id:settings-tab-cleanup", wait)
 	a.Advance(time.Second)
-	if y := page().Offset.Y; y != 0 {
-		t.Errorf("通用 at %v, scrolled to where 清理 was left", y)
+	if y := page().Offset.Y; y < end-1 {
+		t.Errorf("清理 at %v, left at %v", y, end)
 	}
+
+	a.Press("id:nav-history")
+	a.WaitFor("role:header 操作历史", wait)
+	a.ChooseMenu("Spruce", "设置…")
+	a.WaitFor("id:settings-tab-cleanup", wait)
 }
 
 // Going to another page and back lands 概览 where it was left.

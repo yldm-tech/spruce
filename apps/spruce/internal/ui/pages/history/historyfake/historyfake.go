@@ -2,6 +2,8 @@
 package historyfake
 
 import (
+	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -124,3 +126,26 @@ type Catalog []app.TaskView
 
 // Catalog returns the tasks.
 func (c Catalog) Catalog() []app.TaskView { return c }
+
+// Files records the paths Reveal receives and fails with RevealErr.
+type Files struct {
+	mu       sync.Mutex
+	revealed []string
+	// RevealErr, when set, is what Reveal fails with.
+	RevealErr error
+}
+
+// Reveal implements history.Files.
+func (f *Files) Reveal(_ context.Context, path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revealed = append(f.revealed, path)
+	return f.RevealErr
+}
+
+// Revealed returns the paths Reveal received, oldest first.
+func (f *Files) Revealed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.revealed)
+}

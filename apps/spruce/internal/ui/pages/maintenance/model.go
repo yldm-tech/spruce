@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/taskresult"
 )
 
@@ -29,15 +30,6 @@ func FormatEstimate(seconds int) string {
 // OKCount is the done card's big number: the tasks that applied a change or found nothing to change.
 func OKCount(s app.RunSummary) int { return s.Applied + s.Unchanged }
 
-// IssueLine is a line of the done card: the tasks that share one message (so a declined admin prompt reads as one line) and that message.
-type IssueLine struct {
-	Titles  []string
-	Message string
-}
-
-// String renders the line, e.g. "优化应用数据库：Safari 仍在运行，已跳过".
-func (l IssueLine) String() string { return strings.Join(l.Titles, "、") + "：" + l.Message }
-
 // IsIssue reports whether a result needs the user's attention: it did not complete, or it completed only in part and its message says what is left.
 func IsIssue(r taskresult.Result) bool {
 	switch r.Outcome {
@@ -49,57 +41,84 @@ func IsIssue(r taskresult.Result) bool {
 	return true
 }
 
-// IssueLines lists the results that need attention, in catalog order, grouped by message.
-func IssueLines(results []taskresult.Result, catalog []app.TaskView) []IssueLine {
-	return groupLines(slices.DeleteFunc(slices.Clone(results), func(r taskresult.Result) bool { return !IsIssue(r) }), catalog)
+// Unfinished returns the IDs of the tasks a run did not finish and that running again may finish: those needing attention, but for a task this computer does not have and for an admin task stopped while it may still be running as root.
+func Unfinished(results []taskresult.Result) []string {
+	var ids []string
+	for _, r := range results {
+		if IsIssue(r) && r.Outcome != taskresult.Unavailable && !maintenance.MayStillRun(r) {
+			ids = append(ids, r.TaskID)
+		}
+	}
+	return ids
 }
 
-// CompletedLines lists the results that completed with nothing left to do, in catalog order, grouped by message: some carry a hint such as logging out and in again.
-func CompletedLines(results []taskresult.Result, catalog []app.TaskView) []IssueLine {
-	return groupLines(slices.DeleteFunc(slices.Clone(results), IsIssue), catalog)
+// TaskLine is one task of a run, as the done card and 操作历史 list it.
+type TaskLine struct {
+	TaskID string
+	Title  string
+	// Status is 已完成, 部分完成, 无需处理, 已跳过, 不可用 or 失败.
+	Status string
+	// Message is the task's own sentence without a closing 「，{Status}」 that repeats the status.
+	Message string
+	// Attention is set when the task needs the user's attention (IsIssue).
+	Attention bool
 }
 
-func groupLines(results []taskresult.Result, catalog []app.TaskView) []IssueLine {
-	titles := map[string]string{}
-	order := map[string]int{}
+// StatusLabel names how a maintenance task ended.
+func StatusLabel(r taskresult.Result) string {
+	switch r.Outcome {
+	case taskresult.Applied:
+		if r.Partial {
+			return "部分完成"
+		}
+		return "已完成"
+	case taskresult.Unchanged:
+		return "无需处理"
+	case taskresult.Skipped:
+		return "已跳过"
+	case taskresult.Unavailable:
+		return "不可用"
+	case taskresult.Failed:
+		return "失败"
+	}
+	return string(r.Outcome)
+}
+
+// TaskLines lists a run's tasks with those needing attention first, each part in catalog order. A task that is not in this build's catalog shows its ID.
+func TaskLines(results []taskresult.Result, catalog []app.TaskView) []TaskLine {
+	titles := make(map[string]string, len(catalog))
+	order := make(map[string]int, len(catalog))
 	for i, t := range catalog {
-		titles[t.ID], order[t.ID] = t.Title, i
+		titles[t.ID] = t.Title
+		order[t.ID] = i
 	}
 	rank := func(r taskresult.Result) int {
-		if i, ok := order[r.TaskID]; ok {
-			return i
+		pos, ok := order[r.TaskID]
+		if !ok {
+			pos = len(catalog)
 		}
-		return len(catalog)
+		if IsIssue(r) {
+			return pos
+		}
+		return len(catalog) + 1 + pos
 	}
-	slices.SortStableFunc(results, func(a, b taskresult.Result) int { return rank(a) - rank(b) })
-	var lines []IssueLine
-	byMessage := map[string]int{}
-	for _, r := range results {
-		title := r.TaskID
-		if t, ok := titles[r.TaskID]; ok {
-			title = t
+	sorted := slices.Clone(results)
+	slices.SortStableFunc(sorted, func(a, b taskresult.Result) int { return rank(a) - rank(b) })
+	lines := make([]TaskLine, len(sorted))
+	for i, r := range sorted {
+		title, ok := titles[r.TaskID]
+		if !ok {
+			title = r.TaskID
 		}
-		if i, ok := byMessage[r.Message]; ok {
-			lines[i].Titles = append(lines[i].Titles, title)
-			continue
-		}
-		byMessage[r.Message] = len(lines)
-		lines = append(lines, IssueLine{Titles: []string{title}, Message: r.Message})
+		status := StatusLabel(r)
+		// 「Safari 仍在运行，已跳过」 under 已跳过 says it twice; only an ending that is the status itself goes.
+		lines[i] = TaskLine{TaskID: r.TaskID, Title: title, Status: status, Message: strings.TrimSuffix(r.Message, "，"+status), Attention: IsIssue(r)}
 	}
 	return lines
 }
 
-// DoneLines are the done card's lines for a run: the issues first, then every completed task's own message, and a note when the run stopped early.
-func DoneLines(s app.RunSummary, catalog []app.TaskView) []string {
-	var out []string
-	for _, l := range append(IssueLines(s.Results, catalog), CompletedLines(s.Results, catalog)...) {
-		out = append(out, l.String())
-	}
-	if s.Interrupted {
-		out = append(out, "维护在中途停止，没有运行的任务不会改动系统")
-	}
-	return out
-}
+// InterruptedText is the done card's line for a run that was stopped.
+const InterruptedText = "维护在中途停止，没有运行的任务不会改动系统"
 
 // DoneTitle is the done card's heading.
 func DoneTitle(s app.RunSummary) string {

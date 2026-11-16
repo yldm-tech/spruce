@@ -2,17 +2,17 @@ package maintenance
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"spruce/apps/spruce/internal/app"
+	enginemaint "spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/taskresult"
 )
 
 func r(id string, o taskresult.Outcome, msg string) taskresult.Result {
 	return taskresult.Result{TaskID: id, Outcome: o, Message: msg}
 }
-
-var testCatalog = []app.TaskView{{ID: "a", Title: "甲"}, {ID: "b", Title: "乙"}, {ID: "c", Title: "丙"}}
 
 func TestFormatEstimate(t *testing.T) {
 	for s, want := range map[int]string{0: "0 分钟", 59: "不到 1 分钟", 60: "约 1 分钟", 89: "约 1 分钟", 90: "约 2 分钟"} {
@@ -22,29 +22,46 @@ func TestFormatEstimate(t *testing.T) {
 	}
 }
 
-func TestIssueLines(t *testing.T) {
-	got := IssueLines([]taskresult.Result{
-		r("a", taskresult.Skipped, "取消"), r("b", taskresult.Applied, "好"), r("c", taskresult.Skipped, "取消"), r("x", taskresult.Failed, "坏"),
-	}, testCatalog)
-	want := []IssueLine{{Titles: []string{"甲", "丙"}, Message: "取消"}, {Titles: []string{"x"}, Message: "坏"}}
+func TestTaskLines(t *testing.T) {
+	catalog := []app.TaskView{{ID: "dns", Title: "刷新 DNS 缓存"}, {ID: "icons", Title: "重建图标缓存"}, {ID: "databases", Title: "优化应用数据库"}}
+	partial := r("icons", taskresult.Applied, "注销后生效")
+	partial.Partial = true
+	lines := TaskLines([]taskresult.Result{
+		r("dns", taskresult.Applied, "已刷新 DNS 缓存"),
+		partial,
+		r("databases", taskresult.Skipped, "Safari 仍在运行，已跳过"),
+		r("gone", taskresult.Unavailable, "这台电脑上没有这项"),
+	}, catalog)
+	var got []string
+	for _, l := range lines {
+		got = append(got, strings.Join([]string{l.Title, l.Status, l.Message}, "|")+map[bool]string{true: "|!", false: ""}[l.Attention])
+	}
+	want := []string{
+		"重建图标缓存|部分完成|注销后生效|!",
+		"优化应用数据库|已跳过|Safari 仍在运行|!",
+		"gone|不可用|这台电脑上没有这项|!",
+		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("IssueLines = %v, want %v", got, want)
+		t.Errorf("TaskLines = %q", got)
 	}
 }
 
-func TestPartialIsAnIssueAndCompletedKeepCatalogOrder(t *testing.T) {
-	partial := r("b", taskresult.Applied, "已清除，另有 2 个未能清除")
+func TestStatusLabels(t *testing.T) {
+	for o, want := range map[taskresult.Outcome]string{taskresult.Unchanged: "无需处理", taskresult.Failed: "失败", "odd": "odd"} {
+		if got := StatusLabel(taskresult.Result{Outcome: o}); got != want {
+			t.Errorf("StatusLabel(%s) = %q", o, got)
+		}
+	}
+}
+
+func TestUnfinished(t *testing.T) {
+	partial := r("b", taskresult.Applied, "另有 2 个未能清除")
 	partial.Partial = true
-	results := []taskresult.Result{r("c", taskresult.Unchanged, "无需处理"), partial, r("a", taskresult.Applied, "已完成；注销后生效")}
-	if got, want := IssueLines(results, testCatalog), []IssueLine{{Titles: []string{"乙"}, Message: "已清除，另有 2 个未能清除"}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("IssueLines = %v", got)
-	}
-	want := []IssueLine{{Titles: []string{"甲"}, Message: "已完成；注销后生效"}, {Titles: []string{"丙"}, Message: "无需处理"}}
-	if got := CompletedLines(results, testCatalog); !reflect.DeepEqual(got, want) {
-		t.Errorf("CompletedLines = %v", got)
-	}
-	if got := CompletedLines([]taskresult.Result{r("a", taskresult.Applied, "好"), r("b", taskresult.Skipped, "取消"), r("c", taskresult.Applied, "好")}, testCatalog); !reflect.DeepEqual(got, []IssueLine{{Titles: []string{"甲", "丙"}, Message: "好"}}) {
-		t.Errorf("grouped CompletedLines = %v", got)
+	got := Unfinished([]taskresult.Result{r("a", taskresult.Applied, "好"), partial, r("c", taskresult.Unchanged, ""), r("d", taskresult.Skipped, "取消"),
+		r("e", taskresult.Unavailable, "没有"), r("f", taskresult.Failed, "坏"), r("g", taskresult.Skipped, enginemaint.StoppedUncertain)})
+	if !reflect.DeepEqual(got, []string{"b", "d", "f"}) {
+		t.Errorf("Unfinished = %q", got)
 	}
 }
 
@@ -64,17 +81,14 @@ func TestFullDiskAccessBlocked(t *testing.T) {
 	}
 }
 
-func TestDoneTitleAndLines(t *testing.T) {
+func TestDoneTitle(t *testing.T) {
 	s := app.RunSummary{Results: []taskresult.Result{r("a", taskresult.Applied, "好"), r("b", taskresult.Skipped, "取消")}, Applied: 1, Skipped: 1}
 	if DoneTitle(s) != "维护完成" || OKCount(s) != 1 {
 		t.Errorf("title %q, ok %d", DoneTitle(s), OKCount(s))
 	}
-	if got := DoneLines(s, testCatalog); !reflect.DeepEqual(got, []string{"乙：取消", "甲：好"}) {
-		t.Errorf("DoneLines = %q", got)
-	}
 	s.Interrupted = true
-	if DoneTitle(s) != "维护已中断" || DoneLines(s, testCatalog)[2] != "维护在中途停止，没有运行的任务不会改动系统" {
-		t.Errorf("interrupted: %q %q", DoneTitle(s), DoneLines(s, testCatalog))
+	if DoneTitle(s) != "维护已中断" {
+		t.Errorf("interrupted: %q", DoneTitle(s))
 	}
 	if DoneTitle(app.RunSummary{Skipped: 1}) != "维护未完成" {
 		t.Error("nothing done")

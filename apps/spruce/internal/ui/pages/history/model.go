@@ -1,6 +1,7 @@
 package history
 
 import (
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit/tone"
 	"spruce/apps/spruce/internal/ui/nav"
-	"spruce/apps/spruce/internal/ui/pages/maintenance"
 )
 
 // Limit is how many runs the page asks for: everything the store keeps.
@@ -218,69 +218,31 @@ func CountText(n, retentionDays int, known bool) string {
 	return "共 " + strconv.Itoa(n) + " 条记录，保留最近 " + strconv.Itoa(retentionDays) + " 天"
 }
 
-// TaskLine is one task of a recorded maintenance run.
-type TaskLine struct {
-	TaskID string
-	Title  string
-	// Status is 已完成, 部分完成, 无需处理, 已跳过, 不可用 or 失败.
-	Status string
-	// Message is the task's own sentence, as the 维护 done card shows it, without a closing 「，{Status}」 that repeats the status.
-	Message string
-	// Attention is set when the task needs the user's attention (maintenance.IsIssue).
-	Attention bool
+// DetailPath returns the file or folder a detail line names, as a whole path with ~ for home: the path a line starts with, such as 「~/Library/Caches/x：文件正在使用，已跳过」, or the one it ends with, such as 「已移到废纸篓：~/Movies/a.mov」, where moved is set since the line names the place the item was moved from; "" when it names none.
+func DetailPath(line, home string) (path string, moved bool) {
+	before, after, ok := strings.Cut(line, "：")
+	if !ok {
+		return "", false
+	}
+	if p := wholePath(before, home); p != "" {
+		return p, false
+	}
+	p := wholePath(after, home)
+	return p, p != ""
 }
 
-// StatusLabel names how a maintenance task ended.
-func StatusLabel(r taskresult.Result) string {
-	switch r.Outcome {
-	case taskresult.Applied:
-		if r.Partial {
-			return "部分完成"
+// wholePath returns p, written with ~ for home, as a whole path; "" when p is not a path.
+func wholePath(p, home string) string {
+	if rest, found := strings.CutPrefix(p, "~"); found {
+		if home == "" || rest != "" && !strings.HasPrefix(rest, "/") && !strings.HasPrefix(rest, `\`) {
+			return ""
 		}
-		return "已完成"
-	case taskresult.Unchanged:
-		return "无需处理"
-	case taskresult.Skipped:
-		return "已跳过"
-	case taskresult.Unavailable:
-		return "不可用"
-	case taskresult.Failed:
-		return "失败"
+		return filepath.Join(home, rest)
 	}
-	return string(r.Outcome)
-}
-
-// TaskLines lists a maintenance run's tasks as the done card orders them: those needing attention first, each part in catalog order. A task that is not in this build's catalog shows its ID.
-func TaskLines(results []taskresult.Result, catalog []app.TaskView) []TaskLine {
-	titles := make(map[string]string, len(catalog))
-	order := make(map[string]int, len(catalog))
-	for i, t := range catalog {
-		titles[t.ID] = t.Title
-		order[t.ID] = i
+	if filepath.IsAbs(p) {
+		return p
 	}
-	rank := func(r taskresult.Result) int {
-		pos, ok := order[r.TaskID]
-		if !ok {
-			pos = len(catalog)
-		}
-		if maintenance.IsIssue(r) {
-			return pos
-		}
-		return len(catalog) + 1 + pos
-	}
-	sorted := slices.Clone(results)
-	slices.SortStableFunc(sorted, func(a, b taskresult.Result) int { return rank(a) - rank(b) })
-	lines := make([]TaskLine, len(sorted))
-	for i, r := range sorted {
-		title, ok := titles[r.TaskID]
-		if !ok {
-			title = r.TaskID
-		}
-		status := StatusLabel(r)
-		// 「Safari 仍在运行，已跳过」 under 已跳过 says it twice; only an ending that is the status itself goes.
-		lines[i] = TaskLine{TaskID: r.TaskID, Title: title, Status: status, Message: strings.TrimSuffix(r.Message, "，"+status), Attention: maintenance.IsIssue(r)}
-	}
-	return lines
+	return ""
 }
 
 // RestoredNote is what a run's summary line adds once 放回原处 put its items back, from the KindRestore runs among runs: 「 · 已放回原处」 when one left nothing in the Trash (a restore that stopped part-way counts what it did not get to as Failed), else 「 · 已放回 {a} 项」 with all they put back; "" before any.

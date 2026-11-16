@@ -3,10 +3,13 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"spruce/apps/spruce/internal/app"
+	enginehist "spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/rules"
 	"spruce/apps/spruce/internal/ui/async"
@@ -27,21 +30,23 @@ var tabs = []kit.Option[nav.SettingsTab]{
 	{Value: nav.SettingsAbout, Label: "关于", TestID: "tab-about"},
 }
 
-// Page is the 设置 page. It opens on the tab a link asked for (nav.Navigator.GoSettings), else on 通用.
+// Page is the 设置 page. It opens on the tab a link asked for (nav.Navigator.GoSettings), else on the tab it showed last (Provide keeps it; 通用 at first, and on every visit when the page is mounted without Provide).
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	stores := store.Use(cx)
 	ctx := cx.Context()
-	start := nav.SettingsGeneral
+	tab := tabKey.Use(cx)
+	if tab == nil {
+		tab = core.NewSignal(cx, nav.SettingsGeneral)
+	}
 	n := nav.Use(cx)
 	var asked int
 	if n != nil {
 		asked = core.Untracked(cx, n.SettingsAsked)
 		if t := n.TakeSettingsTab(); t != "" {
-			start = t
+			tab.Set(t)
 		}
 	}
-	tab := core.NewSignal(cx, start)
 	// A link made while 设置 is open (the menu bar's 自动清理 item over a window on 设置) switches the tab in place.
 	if n != nil {
 		cx.Effect(func() {
@@ -57,6 +62,15 @@ func Page(cx *core.Scope) core.Node {
 			})
 		})
 	}
+	// What the user allows in System Settings (打开登录项) is not announced, so the page reads the settings again as Spruce comes back to the front.
+	active := true
+	cx.Effect(func() {
+		now := cx.Env().Lifecycle() == core.LifecycleActive
+		if now && !active {
+			stores.Settings.Reload()
+		}
+		active = now
+	})
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)
@@ -111,7 +125,7 @@ func Page(cx *core.Scope) core.Node {
 	clear := shared.ClearHistoryDialog{Open: clearing.Get, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef}
 
 	return core.Group{
-		kit.Page{TestID: "settings-page", Header: kit.PageHeader{Route: nav.Settings}, Children: []core.Node{
+		kit.Page{TestID: "settings-page", ScrollKey: nav.Settings, Header: kit.PageHeader{Route: nav.Settings}, Children: []core.Node{
 			kit.Tabs[nav.SettingsTab]{Label: "设置分类", Options: tabs, Value: tab.Get, OnChange: tab.Set},
 			content,
 		}},
@@ -145,7 +159,7 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 	st := stores.Settings
 	limits := st.Limits()
 	general := []core.Node{
-		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", TestID: "launch-at-login",
+		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", TestID: "launch-at-login", Fix: loginApproval,
 			DescriptionFunc: func() string {
 				if !windows && st.Value().General.KeepInTray {
 					return "登录系统后在菜单栏安静运行，不打开窗口。"
@@ -170,7 +184,8 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 			switchSetting{Field: FieldLowDiskAlert, Label: "空间不足时提醒我", Description: "系统盘可用空间低于下面的值时发一条通知。", TestID: "low-disk-alert",
 				OnTurnOn: notify.ask,
 				Below:    []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().General.LowDiskAlert && notify.denied() }, "notify-denied")}},
-			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold"},
+			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold",
+				Disabled: func() bool { return !st.Value().General.LowDiskAlert }},
 		),
 		permissionsGroup(stores.Permission, windows),
 		group("", "section-reset",
@@ -178,6 +193,16 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 				Control: []core.Node{kit.Button{Text: "恢复默认设置…", Label: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset", OnPress: onReset}}},
 		),
 	}
+}
+
+// loginItemsURL opens System Settings on 通用 → 登录项.
+const loginItemsURL = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+
+// loginApproval is 打开登录项 beside 登录时启动, there while macOS waits for the user to allow Spruce in Login Items.
+func loginApproval(failure func() error) core.Node {
+	return core.Show{When: func() bool { return errors.Is(failure(), app.ErrLoginNeedsApproval) }, Then: func(cx *core.Scope) core.Node {
+		return kit.Button{Text: "打开登录项", Variant: kit.ButtonGhost, TestID: "open-login-items", OnPress: func() { cx.OpenURL(loginItemsURL, nil) }}
+	}}
 }
 
 // autoTab is 设置 → 自动清理: on macOS what the rules do, a switch per rule with what it would take now or what it did last, and the weekly summary; on Windows only why there are none.
@@ -277,14 +302,15 @@ func cleanupTab(st *store.Settings) []core.Node {
 
 func healthTab(st *store.Settings) []core.Node {
 	limits := st.Limits()
+	off := func() bool { return !st.Value().Health.Enabled }
 	return []core.Node{
 		group("高 CPU 提醒", "section-health",
 			switchSetting{Field: FieldHealthEnabled, Label: "启用高 CPU 提醒", Description: "有进程长时间占用大量 CPU 时提醒你。只提醒，不会结束进程。",
 				TestID: "health-enabled"},
 			sliderSetting{Field: FieldCPUThreshold, Label: "提醒阈值", Description: "按单个处理器核心计算：100% 表示占满一个核心，200% 表示占满两个核心。",
-				Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, TestID: "cpu-threshold"},
+				Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, Disabled: off, TestID: "cpu-threshold"},
 			sliderSetting{Field: FieldSustainMinutes, Label: "持续时间", Description: "进程连续超过阈值这么久才提醒。",
-				Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, TestID: "sustain-minutes"},
+				Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, Disabled: off, TestID: "sustain-minutes"},
 		),
 	}
 }
@@ -293,11 +319,74 @@ func historyTab(st *store.Settings, clearRef *core.Ref, onClear func()) []core.N
 	limits := st.Limits()
 	return []core.Node{
 		group("", "section-history",
-			numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: limits.RetentionDays, Unit: "天",
-				TestID: "retention-days"},
+			retentionSetting{Range: limits.RetentionDays},
 			row{Label: "清空历史", Description: "删除全部操作记录，无法恢复。", TestID: "clear-history",
 				Control: []core.Node{kit.Button{Text: "清空历史…", Variant: kit.ButtonGhost, Ref: clearRef, OnPress: onClear, TestID: "clear-history-button"}}},
 		),
+	}
+}
+
+// retentionSetting is 保留天数. Fewer days delete the records older than that at once, which cannot be undone, so the number is saved only on Return or as the field loses the focus, and only after a question when it would delete records the history holds; more days left typed in the field are also saved as it goes.
+type retentionSetting struct {
+	Range app.SettingRange
+}
+
+// retentionAsk is a lower 保留天数 waiting for the user's answer: the days, how many runs it deletes (-1 when they could not be counted) and what the field does on either answer.
+type retentionAsk struct {
+	days, drops  int
+	save, revert func()
+}
+
+// Render implements core.Node.
+func (c retentionSetting) Render(cx *core.Scope) core.Node {
+	stores := store.Use(cx)
+	ask := core.NewSignal[*retentionAsk](cx, nil)
+	field := new(core.Ref)
+	// checking is set while the runs are counted, so the blur that follows a Return does not ask twice.
+	checking := false
+	confirm := func(n int, save, revert func()) {
+		if checking || ask.GetUntracked() != nil {
+			return
+		}
+		if n > stores.Settings.Value().History.RetentionDays {
+			save()
+			return
+		}
+		checking = true
+		stores.History.Load(cx, cx.Context(), enginehist.MaxRuns, func(runs []enginehist.Run, err error) {
+			checking = false
+			drops := -1
+			if err == nil {
+				drops = RetentionDrops(runs, n, cx.WallTime())
+			}
+			if drops == 0 {
+				save()
+				return
+			}
+			ask.Set(&retentionAsk{days: n, drops: drops, save: save, revert: revert})
+		})
+	}
+	answer := func(yes bool) {
+		a := ask.GetUntracked()
+		ask.Set(nil)
+		if yes {
+			a.save()
+		} else {
+			a.revert()
+		}
+	}
+	return core.Group{
+		numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: c.Range, Unit: "天", Confirm: confirm,
+			SaveOnLeave: func(n int) bool { return n > core.Untracked(cx, stores.Settings.Value).History.RetentionDays }, Ref: field, TestID: "retention-days"},
+		kit.ConfirmDialog{Open: func() bool { return ask.Get() != nil }, Title: "缩短保留天数？", ConfirmLabel: "删除记录", Danger: true, ReturnFocus: field,
+			TestID: "retention-dialog",
+			Message: core.Text{ContentFunc: func() string {
+				if a := ask.Get(); a != nil {
+					return RetentionText(a.days, a.drops, format.TrashName())
+				}
+				return ""
+			}, TestID: "retention-message"},
+			OnConfirm: func() { answer(true) }, OnCancel: func() { answer(false) }},
 	}
 }
 
