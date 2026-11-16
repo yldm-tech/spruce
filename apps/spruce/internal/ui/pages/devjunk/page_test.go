@@ -14,6 +14,7 @@ import (
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/devjunk"
@@ -110,7 +111,8 @@ func startSized(t *testing.T, st app.OverviewState, roots []string, size nsgotes
 		for _, f := range before {
 			f(p.nav)
 		}
-		devjunk.DepsKey.Provide(cx, devjunk.Deps{Files: p.files})
+		cleanflow.Provide(cx)
+		devjunk.Provide(cx, devjunk.Deps{Files: p.files})
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if p.nav.Current() != nav.DevJunk {
 				return core.Group{}
@@ -235,7 +237,6 @@ func TestProjectFilters(t *testing.T) {
 	if got := textOf(p.Find("id:projects-filter-idle")); got != "闲置超过 30 天" {
 		t.Errorf("idle chip %q", got)
 	}
-	p.Find("text:按大小排序")
 	count := func() int { return len(p.Query("id:projects >> role:checkbox")) }
 	p.Press("id:projects-filter-idle")
 	p.WaitUntil(wait, func() bool { return count() == 3 })
@@ -418,5 +419,174 @@ func TestHeldProjectTooltip(t *testing.T) {
 	p.Settle()
 	if p.Exists("text:" + tip) {
 		t.Error("the held project's tooltip stays on another row")
+	}
+}
+
+// A filter leaves out what it hides: the projects checked out of view are neither counted nor cleaned, and the confirmation names the projects it cleans.
+func TestFilterCleansOnlyWhatItShows(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press(p.project(tool) + "-check")
+	if got := p.stat("已选择"); got != "2 个项目" {
+		t.Fatalf("已选择 %q", got)
+	}
+	// Only blog has uncommitted changes, and it is held.
+	p.Press("id:projects-filter-dirty")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 1 })
+	if got := p.stat("已选择"); got != "0 个项目" {
+		t.Errorf("已选择 %q under 有未提交的改动", got)
+	}
+	if got := p.stat("已选大小"); got != "0 B" {
+		t.Errorf("已选大小 %q under 有未提交的改动", got)
+	}
+	if !p.disabled("id:clean") {
+		t.Fatal("清理 acts on projects the filter hides")
+	}
+	// Idle: shop is shown, tool is not.
+	p.Press("id:projects-filter-idle")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 3 })
+	if got := p.stat("已选择"); got != "1 个项目" {
+		t.Errorf("已选择 %q under 闲置", got)
+	}
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:confirm-projects").Text; got != "项目：shop" {
+		t.Errorf("projects %q", got)
+	}
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := []string{id(shop + "/node_modules"), id(shop + "/.next")}
+	if got := p.cleans()[0].Req.ItemIDs; !reflect.DeepEqual(got, want) {
+		t.Errorf("cleaned %v, want %v", got, want)
+	}
+}
+
+// Leaving the view keeps its tab, its filter, what is checked and the projects open; a link that asks for a tab opens on it with every project shown.
+func TestComesBackAsLeft(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press("id:projects-filter-idle")
+	p.Press(p.project(shop) + "-expand")
+	p.WaitFor(p.project(shop)+"-items", wait)
+	p.Press("id:item-" + id(shop+"/.next"))
+	away := func() {
+		p.nav.Go(nav.Overview)
+		p.WaitForGone("id:drill-dev-junk", wait)
+		p.nav.Go(nav.DevJunk)
+		p.WaitFor("id:drill-dev-junk", wait)
+	}
+	away()
+	if !p.Find("id:projects-filter-idle").Props.Pressed {
+		t.Error("the filter went back to 全部")
+	}
+	if p.Exists(p.project(tool)) {
+		t.Error("a project the filter hides shows")
+	}
+	p.WaitFor(p.project(shop)+"-items", wait)
+	if p.checked("id:item-"+id(shop+"/.next")) || !p.checked("id:item-"+id(shop+"/node_modules")) {
+		t.Error("what was checked changed")
+	}
+	p.Press("id:tab-tools")
+	p.WaitFor("id:list-tools", wait)
+	away()
+	p.WaitFor("id:list-tools", wait)
+
+	p.nav.Go(nav.Overview)
+	p.WaitForGone("id:drill-dev-junk", wait)
+	p.nav.GoDevTab(nav.DevProjects)
+	p.WaitFor("id:projects", wait)
+	if !p.Find("id:projects-filter-all").Props.Pressed {
+		t.Error("a link opened 项目 under a filter")
+	}
+}
+
+// A press on a project's head opens its build output, whose chevron comes last; the head's menu checks the project.
+func TestProjectHeadTakesPresses(t *testing.T) {
+	// Context menus show in the desktop idiom; nsgotest starts in the phone's.
+	p := startSized(t, ready(), roots, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}), func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	tool := p.project("/Users/me/Workspace/tool")
+	p.Press(tool + "-head")
+	p.WaitFor(tool+"-items", wait)
+	kids := p.Find(tool + "-head").Children
+	if last := kids[len(kids)-1]; last.Props.TestID != "project-"+id("/Users/me/Workspace/tool")+"-expand" {
+		t.Errorf("the head ends with %q, not the chevron", last.Props.TestID)
+	}
+	p.RightClick(tool + "-head")
+	p.ChoosePopup("勾选")
+	if !p.checked(tool + "-check") {
+		t.Error("勾选 left the project unchecked")
+	}
+	p.Press(tool + "-head")
+	p.WaitForGone(tool+"-items", wait)
+}
+
+// Showing a project that is no longer there in Finder says why in a short toast, not at the top of the list, which may be far from the row pressed.
+func TestProjectRevealFails(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.files.Err = fmt.Errorf("这个项目已经不存在了")
+	p.Press(p.project("/Users/me/Workspace/shop") + "-reveal")
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second {
+		t.Errorf("toast %+v", got)
+	}
+	if p.Exists("id:reveal-error") {
+		t.Error("the error is also shown at the top of the list")
+	}
+}
+
+// The projects show largest first or by their last activity, most recent first, and the view keeps the order chosen from one visit to the next.
+func TestProjectSort(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	order := func() []string {
+		var out []string
+		for _, r := range p.Query("id:projects >> role:group") {
+			if strings.HasPrefix(r.Props.TestID, "project-") && !strings.HasSuffix(r.Props.TestID, "-items") {
+				out = append(out, r.Props.Label)
+			}
+		}
+		return out
+	}
+	if !p.Find("id:projects-sort-size").Props.Pressed {
+		t.Error("大小 is not the first order")
+	}
+	if got := order(); !reflect.DeepEqual(got, []string{"shop", "blog", "tool", "lib"}) {
+		t.Errorf("by size %v", got)
+	}
+	p.Press("id:projects-sort-active")
+	p.WaitUntil(wait, func() bool { return reflect.DeepEqual(order(), []string{"tool", "shop", "blog", "lib"}) })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitForGone("id:drill-dev-junk", wait)
+	p.Post(func() { p.nav.Go(nav.DevJunk) })
+	p.WaitFor("id:projects", wait)
+	if got := order(); !reflect.DeepEqual(got, []string{"tool", "shop", "blog", "lib"}) {
+		t.Errorf("after coming back %v", got)
+	}
+}
+
+// A long list of projects lays out at its full length in the page but mounts only the rows near view, and a row scrolled to works as any other.
+func TestManyProjectsMountOnlyNearView(t *testing.T) {
+	var items []cleanup.Item
+	for i := range 120 {
+		project := fmt.Sprintf("/Users/me/Workspace/p%03d", i)
+		p := project + "/node_modules"
+		items = append(items, cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: int64(10000 - i), ModTime: now.Add(-100 * 24 * time.Hour), Project: project,
+			Git: cleanup.GitClean, Selected: true, Dir: true, Note: fmt.Sprintf("p%03d", i)})
+	}
+	nm := cleanup.Category{ID: "dev-junk:artifact-node-modules", Source: "dev-junk", Title: "node_modules", Icon: "node", Kind: cleanup.KindProjectArtifact,
+		Deletion: cleanup.DeletePermanent, Items: items}
+	p := start(t, stateOf(nm), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.WaitFor("id:projects", wait)
+	if n := len(p.QueryMounted("id:projects >> role:checkbox")); n == 0 || n > 60 {
+		t.Fatalf("%d project rows mounted for 120 projects", n)
+	}
+	last := p.project("/Users/me/Workspace/p119")
+	p.ScrollTo("id:drill-dev-junk", core.Point{Y: 74 * 130})
+	p.WaitUntil(wait, func() bool { return len(p.QueryMounted(last+"-check")) == 1 })
+	if !p.checked(last + "-check") {
+		t.Fatal("the last project is not checked by default")
+	}
+	p.Press(last + "-check")
+	if got := p.stat("已选择"); got != "119 个项目" {
+		t.Errorf("已选择 %q", got)
 	}
 }

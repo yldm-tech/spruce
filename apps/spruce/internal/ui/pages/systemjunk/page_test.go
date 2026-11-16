@@ -13,6 +13,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/systemjunk"
@@ -79,7 +80,8 @@ func start(t *testing.T, st app.OverviewState) *page {
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
 		nav.Key.Provide(cx, nav.NewNavigator(cx, nav.SystemJunk))
-		systemjunk.DepsKey.Provide(cx, systemjunk.Deps{Files: p.files})
+		cleanflow.Provide(cx)
+		systemjunk.Provide(cx, systemjunk.Deps{Files: p.files})
 		return systemjunk.Page(cx)
 	}, nsgotest.Size(1052, 1000))
 	p.WaitUntil(wait, func() bool {
@@ -109,7 +111,10 @@ func TestShowsTheCheck(t *testing.T) {
 	p.Find("id:drill-system-junk")
 	p.Find("role:header 系统垃圾")
 	p.Find("text:清理应用缓存、日志和临时文件，不会动你的文档和照片")
-	p.Find("text:检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓。只看你自己的用户文件夹，不需要管理员权限。")
+	// The header says what the view is for; what the check looks at waits for the empty state, where it answers whether nothing was found.
+	if p.Exists("text:检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓。只看你自己的用户文件夹，不需要管理员权限。") {
+		t.Error("the view says what it is for twice")
+	}
 	p.Find("role:region 可以清理的系统垃圾")
 	if p.Exists("id:scan") {
 		t.Error("the view offers a scan")
@@ -208,7 +213,7 @@ func TestUnreadableTrash(t *testing.T) {
 func TestNothingFound(t *testing.T) {
 	p := start(t, stateOf())
 	p.Find("id:drill-empty >> text:没有找到系统垃圾")
-	p.Find("text:缓存、日志和临时文件都很干净，过段时间再来看看。")
+	p.Find("id:drill-empty >> text:检查应用缓存、浏览器缓存、日志、崩溃报告、未完成的下载和废纸篓。只看你自己的用户文件夹，不需要管理员权限。")
 	if p.Exists("id:clean") {
 		t.Error("清理 shows without results")
 	}

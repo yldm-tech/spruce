@@ -38,10 +38,10 @@ type Overview struct {
 	TrashInfoValue app.TrashInfo
 	TrashErr       error
 
-	checks, stops int
-	cleans        []CleanCall
-	undos         []string
-	windows       []time.Duration
+	checks, stops, disks int
+	cleans               []CleanCall
+	undos                []string
+	windows              []time.Duration
 }
 
 // NewOverview returns a fake whose state is st. The fake is a controller that has loaded: every state it answers or broadcasts has Loaded set.
@@ -99,6 +99,20 @@ func (o *Overview) StopCheck() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.stops++
+}
+
+// ReadDisk implements store.OverviewService.
+func (o *Overview) ReadDisk() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.disks++
+}
+
+// DiskReads returns how often ReadDisk was called.
+func (o *Overview) DiskReads() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.disks
 }
 
 // Clean implements store.OverviewService.

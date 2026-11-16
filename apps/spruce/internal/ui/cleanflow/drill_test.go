@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
+	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/store"
 	"spruce/apps/spruce/internal/ui/store/storefake"
@@ -107,6 +108,8 @@ func startSized(t *testing.T, st app.OverviewState, size nsgotest.Option, before
 	p := &page{ov: ov, files: &cleanflowfake.Files{}, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
+		cleanflow.Provide(cx)
+		kit.ToastShownKey.Provide(cx, func() bool { return p.stores.Toasts.Current() != nil })
 		p.nav = nav.NewNavigator(cx, nav.Overview)
 		nav.Key.Provide(cx, p.nav)
 		for _, f := range before {
@@ -178,7 +181,7 @@ func TestDrillListsItsSource(t *testing.T) {
 		t.Error("defaults")
 	}
 	p.Find("id:category-system-junk:logs >> text:排查问题时可能用得到")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 3 项" {
+	if got := p.toolbar(); got != "3 类，共 13.5 MB" {
 		t.Errorf("toolbar %q", got)
 	}
 	if got := p.stat("可释放"); got != "13 MB" {
@@ -219,7 +222,7 @@ func TestCategoryListItems(t *testing.T) {
 func TestCategoryListSelectAllAndNone(t *testing.T) {
 	p := start(t, ready())
 	p.Press("id:select-all")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 4 项" {
+	if got := p.stat("已选择"); got != "4 项" {
 		t.Errorf("toolbar %q", got)
 	}
 	p.Press("id:select-none")
@@ -233,19 +236,34 @@ func TestCategoryListSelectAllAndNone(t *testing.T) {
 	}
 }
 
-// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure.
+// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure, as a short toast rather than a line at the top of the list, which may be far from the row pressed.
 func TestCategoryListReveal(t *testing.T) {
 	p := start(t, ready())
 	p.files.Err = errors.New("这个项目已经不存在了")
 	p.Press("role:button 展开日志")
 	p.Press("role:button 在访达中显示 x.log")
-	p.WaitFor("id:reveal-error", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
 	if got := p.files.Revealed(); !reflect.DeepEqual(got, []string{"/Users/me/Library/Logs/x.log"}) {
 		t.Errorf("revealed %v", got)
 	}
-	if got := p.Find("id:reveal-error").Text; got != "这个项目已经不存在了" {
-		t.Errorf("error %q", got)
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second || got.UndoRun != "" {
+		t.Errorf("toast %+v", got)
 	}
+
+	// While the toast offers 撤销, the failure waits for it to go rather than take 撤销 away.
+	p.undoToast()
+	p.WaitUntil(wait, func() bool { t := p.stores.Toasts.Current(); return t != nil && t.UndoRun == "run-1" })
+	p.Press("role:button 在访达中显示 x.log")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 2 })
+	p.Settle()
+	if got := p.stores.Toasts.Current(); got == nil || got.UndoRun != "run-1" {
+		t.Errorf("the failure took 撤销 away: %+v", got)
+	}
+	p.Post(p.stores.Toasts.Dismiss)
+	p.WaitUntil(wait, func() bool {
+		t := p.stores.Toasts.Current()
+		return t != nil && t.Text == "这个项目已经不存在了"
+	})
 }
 
 // The design's largest case: 3,000 items in one category scroll inside the card and mount only the rows near view.
@@ -424,6 +442,50 @@ func TestStopAndRefusal(t *testing.T) {
 	})
 }
 
+// What is checked follows a newer check, not each state the store publishes: a check's progress over the result leaves it as it is.
+func TestChoiceFollowsOnlyANewerCheck(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(ready())
+	fakes.Overview = ov
+	var changes atomic.Int32
+	var stores *store.Stores
+	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		stores = storefake.Provide(cx, fakes.Deps())
+		cleanflow.Provide(cx)
+		k := cleanflow.UseKept(cx)
+		cx.Effect(func() {
+			k.Choice.Get()
+			changes.Add(1)
+		})
+		return core.Group{}
+	})
+	settled := func() {
+		a.WaitUntil(wait, func() bool { return reflect.DeepEqual(stores.Overview.State(), ov.State()) })
+		a.Settle()
+	}
+	settled()
+	before := changes.Load()
+	// The controller publishes a copy of its result with each state (app.Overview.stateLocked).
+	progress := func(done int) app.OverviewState {
+		st := ov.State()
+		r := *st.Result
+		st.Phase, st.Progress, st.Result = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: done, Total: 3}, &r
+		return st
+	}
+	ov.Set(progress(1))
+	settled()
+	ov.Set(progress(2))
+	settled()
+	if n := changes.Load(); n != before {
+		t.Errorf("the choice changed %d times while a check ran over the result", n-before)
+	}
+	ov.Set(ready())
+	settled()
+	if changes.Load() == before {
+		t.Error("the choice did not follow a newer check")
+	}
+}
+
 // While a check runs the view says so and 清理 waits; a result it may not act on says why, offers 重新检查 and was checked again as the view opened.
 func TestCheckingAndNotActionable(t *testing.T) {
 	st := ready()
@@ -469,7 +531,7 @@ func (p *page) waitText(selector, want string) {
 	p.WaitUntil(wait, func() bool { vs := p.Query(selector); return len(vs) == 1 && vs[0].Text == want })
 }
 
-// One thing at a time: a clean elsewhere disables 清理.
+// One thing at a time: a clean elsewhere disables 清理, and the view says why, under its header and on the button.
 func TestBusyElsewhere(t *testing.T) {
 	st := ready()
 	st.Phase = app.OverviewCleaning
@@ -477,8 +539,49 @@ func TestBusyElsewhere(t *testing.T) {
 	if p.Enabled("id:clean") {
 		t.Error("清理 is enabled while another clean runs")
 	}
+	p.Find("id:drill-busy >> text:正在清理其他项目…")
+	if got := p.Find("id:clean").Props.Label; got != "正在清理其他项目…" {
+		t.Errorf("清理's label %q", got)
+	}
 	p.set(ready())
 	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
+	p.WaitForGone("id:drill-busy", wait)
+	if got := p.Find("id:clean").Props.Label; got != "" {
+		t.Errorf("清理's label %q once nothing else runs", got)
+	}
+}
+
+// The view's clean ends on one goroutine and the controller says so on another: while the controller still cleans after the view's clean ended, that is the view's own clean, so 正在清理其他项目… does not show.
+func TestOwnCleanEndingIsNotAnotherClean(t *testing.T) {
+	p := start(t, ready())
+	cleaning := ready()
+	cleaning.Phase = app.OverviewCleaning
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		p.ov.Set(cleaning)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Trashed: 10_000_000, Removed: 1}, RunID: "run-1", Undoable: true}, nil
+	}
+	p.Press("id:check-system-junk:caches")
+	p.Press("id:clean")
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.State().Phase == app.OverviewCleaning })
+	close(release)
+	p.WaitForGone("id:clean-overlay", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if p.Exists("id:drill-busy") {
+		t.Error("the view's own clean shows as another clean as it ends")
+	}
+	p.set(ready())
+	p.Settle()
+	if p.Exists("id:drill-busy") {
+		t.Error("正在清理其他项目… once nothing runs")
+	}
+	// Another clean after it still shows as one.
+	p.set(cleaning)
+	p.WaitFor("id:drill-busy", wait)
 }
 
 // Nothing of the source: the empty state; a failed source and unreadable places are told.
@@ -667,20 +770,22 @@ func TestTrashWithMovesAsksAsDanger(t *testing.T) {
 	p.WaitForGone("id:clean-overlay", wait)
 }
 
+// inWindow is where v ends in the window: its frame's bottom, less what the scroll views around it scrolled.
+func inWindow(v *nsgotest.View) float32 {
+	y := float32(v.Frame.Size.Height)
+	for ; v != nil; v = v.Parent {
+		y += float32(v.Frame.Origin.Y)
+		if v.Parent != nil {
+			y -= float32(v.Parent.Offset.Y)
+		}
+	}
+	return y
+}
+
 // While the shell's toast shows at the bottom of the page area (24 points up, at least 44 tall), 清理 stands above it, and comes back down once it goes.
 func TestActionBarRisesOverTheToast(t *testing.T) {
 	p := start(t, ready())
-	bottom := func() float32 {
-		v := p.Find("id:clean")
-		y := float32(v.Frame.Size.Height)
-		for ; v != nil; v = v.Parent {
-			y += float32(v.Frame.Origin.Y)
-			if v.Props.TestID == "drill-system-junk" {
-				y -= float32(v.Offset.Y)
-			}
-		}
-		return y
-	}
+	bottom := func() float32 { return inWindow(p.Find("id:clean")) }
 	without := bottom()
 	p.undoToast()
 	p.Settle()
@@ -694,33 +799,25 @@ func TestActionBarRisesOverTheToast(t *testing.T) {
 	}
 }
 
-// On a long list scrolled to its end, as after pressing 清理, the bar that rises over the toast stays in view above it; a page scrolled away from the bar is left where it is.
-func TestActionBarStaysInViewOverTheToast(t *testing.T) {
+// On a long list the bar is pinned under the page: in view at its top and at its end, above the toast when it comes, which scrolls nothing.
+func TestActionBarStaysPinned(t *testing.T) {
 	const height = 600
 	p := startSized(t, stateOf(many(20)...), nsgotest.Size(1052, height))
 	p.WaitFor("id:clean", wait)
+	bottom := func() float32 { return inWindow(p.Find("id:clean")) }
+	if got := bottom(); got > height {
+		t.Fatalf("清理 ends at %v at the top of the page, below the window", got)
+	}
 	p.Scroll("id:drill-system-junk", 100000)
 	p.Settle()
-	page := func() *nsgotest.View { return p.Find("id:drill-system-junk") }
-	// bottom is where 清理 ends in the window.
-	bottom := func() float32 {
-		pg := page()
-		return float32(pg.Frame.Origin.Y) + inPage(pg, p.Find("id:clean")) + float32(p.Find("id:clean").Frame.Size.Height) - float32(pg.Offset.Y)
-	}
 	if got := bottom(); got > height {
 		t.Fatalf("清理 ends at %v at the end of the page, below the window", got)
 	}
+	offset := p.Find("id:drill-system-junk").Offset.Y
 	p.undoToast()
 	p.WaitUntil(wait, func() bool { return bottom() <= height-24-44-12 })
-
-	p.Post(p.stores.Toasts.Dismiss)
-	p.Settle()
-	p.Scroll("id:drill-system-junk", -100000)
-	p.Settle()
-	p.undoToast()
-	p.Settle()
-	if y := page().Offset.Y; y != 0 {
-		t.Errorf("the page scrolled to %v for a toast while its bar was out of view", y)
+	if y := p.Find("id:drill-system-junk").Offset.Y; y != offset {
+		t.Errorf("the page scrolled from %v to %v for the toast", offset, y)
 	}
 }
 
@@ -779,5 +876,87 @@ func TestLeavingStopsTheClean(t *testing.T) {
 	case <-stopped:
 	case <-time.After(wait):
 		t.Fatal("the clean goes on after the view went")
+	}
+}
+
+// The header's 重新检查 checks again on a result that may be cleaned, as the menu's 重新检查 (⌘R) does; both wait while a check or a clean runs.
+func TestRecheckFromTheHeader(t *testing.T) {
+	p := start(t, ready())
+	p.waitRecheck("重新检查")
+	if !p.nav.CanRefresh() {
+		t.Fatal("⌘R cannot check again")
+	}
+	p.Press("id:recheck")
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	p.Post(func() { p.nav.Commands().Refresh() })
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+
+	checking := ready()
+	checking.Phase = app.OverviewChecking
+	p.set(checking)
+	p.waitRecheck("正在检查…")
+	if !p.Find("id:recheck").Props.Disabled || p.nav.CanRefresh() {
+		t.Error("重新检查 can run while a check runs")
+	}
+}
+
+// waitRecheck waits until the header's 重新检查 reads want.
+func (p *page) waitRecheck(want string) {
+	p.tb.Helper()
+	p.WaitUntil(wait, func() bool {
+		v := p.Query("id:recheck")
+		return len(v) == 1 && len(v[0].Children) > 0 && p.Exists("id:recheck >> text:"+want)
+	})
+}
+
+// A press anywhere on a category's head opens it and on an item's row checks it; the row's menu reveals it, copies its path and checks it, and its path shows whole as its tooltip.
+func TestRowsAndHeadsTakePresses(t *testing.T) {
+	// Context menus show in the desktop idiom; nsgotest starts in the phone's.
+	p := startSized(t, ready(), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	p.Press("id:head-system-junk:caches")
+	p.WaitFor("id:items-system-junk:caches", wait)
+	p.Press("id:row-a")
+	if p.checked("role:checkbox com.example.a") {
+		t.Error("a press on the row left it checked")
+	}
+	p.Press("id:row-a")
+	if !p.checked("role:checkbox com.example.a") {
+		t.Error("a second press on the row left it unchecked")
+	}
+	p.RightClick("id:row-a")
+	var labels []string
+	for _, it := range p.PopupMenu {
+		labels = append(labels, it.Label)
+	}
+	if !reflect.DeepEqual(labels, []string{"在访达中显示", "拷贝路径", "", "取消勾选"}) {
+		t.Fatalf("menu %q", labels)
+	}
+	p.ChoosePopup("取消勾选")
+	if p.checked("role:checkbox com.example.a") {
+		t.Error("取消勾选 left it checked")
+	}
+	p.RightClick("id:row-a")
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != "/Users/me/Library/Caches/com.example.a" {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	p.RightClick("id:row-a")
+	p.ChoosePopup("在访达中显示")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 1 })
+	p.Press("id:head-system-junk:caches")
+	p.WaitForGone("id:items-system-junk:caches", wait)
+}
+
+// A category with no items has nothing to open: its head does not look pressable.
+func TestEmptyCategoryHeadLooksInert(t *testing.T) {
+	empty := cleanup.Category{ID: "system-junk:empty", Source: "system-junk", Title: "空的分类", Icon: "cache", Kind: cleanup.KindCache, Deletion: cleanup.DeletePermanent}
+	p := start(t, stateOf(append(junk(), empty)...))
+	full, none := p.Find("id:head-system-junk:caches"), p.Find("id:head-system-junk:empty")
+	if full.Style.Cursor == none.Style.Cursor {
+		t.Errorf("the empty category's head has the pointer cursor %v of one with items", none.Style.Cursor)
+	}
+	p.Press("id:head-system-junk:empty")
+	if p.Exists("id:items-system-junk:empty") {
+		t.Error("an empty category opened")
 	}
 }

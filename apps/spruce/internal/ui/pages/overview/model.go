@@ -129,8 +129,8 @@ func ConclusionSub(recs []advice.Recommendation) string {
 	return s
 }
 
-// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
-func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
+// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it, with how far it is (progress) once it knows. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
+func CheckedAtText(at time.Time, stale, checking bool, progress cleanup.Progress, now time.Time) string {
 	if now.Before(at) {
 		now = at
 	}
@@ -140,6 +140,9 @@ func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
 	}
 	if checking {
 		s += " · 正在更新…"
+		if v, ok := OverallFraction(progress); ok {
+			s += " " + strconv.Itoa(int(v*100+0.5)) + "%"
+		}
 	}
 	return s
 }
@@ -171,6 +174,40 @@ func ActionLabel(a advice.Action, partial bool, bytes int64) string {
 		s += " · " + format.Bytes(bytes)
 	}
 	return s
+}
+
+// CleanProgressText is a card's progress line while its clean of total bytes runs: 已处理 {done}/{total} over several items. One item (or a command) reports nothing until it ends, so until then it says what is being handled (正在删除 17.2 GB, 正在运行清理命令) rather than a 0 B freed that reads as stuck, and once bytes come how much is freed (or moved to the Trash, for a move) of total.
+func CleanProgressText(a advice.Action, pr cleanup.Progress, total int64) string {
+	if pr.Total > 1 {
+		return "已处理 " + strconv.Itoa(pr.Done) + "/" + strconv.Itoa(pr.Total)
+	}
+	if pr.Bytes == 0 {
+		switch a {
+		case advice.ActionDelete:
+			return "正在删除 " + format.Bytes(total)
+		case advice.ActionCommand:
+			return "正在运行清理命令"
+		case advice.ActionMixed:
+			return "正在清理 " + format.Bytes(total)
+		}
+		return "正在移到" + format.TrashName() + " " + format.Bytes(total)
+	}
+	verb := "已释放 "
+	if a == advice.ActionTrash {
+		verb = "已移到" + format.TrashName() + " "
+	}
+	return verb + format.Bytes(pr.Bytes) + " / " + format.Bytes(total)
+}
+
+// CleanProgressFraction is how far a card's clean of total bytes is, as CleanProgressText counts it: by items over several, by bytes for one.
+func CleanProgressFraction(pr cleanup.Progress, total int64) float64 {
+	switch {
+	case pr.Total > 1:
+		return min(1, float64(pr.Done)/float64(pr.Total))
+	case total > 0:
+		return min(1, float64(pr.Bytes)/float64(total))
+	}
+	return 0
 }
 
 // BusyLabel is a card's button while its action runs.
@@ -304,12 +341,10 @@ func CleanToast(a advice.Action, out app.OverviewOutcome, canUndo bool) store.To
 	return t
 }
 
-// Pick is a card's selection: Sel holds the checked items by category. Once the user changed it (Touched), a newer result keeps what is still there and leaves new items unchecked, counting them in Added; Base is the card's items when the user last changed it.
+// Pick is a card's selection, its part of the app's Choice (cleanflow.Kept), which the drill-down views share: Sel holds the checked items of the card by category, and Added counts the card's items a newer check added since the user last changed them, which start unchecked.
 type Pick struct {
-	Sel     cleanflow.Selection
-	Touched bool
-	Base    map[advice.ItemRef]bool
-	Added   int
+	Sel   cleanflow.Selection
+	Added int
 }
 
 // refSet is the set of a card's items.
@@ -333,30 +368,23 @@ func DefaultPick(r advice.Recommendation) Pick {
 	return Pick{Sel: sel}
 }
 
-// Reconcile is p after the card became r (a newer result): an untouched card takes r's default; a touched one keeps the checked items r still has and counts r's items it did not have when the user last changed it.
-func (p Pick) Reconcile(r advice.Recommendation) Pick {
-	if !p.Touched {
-		return DefaultPick(r)
-	}
+// CardPick is the card r's part of ch over scan: what ch checks among r's items, and how many of them a newer check added to what the user changed.
+func CardPick(r advice.Recommendation, ch cleanflow.Choice, scan cleanup.ScanResult) Pick {
 	sel := cleanflow.Selection{}
-	added := 0
 	for _, ref := range r.Items {
-		if p.Sel.Has(ref.CategoryID, ref.ItemID) {
+		if ch.Sel.Has(ref.CategoryID, ref.ItemID) {
 			if sel[ref.CategoryID] == nil {
 				sel[ref.CategoryID] = map[string]struct{}{}
 			}
 			sel[ref.CategoryID][ref.ItemID] = struct{}{}
 		}
-		if !p.Base[ref] {
-			added++
-		}
 	}
-	return Pick{Sel: sel, Touched: true, Base: p.Base, Added: added}
+	return Pick{Sel: sel, Added: ch.Added(cardCategories(scan, r), r.Items)}
 }
 
-// Change is p after the user checked sel on the card r.
-func (p Pick) Change(r advice.Recommendation, sel cleanflow.Selection) Pick {
-	return Pick{Sel: sel, Touched: true, Base: refSet(r)}
+// ChangeCard is ch once the user checked sel on the card r over scan: r's items take sel's checks, every other check stays, and r's categories count as changed from r's items as they are now.
+func ChangeCard(ch cleanflow.Choice, r advice.Recommendation, scan cleanup.ScanResult, sel cleanflow.Selection) cleanflow.Choice {
+	return ch.Change(cleanflow.WithinRefs(ch.Sel, r.Items, sel), cardCategories(scan, r), "")
 }
 
 // Refs are the checked items, in the card's order.
@@ -428,6 +456,66 @@ func cardCategories(scan cleanup.ScanResult, r advice.Recommendation) []cleanup.
 			}
 			out = append(out, cat)
 			break
+		}
+	}
+	return out
+}
+
+// CleanAll is what 全部清理 cleans: the checked items of every card in one selection over the cards' categories, each once, merged in the cards' order. A tool's command is left out: it runs a program, which its own card asks about. Cards are the cards with something in it.
+type CleanAll struct {
+	Categories []cleanup.Category
+	Sel        cleanflow.Selection
+	Cards      []string
+}
+
+// AllOf is 全部清理 over the cards recs, with what ch checks among their items in scan.
+func AllOf(recs []advice.Recommendation, ch cleanflow.Choice, scan cleanup.ScanResult) CleanAll {
+	all := CleanAll{Sel: cleanflow.Selection{}}
+	at := map[string]int{}
+	for _, r := range recs {
+		pick := CardPick(r, ch, scan)
+		in := false
+		for _, c := range cardCategories(scan, r) {
+			ids := pick.Sel[c.ID]
+			if c.Command != "" || len(ids) == 0 {
+				continue
+			}
+			in = true
+			items := c.Items
+			i, ok := at[c.ID]
+			if !ok {
+				i, at[c.ID] = len(all.Categories), len(all.Categories)
+				c.Items, c.Size = nil, 0
+				all.Categories = append(all.Categories, c)
+				all.Sel[c.ID] = map[string]struct{}{}
+			}
+			merged := &all.Categories[i]
+			for _, it := range items {
+				if _, checked := ids[it.ID]; checked && !slices.ContainsFunc(merged.Items, func(m cleanup.Item) bool { return m.ID == it.ID }) {
+					merged.Items = append(merged.Items, it)
+					merged.Size += it.Size
+					all.Sel[c.ID][it.ID] = struct{}{}
+				}
+			}
+		}
+		if in {
+			all.Cards = append(all.Cards, r.ID)
+		}
+	}
+	return all
+}
+
+// FailedByCard counts the failures of a 全部清理 of cards by the card whose item failed, leaving out cards with none.
+func FailedByCard(recs []advice.Recommendation, cards []string, failed []cleanup.Failure) map[string]int {
+	out := map[string]int{}
+	for _, r := range recs {
+		if !slices.Contains(cards, r.ID) {
+			continue
+		}
+		for _, f := range failed {
+			if slices.Contains(r.Items, advice.ItemRef{CategoryID: f.CategoryID, ItemID: f.ItemID}) {
+				out[r.ID]++
+			}
 		}
 	}
 	return out

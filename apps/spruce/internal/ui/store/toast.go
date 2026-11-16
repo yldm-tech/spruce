@@ -23,6 +23,8 @@ type Toast struct {
 // Toasts holds the one toast the shell shows, shared by 概览, the drill-down views, 空间透视 and the automatic rules; a new one replaces the one shown, whose 撤销 stays possible in 操作历史.
 type Toasts struct {
 	current *core.Signal[*Toast]
+	// later is a passing message (ShowLater) that waits for the toast with 撤销 to go.
+	later *Toast
 }
 
 func newToasts(cx *core.Scope) *Toasts {
@@ -30,13 +32,29 @@ func newToasts(cx *core.Scope) *Toasts {
 }
 
 // Show replaces the toast with x; showing the same message again starts its time again.
-func (t *Toasts) Show(x Toast) { t.current.Set(&x) }
+func (t *Toasts) Show(x Toast) {
+	t.later = nil
+	t.current.Set(&x)
+}
+
+// ShowLater shows x, a passing message (a failed 在访达中显示), as Show does; while the toast shown offers 撤销, x waits until that one goes, so the message does not take 撤销 out of sight. A newer Show drops it.
+func (t *Toasts) ShowLater(x Toast) {
+	if c := t.current.GetUntracked(); c != nil && c.UndoRun != "" {
+		t.later = &x
+		return
+	}
+	t.Show(x)
+}
 
 // Current returns the toast shown, nil for none; reading it subscribes.
 func (t *Toasts) Current() *Toast { return t.current.Get() }
 
-// Dismiss takes the toast away.
-func (t *Toasts) Dismiss() { t.current.Set(nil) }
+// Dismiss takes the toast away, and shows the message that waited for it (ShowLater).
+func (t *Toasts) Dismiss() {
+	next := t.later
+	t.later = nil
+	t.current.Set(next)
+}
 
 // UndoneToast is the toast after a 撤销, from the toast or 应用卸载's done card: all put back, some put back with 查看 to read why the rest was not, or the error.
 func UndoneToast(out app.RestoreOutcome, err error) Toast {

@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/scancache"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
@@ -30,6 +31,9 @@ const shownCards = 5
 
 // leaveTime is how long a card that was acted on takes to go.
 const leaveTime = 200 * time.Millisecond
+
+// stopArmed is how long the header's 停止检查 waits after it shows before it takes a press, about a double click's interval: the second press of a double press on 重新检查 does not stop the check the first one started.
+const stopArmed = 500 * time.Millisecond
 
 // view is which body the page shows.
 type view uint8
@@ -76,6 +80,9 @@ type page struct {
 	ov     *store.Overview
 	nav    *nav.Navigator
 	deps   Deps
+	// kept and choice are what the page keeps in the app's scope: its own, and what is checked, which the drill-down views share.
+	kept   *kept
+	choice *cleanflow.Kept
 	ref    *core.Ref
 	// active is the card whose action runs, or emptyTrash, "" for none: one thing at a time.
 	active *core.Signal[string]
@@ -98,14 +105,25 @@ type page struct {
 // seenAuto is, by the app's store.Overview, the automatic run 概览 told: a page opened again does not tell it again.
 var seenAuto sync.Map
 
-// emptyTrash is page.active while the Trash is emptied.
-const emptyTrash = "\x00trash"
+// emptyTrash is page.active while the Trash is emptied, and cleanAllID while 全部清理 runs.
+const (
+	emptyTrash = "\x00trash"
+	cleanAllID = "\x00all"
+)
 
 func (p *page) state() app.OverviewState { return p.ov.State() }
 
 func (p *page) result() *app.OverviewResult { return p.state().Result }
 
 func (p *page) checking() bool { return p.state().Phase == app.OverviewChecking }
+
+// progress is the running check's, zero when none runs or it has not reported yet.
+func (p *page) progress() cleanup.Progress {
+	if pr := p.state().Progress; pr != nil {
+		return *pr
+	}
+	return cleanup.Progress{}
+}
 
 // cleaning reports whether a clean runs: one of this page, one the store started (a drill-down view, 撤销) or one the controller runs.
 func (p *page) cleaning() bool {
@@ -116,6 +134,12 @@ func (p *page) cleaning() bool {
 func (p *page) actionable() bool {
 	r := p.result()
 	return r != nil && r.Actionable
+}
+
+// cleaningAll reports whether a 全部清理 runs that cleans the card id; reading it subscribes.
+func (p *page) cleaningAll(id string) bool {
+	o, ok := p.ov.Running()
+	return ok && o.All && slices.Contains(p.kept.all.Get(), id)
 }
 
 // canUndo is whether moves to the Trash can be undone: macOS, where the automatic rules run too.
@@ -167,9 +191,6 @@ func (p *page) asker(cx *core.Scope) func(kit.ConfirmDialog, func()) {
 	return func(d kit.ConfirmDialog, confirm func()) { opened = p.ask(d, confirm) }
 }
 
-// toast shows the toast t.
-func (p *page) toast(t store.Toast) { p.stores.Toasts.Show(t) }
-
 // cleaned is what a clean of 概览 leaves once it ended, shown in the app's scope so leaving the page does not lose it: the disks and the Trash read again, and the toast (CleanToast, with 撤销 when undo was possible as it started).
 func cleaned(stores *store.Stores, a advice.Action, out app.OverviewOutcome, err error, undo bool) {
 	stores.Locations.Bump()
@@ -179,6 +200,40 @@ func cleaned(stores *store.Stores, a advice.Action, out app.OverviewOutcome, err
 		return
 	}
 	stores.Toasts.Show(CleanToast(a, out, undo))
+}
+
+// cleanAll cleans a, 全部清理's selection, whose action is act, in one clean through the store, as a card's clean goes: it outlives the page, the cards in it stay in place and show it while it runs, and what failed stays with the card it is of.
+func (p *page) cleanAll(a CleanAll, act advice.Action) {
+	req := cleanflow.ItemsRequest(a.Categories, a.Sel)
+	if len(req.ItemIDs) == 0 || !p.actionable() || p.cleaning() {
+		return
+	}
+	undo := p.canUndo()
+	stores, k, recs := p.stores, p.kept, p.recs()
+	p.active.Set(cleanAllID)
+	k.all.Set(a.Cards)
+	for i, r := range recs {
+		if slices.Contains(a.Cards, r.ID) {
+			p.hold(r, i)
+			k.setFailed(r.ID, 0, "")
+		}
+	}
+	p.ov.Clean(p.cx, req, app.CleanOrigin{All: true}, nil,
+		func(app.OverviewOutcome, error) {
+			p.active.Set("")
+			for _, id := range a.Cards {
+				p.release(id)
+			}
+		},
+		func(out app.OverviewOutcome, err error) {
+			k.all.Set(nil)
+			if err == nil {
+				for id, n := range FailedByCard(recs, a.Cards, out.Result.Failed) {
+					k.setFailed(id, n, out.RunID)
+				}
+			}
+			cleaned(stores, act, out, err, undo)
+		})
 }
 
 // drill opens the drill-down view of source, on the 开发者 tab when tab is set, revealing categoryID.
@@ -300,8 +355,9 @@ func unanswered(st app.OverviewState) bool { return !st.Loaded }
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
-	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
-		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
+	k := keptKey.Use(cx)
+	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), kept: k, choice: cleanflow.UseKept(cx),
+		ref: new(core.Ref), active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: k.more, focus: core.NewSignal(cx, ""),
 		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, cx.WallTime()),
 		reduce: cx.Env().ReduceMotion}
 	seen, _ := seenAuto.Load(p.ov)
@@ -318,6 +374,10 @@ func Page(cx *core.Scope) core.Node {
 	}
 	cx.AfterFunc(time.Minute, tick)
 
+	// Opening 概览 shows free space as it is now.
+	p.ov.ReadDisk()
+	// The menu's 重新检查 (⌘R) checks again as the header's does.
+	nav.UseCommands(cx, nav.Commands{Refresh: p.checkNow, Busy: func() bool { return p.checking() || p.cleaning() }})
 	// Opening 概览 checks again when what it shows may be outdated; a check opened this way is the foreground's, not held back by power or load. It decides once, on the controller's state: the store answers it after the page opens at launch.
 	decided := false
 	cx.Effect(func() {
@@ -406,12 +466,7 @@ func Page(cx *core.Scope) core.Node {
 		case viewProgress:
 			return core.Func(func(*core.Scope) core.Node {
 				return core.Group{
-					checkProgress(func() cleanup.Progress {
-						if pr := p.state().Progress; pr != nil {
-							return *pr
-						}
-						return cleanup.Progress{}
-					}, p.ov.StopCheck),
+					checkProgress(p.progress, p.ov.StopCheck),
 					checkRefused(p), diskRow(cx, p), statusCards{},
 				}
 			})
@@ -460,14 +515,33 @@ func Page(cx *core.Scope) core.Node {
 	}
 }
 
-// recheckButton is the header's 重新检查: 正在检查… while a check runs, disabled while a clean does.
+// recheckButton is the header's 重新检查: 正在检查… while the first check runs, 停止检查 while one runs over a result (which stays), disabled while a clean runs. It stays one button throughout, so the keyboard focus stays on it, and as 停止检查 it takes presses only stopArmed after it shows.
 func recheckButton(cx *core.Scope, p *page) core.Node {
 	cleaning := core.NewMemo(cx, p.cleaning)
+	over := core.NewMemo(cx, func() bool { return p.checking() && p.result() != nil })
+	armed := core.NewSignal(cx, false)
+	cx.Effect(func() {
+		armed.Set(false)
+		if over.Get() {
+			cx.AfterFunc(stopArmed, func() { armed.Set(true) })
+		}
+	})
+	press := func() {
+		switch {
+		case !over.GetUntracked():
+			p.checkNow()
+		case armed.GetUntracked():
+			p.ov.StopCheck()
+		}
+	}
 	return core.Dynamic(func(*core.Scope) core.Node {
-		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: p.checkNow, Busy: p.checking,
-			Disabled: cleaning.Get,
+		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: press, Disabled: cleaning.Get,
+			Busy: func() bool { return p.checking() && !over.Get() },
 			TextFunc: func() string {
-				if p.checking() {
+				switch {
+				case over.Get():
+					return "停止检查"
+				case p.checking():
 					return "正在检查…"
 				}
 				return "重新检查"
@@ -590,7 +664,50 @@ func figure(p *page) core.Node {
 					}}
 				}},
 			}},
+		core.Func(func(cx *core.Scope) core.Node { return cleanAllRow(cx, p) }),
 	}
+}
+
+// cleanAllRow is 全部清理 under the figure, while it does more than one card's button on a result that may be cleaned: one question with the plan, then one clean of every card's checked items but a command's (AllOf); while it runs, its progress and 停止 take its place.
+func cleanAllRow(cx *core.Scope, p *page) core.Node {
+	all := core.NewMemoFunc(cx, func() CleanAll { return AllOf(p.recs(), p.choice.Choice.Get(), p.scan()) }, nil)
+	bytes := core.NewMemo(cx, func() int64 { a := all.Get(); return cleanflow.SelectedTotals(a.Categories, a.Sel).Bytes })
+	action := core.NewMemo(cx, func() advice.Action {
+		a := all.Get()
+		return advice.ActionOf(p.scan(), cleanflow.Refs(a.Categories, a.Sel))
+	})
+	running := core.NewMemo(cx, func() bool { o, ok := p.ov.Running(); return ok && o.All })
+	offered := core.NewMemo(cx, func() bool { return len(all.Get().Cards) > 1 && p.actionable() && !p.checking() })
+	cleaning := core.NewMemo(cx, p.cleaning)
+	ask := p.asker(cx)
+	press := func() {
+		a := all.GetUntracked()
+		if len(a.Cards) == 0 {
+			return
+		}
+		d := cleanflow.CleanPlanDialog(a.Categories, a.Sel)
+		d.TestID = "all-confirm"
+		act := action.GetUntracked()
+		ask(d, func() { p.cleanAll(a, act) })
+	}
+	box := core.Style{Width: core.Pct(100), MaxWidth: core.Pt(420), AlignItems: core.AlignCenter, Margin: core.Edges{Top: 10}}
+	return core.Dynamic(func(*core.Scope) core.Node {
+		switch {
+		case running.Get():
+			return core.Func(func(*core.Scope) core.Node {
+				return core.View{Style: box, Children: []core.Node{core.View{Style: core.Style{AlignSelf: core.AlignStretch}, Children: []core.Node{
+					progressRow("clean-all", action.Get, bytes.Get, p.ov.CleanProgress, p.ov.StopClean)}}}}
+			})
+		case offered.Get():
+			b := kit.Button{Variant: kit.ButtonLight, Large: true, TestID: "clean-all", OnPress: press, Disabled: cleaning.Get,
+				TextFunc: func() string { return "全部清理 " + format.Bytes(bytes.Get()) + "…" }}
+			if cleaning.Get() {
+				b.Label, b.Tooltip = "正在清理另一项，完成后再试", "正在清理另一项，完成后再试"
+			}
+			return core.Func(func(*core.Scope) core.Node { return core.View{Style: box, Children: []core.Node{b}} })
+		}
+		return core.Func(func(*core.Scope) core.Node { return core.Group{} })
+	})
 }
 
 // checkedAt is the time line under the conclusion: when it was checked, that a check updates it, why a scheduled check waits, and that automatic rules are on.
@@ -615,7 +732,7 @@ func checkedAt(cx *core.Scope, p *page) core.Node {
 				if r == nil {
 					return ""
 				}
-				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.now.Get())
+				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.progress(), p.now.Get())
 			}},
 			core.Show{When: func() bool { return p.state().Waiting != "" && !p.checking() }, Then: func(*core.Scope) core.Node {
 				return core.Text{TestID: "check-waiting", StyleFunc: style, ContentFunc: func() string { return "· " + p.state().Waiting }}

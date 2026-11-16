@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/async"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
+	"spruce/apps/spruce/internal/ui/store"
 )
 
 // timeNow is the clock the items' ages count from.
@@ -24,7 +26,7 @@ const (
 	itemRowHeight     core.Points = 48
 )
 
-// CategoryList is the result list of the cleaner pages: a toolbar with the totals, 全选 and 全不选 (acting on these categories only), and one glass card per category with its tri-state checkbox, tile, size and warning, expanding to its items, each with a checkbox, its folder, age and size and a button that shows it in Finder or Explorer. Selection is controlled: OnChange receives the next one (see selection.go). Reveal shows a path in the file manager; its error shows in the toolbar.
+// CategoryList is the result list of the cleaner pages: a toolbar with the totals, 全选 and 全不选 (acting on these categories only), and one glass card per category with its tri-state checkbox, tile, size and warning, expanding to its items, each with a checkbox, its folder, age and size and a button that shows it in Finder or Explorer. Selection is controlled: OnChange receives the next one (see selection.go). Reveal shows a path in the file manager; its error shows as a short toast (RevealFailed).
 type CategoryList struct {
 	Categories func() []cleanup.Category
 	Selection  func() Selection
@@ -34,7 +36,10 @@ type CategoryList struct {
 	Reveal func(ctx context.Context, path string) error
 	// Disabled disables every checkbox and 全选/全不选, e.g. while a clean runs.
 	Disabled func() bool
-	// Expand is the category that starts expanded (a drill-down view opened on it, nav.Navigator.GoDrill), "" for none; Scroll, when set, receives its card once it is shown, for the page to scroll to it.
+	// Open reports whether a category's items show, by its ID, and OnOpen opens or closes them: the drill-down view keeps them (Drill.Open), so the list opens as it was left.
+	Open   func(id string) bool
+	OnOpen func(id string, open bool)
+	// Expand is the category the view was opened on (nav.Navigator.GoDrill), "" for none; Scroll, when set, receives its card once it is shown, for the page to scroll to it.
 	Expand string
 	Scroll func(card *core.Ref)
 	TestID string
@@ -42,23 +47,7 @@ type CategoryList struct {
 
 // Render implements core.Node.
 func (l CategoryList) Render(cx *core.Scope) core.Node {
-	ctx := cx.Context()
-	revealErr := core.NewSignal(cx, "")
-	seq := 0
-	reveal := func(path string) {
-		if l.Reveal == nil {
-			return
-		}
-		seq++
-		mine := seq
-		revealErr.Set("")
-		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, l.Reveal(ctx, path) }, func(_ struct{}, err error) {
-			if mine != seq || err == nil {
-				return
-			}
-			revealErr.Set(err.Error())
-		})
-	}
+	reveal := Revealer(cx, l.Reveal)
 	disabled := func() bool { return l.Disabled != nil && l.Disabled() }
 	summary := func() string {
 		cats := l.Categories()
@@ -66,7 +55,8 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 		for _, c := range cats {
 			total += c.Size
 		}
-		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total) + "，已选 " + strconv.Itoa(SelectedTotals(cats, l.Selection()).Count) + " 项"
+		// What is checked is the action bar's, pinned under the list.
+		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total)
 	}
 	toolbar := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 8, ColumnGap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{AutoMargin: core.SideRight}, Children: []core.Node{
@@ -75,7 +65,6 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 			OnPress: func() { l.OnChange(SelectAll(core.Untracked(cx, l.Categories))) }},
 		kit.Button{Text: "全不选", Variant: kit.ButtonLink, Disabled: disabled, TestID: "select-none",
 			OnPress: func() { l.OnChange(NothingSelected) }},
-		core.View{Style: core.Style{FlexBasis: core.Pct(100)}, Children: []core.Node{kit.ErrorLine{Text: revealErr.Get, TestID: "reveal-error"}}},
 	}}
 	cards := core.Each(l.Categories, func(c cleanup.Category) string { return c.ID }, func(cx *core.Scope, c func() cleanup.Category, index func() int) core.Node {
 		return categoryCard(cx, c, l, disabled, reveal, core.Untracked(cx, index))
@@ -93,17 +82,36 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 	return core.View{Role: core.RoleRegion, Label: l.Label, TestID: l.TestID, Style: core.Style{Gap: 12}, Children: []core.Node{toolbar, cards}}
 }
 
+// Revealer is reveal for the rows of a list made in cx, which tells why it failed as a short toast: the toolbar is often far from the row pressed, and the toast shows wherever the page is scrolled. A toast with 撤销 stays, and the failure shows once it goes (Toasts.ShowLater). nil reveal shows nothing.
+func Revealer(cx *core.Scope, reveal func(ctx context.Context, path string) error) func(path string) {
+	ctx, toasts := cx.Context(), store.Use(cx).Toasts
+	return func(path string) {
+		if reveal == nil {
+			return
+		}
+		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, reveal(ctx, path) }, func(_ struct{}, err error) {
+			if err != nil {
+				toasts.ShowLater(store.Toast{Text: err.Error(), Duration: errorToast})
+			}
+		})
+	}
+}
+
 // categoryCard is one category: its head and, once expanded, its items.
 func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string), index int) core.Node {
 	id := core.Untracked(cx, c).ID
-	expand := id == l.Expand && len(core.Untracked(cx, c).Items) > 0
-	open := core.NewSignal(cx, expand)
 	ref := new(core.Ref)
-	if expand && l.Scroll != nil {
+	if id == l.Expand && len(core.Untracked(cx, c).Items) > 0 && l.Scroll != nil {
 		cx.Effect(func() { cx.Untrack(func() { l.Scroll(ref) }) })
 	}
 	state := func() CheckState { return CategoryState(c(), l.Selection()) }
 	empty := func() bool { return len(c().Items) == 0 }
+	open := func() bool { return l.Open(id) && !empty() }
+	toggle := func() {
+		if !core.Untracked(cx, empty) {
+			l.OnOpen(id, !core.Untracked(cx, open))
+		}
+	}
 	// A category whose items are all held (Item.Hold) has nothing to check.
 	none := func() bool { return Selectable(c()) == 0 }
 	title := func() string { return c().Title }
@@ -120,33 +128,42 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 		}
 		return strconv.Itoa(len(cat.Items)) + " 项"
 	}
-	head := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(16, 18)}, Children: []core.Node{
-		kit.Checkbox{Label: core.Untracked(cx, title), TestID: "check-" + id,
-			Checked:       func() bool { return state() == CheckAll },
-			Indeterminate: func() bool { return state() == CheckSome },
-			Disabled:      func() bool { return disabled() || none() },
-			OnChange:      func(on bool) { l.OnChange(SetCategory(core.Untracked(cx, l.Selection), core.Untracked(cx, c), on)) }},
-		core.Dynamic(func(*core.Scope) core.Node {
-			icon := c().Icon
-			return core.Func(func(*core.Scope) core.Node { return kit.CategoryTile(icon) })
-		}),
-		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
-			kit.TextFunc(title, kit.FontCardTitle, kit.Semibold, kit.ColorText),
-			core.Text{ContentFunc: line, StyleFunc: func() core.Style {
-				color := kit.ColorTextMuted
-				if c().Warning != "" {
-					color = kit.ColorWarning
-				}
-				return core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: color}
+	// The whole head opens and closes the items, and looks it only when there are items to show; the chevron stays the control the keyboard reaches.
+	head := core.View{TestID: "head-" + id, NoFocus: true, OnPress: func(core.PressEvent) { toggle() },
+		StyleFunc: func() core.Style {
+			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(16, 18)}
+			if !empty() {
+				st.Cursor, st.Hover = core.CursorPointer, &core.Style{Background: kit.SurfaceRowHover}
+			}
+			return st
+		},
+		Children: []core.Node{
+			kit.Checkbox{Label: core.Untracked(cx, title), TestID: "check-" + id,
+				Checked:       func() bool { return state() == CheckAll },
+				Indeterminate: func() bool { return state() == CheckSome },
+				Disabled:      func() bool { return disabled() || none() },
+				OnChange:      func(on bool) { l.OnChange(SetCategory(core.Untracked(cx, l.Selection), core.Untracked(cx, c), on)) }},
+			core.Dynamic(func(*core.Scope) core.Node {
+				icon := c().Icon
+				return core.Func(func(*core.Scope) core.Node { return kit.CategoryTile(icon) })
+			}),
+			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
+				kit.TextFunc(title, kit.FontCardTitle, kit.Semibold, kit.ColorText),
+				core.Text{ContentFunc: line, StyleFunc: func() core.Style {
+					color := kit.ColorTextMuted
+					if c().Warning != "" {
+						color = kit.ColorWarning
+					}
+					return core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: color}
+				}},
 			}},
-		}},
-		core.View{Style: core.Style{AlignItems: core.AlignEnd, Gap: 2, FlexShrink: 0}, Children: []core.Node{
-			kit.Tabular(kit.TextFunc(func() string { return format.Bytes(c().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
-			kit.Tabular(kit.TextFunc(count, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
-		}},
-		expandButton(id, title, open, empty),
-	}}
-	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
+			core.View{Style: core.Style{AlignItems: core.AlignEnd, Gap: 2, FlexShrink: 0}, Children: []core.Node{
+				kit.Tabular(kit.TextFunc(func() string { return format.Bytes(c().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
+				kit.Tabular(kit.TextFunc(count, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
+			}},
+			expandButton(id, title, open, toggle, empty),
+		}}
+	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
 		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{itemList(cx, c, l, disabled, reveal)}}
 	}}
 	// The cards come in one after another as the view shows them.
@@ -155,11 +172,11 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 	}}
 }
 
-// expandButton opens and closes a category's items (.icon-button.category-expand).
-func expandButton(id string, title func() string, open *core.Signal[bool], empty func() bool) core.Node {
-	return core.View{Role: core.RoleButton, TestID: "expand-" + id, Disabled: empty, Expandable: func() bool { return true }, Expanded: open.Get,
+// expandButton opens and closes a category's items (.icon-button.category-expand): open reports whether they show, toggle opens or closes them.
+func expandButton(id string, title func() string, open func() bool, toggle func(), empty func() bool) core.Node {
+	return core.View{Role: core.RoleButton, TestID: "expand-" + id, Disabled: empty, Expandable: func() bool { return true }, Expanded: open,
 		LabelFunc: func() string {
-			if open.Get() {
+			if open() {
 				return "收起" + title()
 			}
 			return "展开" + title()
@@ -169,12 +186,8 @@ func expandButton(id string, title func() string, open *core.Signal[bool], empty
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
 			Hover:        &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText},
 			Disabled:     &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault}},
-		OnPress: func(core.PressEvent) {
-			if !empty() {
-				open.Set(!open.GetUntracked())
-			}
-		},
-		Children: []core.Node{kit.Chevron{Open: open.Get}},
+		OnPress:  func(core.PressEvent) { toggle() },
+		Children: []core.Node{kit.Chevron{Open: open}},
 	}
 }
 
@@ -182,16 +195,34 @@ func expandButton(id string, title func() string, open *core.Signal[bool], empty
 func itemList(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string)) core.Node {
 	cat := core.Untracked(cx, c)
 	st := core.Style{Padding: core.Symmetric(4, 0), Background: kit.SurfaceList, Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}
+	// anchor is the item the user checked or unchecked last, and how: a Shift-press gives the rows from it to the one pressed the same.
+	anchor, anchorOn := "", false
+	current := func() (cleanup.Category, bool) {
+		for _, c := range l.Categories() {
+			if c.ID == cat.ID {
+				return c, true
+			}
+		}
+		return cleanup.Category{}, false
+	}
 	row := func(it cleanup.Item) core.Node {
 		return ItemRow{Item: it, Disabled: disabled, Reveal: reveal,
 			Checked: func() bool { return l.Selection().Has(cat.ID, it.ID) },
 			OnChange: func(on bool) {
-				for _, c := range l.Categories() {
-					if c.ID == cat.ID {
-						l.OnChange(SetItem(l.Selection(), c, it.ID, on))
-						return
-					}
+				if c, ok := current(); ok {
+					anchor, anchorOn = it.ID, on
+					l.OnChange(SetItem(l.Selection(), c, it.ID, on))
 				}
+			},
+			OnRange: func() {
+				c, ok := current()
+				if !ok {
+					return
+				}
+				if anchor == "" {
+					anchor, anchorOn = it.ID, !l.Selection().Has(cat.ID, it.ID)
+				}
+				l.OnChange(SetItems(l.Selection(), c, Between(c.Items, anchor, it.ID), anchorOn))
 			}}
 	}
 	if len(cat.Items) <= scrollItemsAfter {
@@ -213,18 +244,46 @@ func itemList(cx *core.Scope, c func() cleanup.Category, l CategoryList, disable
 		}}
 }
 
-// ItemRow is one item of a list: its checkbox, name, folder (and note), age, size and 在访达中显示. Checked and OnChange are its checkbox; Disabled disables it (nil for never), and a held item (Item.Hold) is always disabled, with the reason as the checkbox's tooltip; Reveal shows the item in Finder or Explorer (nil shows nothing). 概览's cards and the drill-down views list items with it.
+// ItemRow is one item of a list: its checkbox, name, folder (and note, the whole path as its tooltip), age, size and 在访达中显示. Checked and OnChange are its checkbox, which a press anywhere on the row toggles too, and its context menu offers with 在访达中显示 and 拷贝路径; Disabled disables it (nil for never), and a held item (Item.Hold) is always disabled, with the reason as the checkbox's tooltip; Reveal shows the item in Finder or Explorer (nil shows nothing). OnRange, when set, takes a Shift-press on the row or its checkbox, for the list to check or uncheck a range up to it. 概览's cards and the drill-down views list items with it.
 type ItemRow struct {
 	Item     cleanup.Item
 	Checked  func() bool
 	OnChange func(on bool)
+	OnRange  func()
 	Disabled func() bool
 	Reveal   func(path string)
 }
 
 // Render implements core.Node.
-func (r ItemRow) Render(*core.Scope) core.Node {
+func (r ItemRow) Render(cx *core.Scope) core.Node {
 	it := r.Item
+	// can reports whether the row's checkbox may change now.
+	can := func() bool { return it.Hold == "" && (r.Disabled == nil || !r.Disabled()) }
+	reveal := func() {
+		if r.Reveal != nil {
+			r.Reveal(it.Path)
+		}
+	}
+	press := func(e core.PressEvent) {
+		switch {
+		case !core.Untracked(cx, can):
+		case e.Modifiers.Shift && r.OnRange != nil:
+			r.OnRange()
+		default:
+			r.OnChange(!core.Untracked(cx, r.Checked))
+		}
+	}
+	menu := kit.RowMenu(cx, func() []desktop.MenuItem {
+		items := []desktop.MenuItem{kit.RevealItem(format.FileManagerName(), reveal), kit.CopyPathItem(cx, it.Path)}
+		if !core.Untracked(cx, can) {
+			return items
+		}
+		label, on := "勾选", true
+		if core.Untracked(cx, r.Checked) {
+			label, on = "取消勾选", false
+		}
+		return append(items, desktop.MenuItem{Separator: true}, desktop.MenuItem{Label: label, OnSelect: func() { r.OnChange(on) }})
+	})
 	name := format.BaseName(it.Path)
 	where := []string{}
 	if p := format.TruncateMiddle(format.ParentPath(it.Path), 72); p != "" {
@@ -237,7 +296,7 @@ func (r ItemRow) Render(*core.Scope) core.Node {
 		t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
 		return t
 	}
-	var check core.Node = kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: r.Disabled, Checked: r.Checked, OnChange: r.OnChange}
+	var check core.Node = kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: r.Disabled, Checked: r.Checked, OnChange: r.OnChange, OnShift: r.OnRange}
 	if it.Hold != "" {
 		check = core.View{Tooltip: kit.Tooltip(it.Hold), Style: core.Style{FlexShrink: 0}, Children: []core.Node{
 			kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: func() bool { return true }, Checked: r.Checked, OnChange: r.OnChange},
@@ -245,7 +304,7 @@ func (r ItemRow) Render(*core.Scope) core.Node {
 	}
 	children := []core.Node{
 		check,
-		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+		core.View{Tooltip: kit.Tooltip(it.Path), Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
 			ellipsis(kit.Text(name, kit.FontBody, kit.Regular, kit.ColorText)),
 			ellipsis(kit.Text(strings.Join(where, " · "), kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
 		}},
@@ -256,12 +315,12 @@ func (r ItemRow) Render(*core.Scope) core.Node {
 	size := kit.Tabular(kit.Text(format.Bytes(it.Size), kit.FontBody, kit.Regular, kit.ColorText))
 	size.Style.MinWidth, size.Style.TextAlign = core.Pt(64), core.TextAlignRight
 	children = append(children, size,
-		kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + name, TestID: "reveal-" + it.ID,
-			OnPress: func() {
-				if r.Reveal != nil {
-					r.Reveal(it.Path)
-				}
-			}})
-	return core.View{TestID: "row-" + it.ID, Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Height: core.Pt(itemRowHeight),
-		Padding: core.Symmetric(0, 18), Hover: &core.Style{Background: kit.SurfaceRowHover}}, Children: children}
+		kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + name, TestID: "reveal-" + it.ID, OnPress: reveal})
+	st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Height: core.Pt(itemRowHeight), Padding: core.Symmetric(0, 18),
+		Hover: &core.Style{Background: kit.SurfaceRowHover}}
+	if it.Hold == "" {
+		st.Cursor = core.CursorPointer
+	}
+	// The checkbox stays the control the keyboard reaches.
+	return core.View{TestID: "row-" + it.ID, NoFocus: true, OnPress: press, OnContextMenu: menu, Style: st, Children: children}
 }

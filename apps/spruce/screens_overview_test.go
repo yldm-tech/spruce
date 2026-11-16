@@ -81,6 +81,34 @@ func overviewState(res cleanup.ScanResult) app.OverviewState {
 }
 
 // overviewApp opens the shell on 概览 with ov as its controller.
+// scrollToTop brings the scroll view selector names (the one around the match, else the first scrolled view in it) back to its top. nsgotest's Scroll fails a step that cannot move, and a headless run often has the view at the top already where a macOS run has it scrolled. Only a scroll view has a content size or an offset.
+func scrollToTop(a *nsgotest.App, selector string) {
+	var scrolled func(v *nsgotest.View) *nsgotest.View
+	scrolled = func(v *nsgotest.View) *nsgotest.View {
+		if v.Offset.Y > 0.5 {
+			return v
+		}
+		for _, c := range v.Children {
+			if s := scrolled(c); s != nil {
+				return s
+			}
+		}
+		return nil
+	}
+	m := a.Find(selector)
+	v := scrolled(m)
+	// Scroll takes the scroll view around the match before one in it.
+	for p := m.Parent; p != nil; p = p.Parent {
+		if p.Content.Height > 0 {
+			v = p
+			break
+		}
+	}
+	if v != nil && v.Offset.Y > 0.5 {
+		a.Scroll(selector, -v.Offset.Y)
+	}
+}
+
 func overviewApp(t *testing.T, ov *storefake.Overview, permission maintenance.PermissionState) *nsgotest.App {
 	t.Helper()
 	fakes := storefake.New(t.TempDir())
@@ -116,8 +144,10 @@ func TestScreensOverview(t *testing.T) {
 	cached := overviewState(res)
 	cached.Phase, cached.Result.FromCache, cached.Result.Actionable = app.OverviewChecking, true, false
 	cached.Result.CheckedAt = time.Now().Add(-3 * time.Hour)
+	cached.Progress = &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 62, Total: 100}
 	ov.Set(cached)
 	a.WaitFor("id:rec-app-caches-act >> text:正在核对…", wait)
+	a.WaitFor("id:recheck >> text:停止检查", wait)
 	a.Screenshot("overview-cached-updating")
 
 	// C: ready, and a card expanded.
@@ -126,7 +156,7 @@ func TestScreensOverview(t *testing.T) {
 	a.WaitFor("id:rec-app-caches-act >> text:删除…", wait)
 	a.WaitFor("id:growth-row-0", wait)
 	a.Screenshot("overview-ready")
-	a.Press("id:rec-app-caches-expand")
+	a.Press("id:rec-app-caches-head")
 	a.WaitFor("id:rec-app-caches-items", wait)
 	a.Scroll("id:overview-page", 240)
 	a.Screenshot("overview-expanded")
@@ -173,12 +203,42 @@ func TestScreensOverview(t *testing.T) {
 	a.Press("id:toast-close")
 	a.WaitForGone("id:toast", wait)
 
+	// 全部清理: one question with the plan, then its progress in its place; what it could not handle stays with the card it is of.
+	allRelease := make(chan struct{})
+	cards := ov.OnClean
+	ov.OnClean = func(ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		if !origin.All {
+			return cards(ctx, req, origin, progress)
+		}
+		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: 4, Total: len(req.ItemIDs), Bytes: 3_210_000_000})
+		select {
+		case <-allRelease:
+		case <-ctx.Done():
+		}
+		spotify := cleanup.ItemID("/Users/me/Library/Caches/com.spotify.client-00")
+		return app.OverviewOutcome{RunID: "run-all", Undoable: true, Result: cleanup.CleanResult{Freed: 5_650_000_000, Trashed: 2_442_000_000, Removed: len(req.ItemIDs) - 1,
+			Failed: []cleanup.Failure{{CategoryID: "system-junk:app-caches", ItemID: spotify, Reason: "没有权限"}}}}, nil
+	}
+	scrollToTop(a, "id:overview-page")
+	a.Press("id:clean-all")
+	a.WaitFor("id:all-confirm", wait)
+	a.Screenshot("overview-clean-all-confirm")
+	a.Press("id:confirm-ok")
+	a.WaitFor("id:clean-all-progress", wait)
+	a.Screenshot("overview-clean-all")
+	close(allRelease)
+	a.WaitFor("id:toast", wait)
+	a.Press("id:toast-close")
+	a.WaitForGone("id:toast", wait)
+	a.WaitFor("id:rec-app-caches-failed-view", wait)
+	a.Screenshot("overview-left-items")
+
 	// D: outdated.
 	stale := overviewState(res)
 	stale.Result.Stale, stale.Result.Actionable = true, false
 	stale.Result.CheckedAt = time.Now().Add(-30 * time.Hour)
 	ov.Set(stale)
-	a.WaitFor("id:rec-app-caches-act >> text:重新检查后才能清理", wait)
+	a.WaitFor("id:rec-app-caches-act >> text:重新检查", wait)
 	a.Screenshot("overview-stale")
 
 	// The folders a background check skipped, and a scheduled check waiting for power.

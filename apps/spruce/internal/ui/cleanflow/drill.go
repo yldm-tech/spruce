@@ -33,12 +33,12 @@ func NeedsConfirm(plan Plan, canUndo bool) bool {
 	return len(plan.Permanent) > 0 || len(plan.Commands) > 0 || !canUndo
 }
 
-// Drill is a drill-down view's controller: the categories of its source in 概览's latest check (advice.Drill), the view's own selection of their items, the clean it runs through store.Overview, its confirmation and its toast. The view never scans; a check is 概览's controller's, which the view starts only when opened on a result it may not act on. Make it in the view's component (NewDrill), whose scope stops its clean (after the current item) when the view goes; its methods run on the engine goroutine.
+// Drill is a drill-down view's controller: the categories of its source in 概览's latest check (advice.Drill), what is checked among their items (the app's Choice, which 概览's cards share), the clean it runs through store.Overview, its confirmation and its toast. The view never scans; a check is 概览's controller's, which the view starts only when opened on a result it may not act on. Make it in the view's component (NewDrill), whose scope stops its clean (after the current item) when the view goes; its methods run on the engine goroutine.
 type Drill struct {
 	// Source is the merged scan's source, e.g. "system-junk".
 	Source string
-	// Selection is what is checked among the source's items, by merged category ID. It starts from the check's defaults and follows newer checks: untouched it takes their defaults, once the user changed it it keeps what is still there.
-	Selection *core.Signal[Selection]
+	// Selection is what is checked, by merged category ID: the app's Choice (Kept), which 概览's cards share and which follows newer checks. Change changes it for the source.
+	Selection *core.Memo[Selection]
 	// Progress is the latest event of the view's clean; Sub the line under the cleaning overlay's title.
 	Progress *core.Signal[cleanup.Progress]
 	Sub      *core.Signal[string]
@@ -55,34 +55,46 @@ type Drill struct {
 	ctx      context.Context
 	stores   *store.Stores
 	ov       *store.Overview
+	kept     *Kept
 	toast    Toaster
 	cats     *core.Memo[[]cleanup.Category]
 	cleaning *core.Signal[bool]
+	// settling is set from the view's own clean ending until the controller says its clean has ended too: the two come on separate goroutines, and meanwhile the controller's OverviewCleaning is the view's clean, not another (BusyElsewhere).
+	settling *core.Signal[bool]
 	// reading is set while the Trash is measured for the confirmation of a clean that empties it.
 	reading *core.Signal[bool]
 	// undoShown reports whether the toast offers 撤销, which emptying the Trash would make fail.
 	undoShown *core.Memo[bool]
 	cancel    context.CancelFunc
 	seq       int
-	touched   bool
 }
 
-// NewDrill makes the controller of the drill-down view of source in cx, the view's scope; toast words its toasts. It takes the category to reveal from the navigator, and starts a foreground check when 概览's controller first answers with no result or one that may not be acted on, as 概览 does when it opens.
+// NewDrill makes the controller of the drill-down view of source in cx, the view's scope; toast words its toasts. It takes the category to reveal from the navigator, which opens, and starts a foreground check when 概览's controller first answers with no result or one that may not be acted on, as 概览 does when it opens.
 func NewDrill(cx *core.Scope, source string, toast Toaster) *Drill {
 	stores := store.Use(cx)
-	d := &Drill{Source: source, cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, toast: toast,
-		Selection: core.NewSignalFunc(cx, NothingSelected, nil),
+	kept := UseKept(cx)
+	d := &Drill{Source: source, cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, kept: kept, toast: toast,
+		Selection: core.NewMemoFunc(cx, func() Selection { return kept.Choice.Get().Sel }, nil),
 		Progress:  core.NewSignalFunc(cx, cleanup.Progress{}, nil),
 		Sub:       core.NewSignal(cx, ""),
 		Dialog:    core.NewSignal[*kit.ConfirmDialog](cx, nil),
 		CheckErr:  core.NewSignal(cx, ""),
 		Page:      new(core.Ref),
 		cleaning:  core.NewSignal(cx, false),
+		settling:  core.NewSignal(cx, false),
 		reading:   core.NewSignal(cx, false),
 	}
 	d.undoShown = core.NewMemo(cx, func() bool { t := stores.Toasts.Current(); return t != nil && t.UndoRun != "" })
+	cx.Effect(func() {
+		if d.State().Phase != app.OverviewCleaning {
+			cx.Untrack(func() { d.settling.Set(false) })
+		}
+	})
 	if n := nav.Use(cx); n != nil {
 		d.Reveal = n.TakeReveal()
+	}
+	if d.Reveal != "" {
+		kept.SetOpen(d.Reveal, true)
 	}
 	d.cats = core.NewMemoFunc(cx, func() []cleanup.Category {
 		if r := d.Result(); r != nil {
@@ -90,17 +102,8 @@ func NewDrill(cx *core.Scope, source string, toast Toaster) *Drill {
 		}
 		return nil
 	}, nil)
-	// The selection follows each newer result.
-	cx.Effect(func() {
-		cats := d.cats.Get()
-		cx.Untrack(func() {
-			if d.touched {
-				d.Selection.Set(Reconcile(d.Selection.GetUntracked(), cats))
-			} else {
-				d.Selection.Set(DefaultSelection(cats))
-			}
-		})
-	})
+	// The menu's 重新检查 (⌘R) checks again from the view, as its header's does.
+	nav.UseCommands(cx, nav.Commands{Refresh: d.CheckNow, Busy: func() bool { return d.Checking() || d.Busy() }})
 	decided := false
 	cx.Effect(func() {
 		st := d.State()
@@ -175,6 +178,12 @@ func (d *Drill) Cleaning() bool { return d.cleaning.Get() }
 func (d *Drill) Busy() bool {
 	return d.cleaning.Get() || d.ov.Busy() || d.State().Phase == app.OverviewCleaning
 }
+
+// BusyElsewhere reports whether a clean or an 撤销 runs that is not the view's own: 清理 waits for it (BusyText).
+func (d *Drill) BusyElsewhere() bool { return d.Busy() && !d.Cleaning() && !d.settling.Get() }
+
+// BusyText is why 清理 waits while BusyElsewhere.
+const BusyText = "正在清理其他项目…"
 
 // CanClean reports whether 清理 may act on a selection of count items: a result to act on, no check and no clean running, the Trash not being measured, and no Trash checked while the toast offers 撤销 (TrashWait).
 func (d *Drill) CanClean(count int) bool {
@@ -253,11 +262,18 @@ func withTrashLine(q kit.ConfirmDialog, line string) kit.ConfirmDialog {
 	return q
 }
 
-// Change replaces what is checked; from now on newer results keep what is still there.
+// Change replaces what is checked among the source's categories with sel's checks of them, leaving other sources' as they are; from now on newer results keep what is still there in the source.
 func (d *Drill) Change(sel Selection) {
-	d.touched = true
-	d.Selection.Set(sel)
+	cats := d.cats.GetUntracked()
+	ch := d.kept.Choice.GetUntracked()
+	d.kept.Choice.Set(ch.Change(WithinGroup(ch.Sel, cats, sel), cats, d.Source))
 }
+
+// Open reports whether the row key of the view's lists (a category ID or a ProjectKey) is open, as the user left it; reading it subscribes.
+func (d *Drill) Open(key string) bool { return d.kept.Open(key) }
+
+// SetOpen opens or closes the row key.
+func (d *Drill) SetOpen(key string, on bool) { d.kept.SetOpen(key, on) }
 
 // CheckNow starts a foreground check; a refusal shows in the status row.
 func (d *Drill) CheckNow() {
@@ -350,6 +366,7 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 		}
 		d.cancel = nil
 		d.cx.Batch(func() {
+			d.settling.Set(core.Untracked(d.cx, d.State).Phase == app.OverviewCleaning)
 			d.cleaning.Set(false)
 			d.Progress.Set(cleanup.Progress{})
 		})

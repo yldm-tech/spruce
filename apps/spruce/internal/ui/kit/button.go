@@ -147,7 +147,7 @@ type RunButton struct {
 	Ref      *core.Ref
 	TestID   string
 	Label    string
-	// Tooltip shows on hover, as a View's.
+	// Tooltip shows on hover, as a View's, e.g. why the button is disabled.
 	Tooltip core.Node
 }
 

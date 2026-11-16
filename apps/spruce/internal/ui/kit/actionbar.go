@@ -15,6 +15,8 @@ type ActionButton struct {
 	Ref      *core.Ref
 	TestID   string
 	Tooltip  core.Node
+	// Why, when set, says why the button is disabled: its tooltip (over Tooltip), and its name for assistive technology.
+	Why string
 }
 
 // ActionBar is the bottom of a page: the round action button between two figures, as on the 维护 page. It sits at the bottom of the page's column (its top margin takes the free space).
@@ -25,13 +27,17 @@ type ActionBar struct {
 
 // Render implements core.Node.
 func (a ActionBar) Render(*core.Scope) core.Node {
+	tip := a.Button.Tooltip
+	if a.Button.Why != "" {
+		tip = Tooltip(a.Button.Why)
+	}
 	return core.View{
 		Style: core.Style{AutoMargin: core.SideTop, Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, Gap: 28, Padding: core.Edges{Top: 18}},
 		Children: []core.Node{
 			statView(a.Start, true),
 			RunButton{Text: a.Button.Label, OnPress: a.Button.OnPress, Disabled: a.Button.Disabled, Ref: a.Button.Ref, TestID: a.Button.TestID,
-				Tooltip: a.Button.Tooltip},
+				Label: a.Button.Why, Tooltip: tip},
 			statView(a.End, false),
 		},
 	}

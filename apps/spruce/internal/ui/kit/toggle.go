@@ -43,12 +43,31 @@ func (s Switch) Render(*core.Scope) core.Node {
 type Checkbox struct {
 	Checked, Indeterminate, Disabled func() bool
 	OnChange                         func(bool)
-	Label                            string
-	TestID                           string
+	// OnShift, when set, takes a Shift-press instead of OnChange: a list checks or unchecks a range up to the checkbox.
+	OnShift func()
+	Label   string
+	TestID  string
 }
 
 // Render implements core.Node.
-func (c Checkbox) Render(*core.Scope) core.Node {
+func (c Checkbox) Render(cx *core.Scope) core.Node {
+	v := c.checkbox().Render(cx).(core.View)
+	if c.OnShift != nil {
+		// base.Checkbox hands OnChange only the value a press asks for, not the press, so its view's OnPress is wrapped to see Shift (NSGo issue pending).
+		change := v.OnPress
+		v.OnPress = func(e core.PressEvent) {
+			if e.Modifiers.Shift {
+				c.OnShift()
+				return
+			}
+			change(e)
+		}
+	}
+	return v
+}
+
+// checkbox is the base.Checkbox c draws.
+func (c Checkbox) checkbox() base.Checkbox {
 	on := &core.Style{Background: CheckboxOn, BorderColor: CheckboxOn}
 	mark := core.Dynamic(func(cx *core.Scope) core.Node {
 		name := "check"

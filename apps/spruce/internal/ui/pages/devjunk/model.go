@@ -2,6 +2,7 @@ package devjunk
 
 import (
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -147,6 +148,24 @@ func FilterProjects(projects []engdev.Project, f ProjectFilter, days int, now ti
 	return out
 }
 
+// ProjectSort is the order of the 项目 tab.
+type ProjectSort string
+
+const (
+	SortSize   ProjectSort = "size"
+	SortActive ProjectSort = "active"
+)
+
+// SortProjects orders projects (largest first, as the check groups them) by s: as they are for SortSize, by last activity, most recent first, for SortActive, a project whose activity is unknown last and ties kept largest first.
+func SortProjects(projects []engdev.Project, s ProjectSort) []engdev.Project {
+	if s != SortActive {
+		return projects
+	}
+	out := slices.Clone(projects)
+	slices.SortStableFunc(out, func(a, b engdev.Project) int { return b.LastActive.Compare(a.LastActive) })
+	return out
+}
+
 // GitLabel is a project row's Git status: nothing for a clean project, a warning badge for uncommitted changes, otherwise a quiet line.
 type GitLabel struct {
 	Text  string
@@ -181,21 +200,38 @@ func HoldTip(p engdev.Project) string {
 
 // ProjectItems are the build output items of p in categories (a merged scan's), in p's order, each with its category; items no longer there are left out.
 func ProjectItems(p engdev.Project, categories []cleanup.Category) []ProjectArtifact {
-	byID := make(map[string]*cleanup.Category, len(categories))
-	for i := range categories {
-		byID[categories[i].ID] = &categories[i]
+	return artifactIndex(categories).of(p)
+}
+
+// ArtifactsByProject is ProjectItems of each of projects, by project ID, from one look through categories: what the 项目 rows read, so each row's state takes only its own project's items.
+func ArtifactsByProject(projects []engdev.Project, categories []cleanup.Category) map[string][]ProjectArtifact {
+	idx := artifactIndex(categories)
+	out := make(map[string][]ProjectArtifact, len(projects))
+	for _, p := range projects {
+		out[p.ID] = idx.of(p)
 	}
+	return out
+}
+
+// artifacts is categories' items by category ID and item ID, with their category.
+type artifacts map[[2]string]ProjectArtifact
+
+func artifactIndex(categories []cleanup.Category) artifacts {
+	idx := artifacts{}
+	for _, c := range categories {
+		for _, it := range c.Items {
+			idx[[2]string{c.ID, it.ID}] = ProjectArtifact{Category: c, Item: it}
+		}
+	}
+	return idx
+}
+
+// of are p's items in idx, in p's order.
+func (idx artifacts) of(p engdev.Project) []ProjectArtifact {
 	var out []ProjectArtifact
 	for _, ref := range p.Items {
-		c := byID[ref.CategoryID]
-		if c == nil {
-			continue
-		}
-		for _, it := range c.Items {
-			if it.ID == ref.ItemID {
-				out = append(out, ProjectArtifact{Category: *c, Item: it})
-				break
-			}
+		if a, ok := idx[[2]string{ref.CategoryID, ref.ItemID}]; ok {
+			out = append(out, a)
 		}
 	}
 	return out
@@ -207,10 +243,10 @@ type ProjectArtifact struct {
 	Item     cleanup.Item
 }
 
-// ProjectState is how much of p's build output that may be checked is checked; a project with nothing that may be is CheckNone.
-func ProjectState(p engdev.Project, categories []cleanup.Category, sel cleanflow.Selection) cleanflow.CheckState {
+// ProjectState is how much of a project's build output arts (ProjectItems) that may be checked is checked; a project with nothing that may be is CheckNone.
+func ProjectState(arts []ProjectArtifact, sel cleanflow.Selection) cleanflow.CheckState {
 	n, all := 0, 0
-	for _, a := range ProjectItems(p, categories) {
+	for _, a := range arts {
 		if a.Item.Hold != "" {
 			continue
 		}
@@ -228,12 +264,12 @@ func ProjectState(p engdev.Project, categories []cleanup.Category, sel cleanflow
 	return cleanflow.CheckSome
 }
 
-// Checkable reports whether any of p's build output may be checked.
-func Checkable(p engdev.Project, categories []cleanup.Category) bool {
+// Checkable reports whether any of p's build output arts (ProjectItems) may be checked.
+func Checkable(p engdev.Project, arts []ProjectArtifact) bool {
 	if p.Hold != "" {
 		return false
 	}
-	for _, a := range ProjectItems(p, categories) {
+	for _, a := range arts {
 		if a.Item.Hold == "" {
 			return true
 		}
@@ -252,6 +288,61 @@ func SetProjects(sel cleanflow.Selection, projects []engdev.Project, categories 
 		}
 	}
 	return sel
+}
+
+// ArtifactsOf is categories with only the build output of projects, in scan order, leaving out categories with none: what the 项目 tab shows under its filter, so its totals and its clean never reach a project the filter hides.
+func ArtifactsOf(projects []engdev.Project, categories []cleanup.Category) []cleanup.Category {
+	refs := map[string]map[string]bool{}
+	for _, p := range projects {
+		for _, ref := range p.Items {
+			if refs[ref.CategoryID] == nil {
+				refs[ref.CategoryID] = map[string]bool{}
+			}
+			refs[ref.CategoryID][ref.ItemID] = true
+		}
+	}
+	var out []cleanup.Category
+	for _, c := range categories {
+		ids := refs[c.ID]
+		if len(ids) == 0 {
+			continue
+		}
+		cat := c
+		cat.Items, cat.Size = nil, 0
+		for _, it := range c.Items {
+			if ids[it.ID] {
+				cat.Items = append(cat.Items, it)
+				cat.Size += it.Size
+			}
+		}
+		if len(cat.Items) > 0 {
+			out = append(out, cat)
+		}
+	}
+	return out
+}
+
+// shownNames is how many projects the confirmation names before 等.
+const shownNames = 5
+
+// ProjectNames names the projects with any build output checked, for the confirmation: 项目：shop、blog, past shownNames 项目：a、b、c、d、e 等 7 个; "" for none.
+func ProjectNames(projects []engdev.Project, sel cleanflow.Selection) string {
+	var names []string
+	for _, p := range projects {
+		for _, ref := range p.Items {
+			if sel.Has(ref.CategoryID, ref.ItemID) {
+				names = append(names, filepath.Base(p.Path))
+				break
+			}
+		}
+	}
+	switch {
+	case len(names) == 0:
+		return ""
+	case len(names) > shownNames:
+		return "项目：" + strings.Join(names[:shownNames], "、") + " 等 " + strconv.Itoa(len(names)) + " 个"
+	}
+	return "项目：" + strings.Join(names, "、")
 }
 
 // SelectedProjects counts the projects with any build output checked.

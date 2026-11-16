@@ -96,6 +96,16 @@ func TestScreensSystemJunk(t *testing.T) {
 	a.Press("id:confirm-cancel")
 	a.WaitForGone("id:confirm", wait)
 
+	// A clean elsewhere holds 清理, and the view says so.
+	busy := drillState("system-junk", junkCategories()...)
+	busy.Phase = app.OverviewCleaning
+	ov.Set(busy)
+	a.WaitFor("id:drill-busy", wait)
+	a.Press("id:expand-system-junk:app-caches")
+	a.WaitForGone("id:items-system-junk:app-caches", wait)
+	scrollToTop(a, "id:drill-system-junk")
+	a.Screenshot("system-junk-busy")
+
 	// A source that failed and found nothing is not called clean.
 	failed := drillState("system-junk")
 	failed.Result.Scan.Sources[0] = cleanup.SourceState{ID: "system-junk", Status: cleanup.SourceFailed, Error: "读取超时"}
