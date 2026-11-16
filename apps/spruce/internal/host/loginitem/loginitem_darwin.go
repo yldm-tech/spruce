@@ -116,7 +116,7 @@ func (it *Item) SetOpenAtLogin(open bool) error {
 			return
 		}
 		if open && objc.Send[int](svc, selStatus) == smRequiresApproval {
-			err = errors.New("loginitem: allow Spruce to open at login in System Settings > General > Login Items")
+			err = ErrNeedsApproval
 		}
 	})
 	return err

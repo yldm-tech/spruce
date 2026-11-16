@@ -10,6 +10,7 @@ import (
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/settings"
 	"spruce/apps/spruce/internal/engine/undo"
+	"spruce/apps/spruce/internal/host/loginitem"
 )
 
 // LoginItem starts the app at login; internal/host/loginitem implements it.
@@ -85,12 +86,18 @@ func (s *Settings) Get() settings.AppSettings {
 	return v
 }
 
-// Update stores next after clamping it to the allowed ranges (see the settings package) and returns what was stored, which the page shows instead of what it sent. settings.Store then announces the change to its subscribers.
+// ErrLoginNeedsApproval is what Update fails with when macOS registered Spruce to open at login but waits for the user to allow it in System Settings; the 设置 page then offers to open Login Items.
+var ErrLoginNeedsApproval = errors.New("需要在系统设置 → 通用 → 登录项中允许 Spruce")
+
+// Update stores next after clamping it to the allowed ranges (see the settings package) and returns what was stored, which the page shows instead of what it sent. settings.Store then announces the change to its subscribers. When 登录时启动 cannot change, nothing of next is stored: ErrLoginNeedsApproval when macOS waits for the user's approval, else a sentence to show.
 func (s *Settings) Update(next settings.AppSettings) (settings.AppSettings, error) {
 	if next.General.LaunchAtLogin != s.login.OpenAtLogin() {
 		if err := s.login.SetOpenAtLogin(next.General.LaunchAtLogin); err != nil {
 			s.log.Warn("set open at login", "open", next.General.LaunchAtLogin, "err", err)
-			return s.Get(), errors.New("无法更改「登录时启动」，其他设置没有保存")
+			if errors.Is(err, loginitem.ErrNeedsApproval) {
+				return s.Get(), ErrLoginNeedsApproval
+			}
+			return s.Get(), errors.New("无法更改「登录时启动」")
 		}
 	}
 	if _, err := s.store.Set(next); err != nil {

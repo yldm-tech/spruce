@@ -91,20 +91,27 @@ type switchSetting struct {
 	Below []core.Node
 	// OnTurnOn runs as the user turns the switch on, in the same action: asking for a permission the setting needs belongs there.
 	OnTurnOn func()
-	TestID   string
+	// Fix, when set, is shown left of the switch, given the error the last save failed with (nil after a save that did not): a way out of an error it knows, such as 打开登录项.
+	Fix    func(failure func() error) core.Node
+	TestID string
 }
 
 // Render implements core.Node.
 func (c switchSetting) Render(cx *core.Scope) core.Node {
-	s := newSetting(cx, store.Use(cx).Settings, c.Field, 0, equalBool, func(v bool) string { return "已调整为 " + strconv.FormatBool(v) })
+	s := newSetting(cx, store.Use(cx).Settings, c.Field, 0, equalBool, func(v bool) string { return "已调整为" + OnOff(v) })
 	change := func(v bool) {
 		s.change(v)
 		if v && c.OnTurnOn != nil {
 			c.OnTurnOn()
 		}
 	}
+	var control []core.Node
+	if c.Fix != nil {
+		control = append(control, c.Fix(s.failure.Get))
+	}
+	control = append(control, kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: change})
 	return row{Label: c.Label, Description: c.Description, DescriptionFunc: c.DescriptionFunc, Below: c.Below, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
-		Control: []core.Node{kit.Switch{Label: c.Label, TestID: c.TestID + "-switch", Checked: s.value, OnChange: change}}}
+		Control: control}
 }
 
 // statusLine is a grey line under a row's description that follows text.

@@ -3,6 +3,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strconv"
 
@@ -148,7 +149,7 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 	st := stores.Settings
 	limits := st.Limits()
 	general := []core.Node{
-		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", TestID: "launch-at-login",
+		switchSetting{Field: FieldLaunchAtLogin, Label: "登录时启动 Spruce", TestID: "launch-at-login", Fix: loginApproval,
 			DescriptionFunc: func() string {
 				if !windows && st.Value().General.KeepInTray {
 					return "登录系统后在菜单栏安静运行，不打开窗口。"
@@ -182,6 +183,16 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 				Control: []core.Node{kit.Button{Text: "恢复默认设置…", Label: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset", OnPress: onReset}}},
 		),
 	}
+}
+
+// loginItemsURL opens System Settings on 通用 → 登录项.
+const loginItemsURL = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+
+// loginApproval is 打开登录项 beside 登录时启动, there while macOS waits for the user to allow Spruce in Login Items.
+func loginApproval(failure func() error) core.Node {
+	return core.Show{When: func() bool { return errors.Is(failure(), app.ErrLoginNeedsApproval) }, Then: func(cx *core.Scope) core.Node {
+		return kit.Button{Text: "打开登录项", Variant: kit.ButtonGhost, TestID: "open-login-items", OnPress: func() { cx.OpenURL(loginItemsURL, nil) }}
+	}}
 }
 
 // autoTab is 设置 → 自动清理: on macOS what the rules do, a switch per rule with what it would take now or what it did last, and the weekly summary; on Windows only why there are none.

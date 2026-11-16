@@ -190,6 +190,14 @@ func RetentionText(days, drops int, trash string) string {
 	return "只保留最近 " + strconv.Itoa(days) + " 天，" + what + "会立即删除，无法恢复。这些记录中移到" + trash + "的项目也不能再在操作历史里放回原处。"
 }
 
+// OnOff names a switch's state, as a note that Go stored another one says it: 开启 or 关闭.
+func OnOff(on bool) string {
+	if on {
+		return "开启"
+	}
+	return "关闭"
+}
+
 // RangeText is what a number field shows when its text is not a whole number within r.
 func RangeText(r app.SettingRange) string {
 	return "请输入 " + strconv.Itoa(r.Min) + " 到 " + strconv.Itoa(r.Max) + " 之间的整数"

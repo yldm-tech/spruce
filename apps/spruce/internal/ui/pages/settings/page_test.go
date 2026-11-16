@@ -188,15 +188,52 @@ func TestFollowsChangesFromElsewhereAndShowsWhatGoStored(t *testing.T) {
 
 func TestRefusedSaveShowsTheReasonAndTheStoredValue(t *testing.T) {
 	svc := settingsfake.New(dataDir)
-	svc.UpdateErr = errors.New("无法更改「登录时启动」，其他设置没有保存")
+	svc.UpdateErr = errors.New("无法更改「登录时启动」")
 	p := start(t, options{svc: svc})
 	p.Press("role:switch 登录时启动 Spruce")
 	got := p.WaitFor("id:section-general >> id:launch-at-login-error", wait)
-	if got.Text != "无法更改「登录时启动」，其他设置没有保存" {
+	if got.Text != "无法更改「登录时启动」" {
 		t.Errorf("error %q", got.Text)
 	}
 	// The stored settings come back.
 	p.WaitUntil(wait, func() bool { return !p.checked("登录时启动 Spruce") })
+}
+
+// macOS waiting for the user to allow Spruce in Login Items says where, and 打开登录项 opens it; flipping the switch again takes both away.
+func TestLaunchAtLoginWaitingForApproval(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.UpdateErr = app.ErrLoginNeedsApproval
+	p := start(t, options{svc: svc})
+	if p.Exists("id:open-login-items") {
+		t.Fatal("打开登录项 shows before anything failed")
+	}
+	p.Press("role:switch 登录时启动 Spruce")
+	if got := p.WaitFor("id:launch-at-login-error", wait).Text; got != "需要在系统设置 → 通用 → 登录项中允许 Spruce" {
+		t.Errorf("error %q", got)
+	}
+	p.Press("id:open-login-items")
+	if len(p.OpenedURLs) != 1 || p.OpenedURLs[0] != "x-apple.systempreferences:com.apple.LoginItems-Settings.extension" {
+		t.Errorf("opened %q", p.OpenedURLs)
+	}
+	p.WaitUntil(wait, func() bool { return !p.checked("登录时启动 Spruce") })
+	svc.SetUpdateErr(nil)
+	p.Press("role:switch 登录时启动 Spruce")
+	p.WaitForGone("id:open-login-items", wait)
+	p.WaitForGone("id:launch-at-login-error", wait)
+}
+
+// A switch Go stored the other way says so in words.
+func TestAdjustedSwitchSaysOnOrOff(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.Clamp = func(next enginesettings.AppSettings) enginesettings.AppSettings {
+		next.Background.Enabled = true
+		return next
+	}
+	p := start(t, options{svc: svc})
+	p.Press("role:switch 在后台定期检查")
+	if got := p.WaitFor("id:background-check-note", wait).Text; got != "已调整为开启" {
+		t.Errorf("note %q", got)
+	}
 }
 
 func TestOnlyTheLatestSaveCounts(t *testing.T) {

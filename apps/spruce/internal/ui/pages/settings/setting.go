@@ -23,8 +23,9 @@ type setting[T any] struct {
 
 	// draft is the value being saved, shown instead of the stored one; nil when none is.
 	draft *core.Signal[*T]
-	// err is the sentence the last save failed with; note says what Go stored instead of what was sent.
+	// err is the sentence the last save failed with, and failure that error, for a control that offers a way out of it; note says what Go stored instead of what was sent.
 	err, note *core.Signal[string]
+	failure   *core.Signal[error]
 
 	pending *T
 	// timer holds the debounce's timer while a save waits; it is disposed as the save goes out, since the control's scope would otherwise keep every change's timer until the control goes.
@@ -34,7 +35,7 @@ type setting[T any] struct {
 
 func newSetting[T any](cx *core.Scope, st *store.Settings, field Field[T], debounce time.Duration, equal func(a, b T) bool, adjusted func(T) string) *setting[T] {
 	s := &setting[T]{cx: cx, st: st, field: field, debounce: debounce, equal: equal, adjusted: adjusted,
-		draft: core.NewSignal[*T](cx, nil), err: core.NewSignal(cx, ""), note: core.NewSignal(cx, "")}
+		draft: core.NewSignal[*T](cx, nil), err: core.NewSignal(cx, ""), note: core.NewSignal(cx, ""), failure: core.NewSignal[error](cx, nil)}
 	// A save still waiting for its debounce goes out as the control goes (the page is left, or 恢复默认设置 redraws it).
 	cx.Cleanup(s.flush)
 	return s
@@ -52,6 +53,7 @@ func (s *setting[T]) value() T {
 func (s *setting[T]) change(v T) {
 	s.draft.Set(&v)
 	s.err.Set("")
+	s.failure.Set(nil)
 	s.note.Set("")
 	if s.debounce <= 0 {
 		s.commit(v)
@@ -103,6 +105,7 @@ func (s *setting[T]) commit(v T) {
 		s.draft.Set(nil)
 		if err != nil {
 			s.err.Set(err.Error())
+			s.failure.Set(err)
 			return
 		}
 		if stored := s.field.Get(saved); !s.equal(stored, v) {
