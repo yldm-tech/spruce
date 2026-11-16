@@ -388,6 +388,20 @@ func TestWindowShownAgainChecks(t *testing.T) {
 	}
 }
 
+// Free space is read again as 概览 opens, as the window comes back and after anything changes the Trash (a move in 空间透视, an uninstall), whichever page shows; the controller's own timer alone would leave it 15 minutes old.
+func TestFreeSpaceReadAgain(t *testing.T) {
+	p := open(t, ready())
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 1 })
+	p.Post(p.nav.WindowShown)
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 2 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitForGone("id:overview-page", wait)
+	p.Post(p.stores.Trash.Bump)
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 3 })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 4 })
+}
+
 // A change of the exclusions or folders while 概览 is open checks again at once.
 func TestSettingsChangeChecksAgain(t *testing.T) {
 	p := open(t, ready())

@@ -334,6 +334,8 @@ func Page(cx *core.Scope) core.Node {
 	}
 	cx.AfterFunc(time.Minute, tick)
 
+	// Opening 概览 shows free space as it is now.
+	p.ov.ReadDisk()
 	// The menu's 重新检查 (⌘R) checks again as the header's does.
 	nav.UseCommands(cx, nav.Commands{Refresh: p.checkNow, Busy: func() bool { return p.checking() || p.cleaning() }})
 	// Opening 概览 checks again when what it shows may be outdated; a check opened this way is the foreground's, not held back by power or load. It decides once, on the controller's state: the store answers it after the page opens at launch.

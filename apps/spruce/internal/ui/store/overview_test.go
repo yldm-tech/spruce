@@ -38,6 +38,7 @@ func (f *fakeOverview) Subscribe() (<-chan app.OverviewState, func()) { return f
 func (f *fakeOverview) Notices() (<-chan app.Notice, func())          { return nil, func() {} }
 func (f *fakeOverview) CheckNow() error                               { return errors.New("正在清理，完成后再检查") }
 func (f *fakeOverview) StopCheck()                                    {}
+func (f *fakeOverview) ReadDisk()                                     {}
 func (f *fakeOverview) Clean(ctx context.Context, _ cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
 	f.mu.Lock()
 	f.cleans = append(f.cleans, origin)

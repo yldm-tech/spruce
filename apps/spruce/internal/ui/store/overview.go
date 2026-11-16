@@ -20,6 +20,7 @@ type OverviewService interface {
 	Notices() (<-chan app.Notice, func())
 	CheckNow() error
 	StopCheck()
+	ReadDisk()
 	Clean(ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error)
 	Undo(ctx context.Context, runID string) (app.RestoreOutcome, error)
 	Growth(ctx context.Context, window time.Duration) ([]growth.Growth, error)
@@ -118,6 +119,13 @@ func (o *Overview) CheckNow(done func(error)) {
 func (o *Overview) StopCheck() {
 	if o.svc != nil {
 		go o.svc.StopCheck()
+	}
+}
+
+// ReadDisk has the controller read free space again at once.
+func (o *Overview) ReadDisk() {
+	if o.svc != nil {
+		go o.svc.ReadDisk()
 	}
 }
 

@@ -763,7 +763,15 @@ func lastMonday10(t time.Time) time.Time {
 	return m
 }
 
-// readDisk reads free space every Policy.DiskEvery (and after a clean or a settings change) and posts the low-disk notification when the alert is on and schedule.LowDiskAlert says so.
+// ReadDisk has the loop read free space again at once, which is cheap (statfs): the window coming back and 概览 opening show it as it is now, and so do moves and uninstalls outside 概览's cleans, which DiskEvery alone would leave up to 15 minutes old.
+func (o *Overview) ReadDisk() {
+	o.mu.Lock()
+	o.diskDue = true
+	o.mu.Unlock()
+	o.poke()
+}
+
+// readDisk reads free space every Policy.DiskEvery (and after a clean, a settings change or ReadDisk) and posts the low-disk notification when the alert is on and schedule.LowDiskAlert says so.
 func (o *Overview) readDisk(ctx context.Context, s settings.AppSettings) {
 	if o.cfg.Disk == nil {
 		return

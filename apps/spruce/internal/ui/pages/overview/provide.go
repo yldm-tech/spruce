@@ -6,6 +6,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
+	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/store"
 )
 
@@ -25,7 +26,8 @@ func Provide(cx *core.Scope, d Deps) {
 	k := &kept{open: core.NewSignalFunc(cx, map[string]bool{}, nil), failed: core.NewSignalFunc(cx, map[string]int{}, nil),
 		more: core.NewSignal(cx, false)}
 	// What a card's last clean could not handle is told of the check it cleaned: a newer check lists those items again or finds them gone, so the counts go with it.
-	ov := store.Use(cx).Overview
+	stores := store.Use(cx)
+	ov := stores.Overview
 	checked := core.NewMemoFunc(cx, func() time.Time {
 		if r := ov.State().Result; r != nil {
 			return r.CheckedAt
@@ -39,6 +41,17 @@ func Provide(cx *core.Scope, d Deps) {
 				k.failed.Set(map[string]int{})
 			}
 		})
+	})
+	// Free space is read again as the window comes back and after anything changed the Trash (a clean, a move in 空间透视, an uninstall, 撤销), whichever page shows: 概览 and the menu bar show it as it is, not as the controller's 15-minute reading left it.
+	n := nav.Use(cx)
+	shown, trash := core.Untracked(cx, n.Shown), core.Untracked(cx, stores.Trash.Generation)
+	cx.Effect(func() {
+		s, g := n.Shown(), stores.Trash.Generation()
+		if s == shown && g == trash {
+			return
+		}
+		shown, trash = s, g
+		cx.Untrack(ov.ReadDisk)
 	})
 	keptKey.Provide(cx, k)
 }
