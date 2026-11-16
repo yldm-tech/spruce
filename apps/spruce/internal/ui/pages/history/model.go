@@ -1,6 +1,7 @@
 package history
 
 import (
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -215,6 +216,21 @@ func CountText(n, retentionDays int, known bool) string {
 		return "共 " + strconv.Itoa(n) + " 条记录"
 	}
 	return "共 " + strconv.Itoa(n) + " 条记录，保留最近 " + strconv.Itoa(retentionDays) + " 天"
+}
+
+// DetailPath returns the file or folder a detail line starts with, such as 「~/Library/Caches/x：文件正在使用，已跳过」, as a whole path with ~ for home; "" when the line does not start with a path.
+func DetailPath(line, home string) string {
+	p, _, ok := strings.Cut(line, "：")
+	if !ok {
+		return ""
+	}
+	if rest, found := strings.CutPrefix(p, "~"); found && home != "" && (rest == "" || strings.HasPrefix(rest, "/") || strings.HasPrefix(rest, `\`)) {
+		return filepath.Join(home, rest)
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return ""
 }
 
 // RestoredNote is what a run's summary line adds once 放回原处 put its items back, from the KindRestore runs among runs: 「 · 已放回原处」 when one left nothing in the Trash (a restore that stopped part-way counts what it did not get to as Failed), else 「 · 已放回 {a} 项」 with all they put back; "" before any.

@@ -1,6 +1,7 @@
 package history
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -246,5 +247,25 @@ func TestRestoreSummaryNoteAndToast(t *testing.T) {
 	}
 	if text, view, d := RestoreToast(app.RestoreOutcome{RunID: "x", Restored: 1, Failed: 2}); text != "已放回 1 项，2 项没能放回" || view != "x" || d != 10*time.Second {
 		t.Errorf("toast %q %q %v", text, view, d)
+	}
+}
+
+func TestDetailPath(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator)+"Users", "me")
+	abs := filepath.Join(string(filepath.Separator)+"Library", "Logs", "x.log")
+	for line, want := range map[string]string{
+		"~/Library/Caches/x：文件正在使用，已跳过": filepath.Join(home, "Library", "Caches", "x"),
+		abs + "：没有权限":                   abs,
+		"系统缓存：已清理 34 项":                 "",
+		"另有 3 项未能处理":                    "",
+		"~：奇怪":                          home,
+		"~other/x：不是家目录":                "",
+	} {
+		if got := DetailPath(line, home); got != want {
+			t.Errorf("DetailPath(%q) = %q, want %q", line, got, want)
+		}
+	}
+	if got := DetailPath("~/x：y", ""); got != "" {
+		t.Errorf("without a home %q", got)
 	}
 }

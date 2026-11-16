@@ -11,6 +11,7 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
+	"spruce/apps/spruce/internal/app"
 	enginehist "spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/taskresult"
 	"spruce/apps/spruce/internal/ui/format"
@@ -79,6 +80,10 @@ type options struct {
 	before   func(n *nav.Navigator)
 	// kept mounts the page as the shell does, with Provide, and only while the navigator is on 操作历史, so a test can leave it and come back.
 	kept bool
+	// files reveals the paths of the details.
+	files *historyfake.Files
+	// mac runs the page on a macOS desktop, where rows have context menus.
+	mac bool
 }
 
 func start(t *testing.T, svc *historyfake.Service) *page { return startWith(t, svc, options{}) }
@@ -88,6 +93,10 @@ func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 	fakes := storefake.New(t.TempDir())
 	fakes.Overview = o.overview
 	p := &page{svc: svc}
+	opts := []nsgotest.Option{nsgotest.Size(1052, 820)}
+	if o.mac {
+		opts = append(opts, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		d := fakes.Deps()
 		d.History = svc
@@ -97,18 +106,19 @@ func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 			o.before(p.nav)
 		}
 		nav.Key.Provide(cx, p.nav)
+		deps := history.Deps{Catalog: catalog, Files: o.files, Home: "/Users/me"}
 		if !o.kept {
-			history.DepsKey.Provide(cx, history.Deps{Catalog: catalog})
+			history.DepsKey.Provide(cx, deps)
 			return history.Page(cx)
 		}
-		history.Provide(cx, history.Deps{Catalog: catalog})
+		history.Provide(cx, deps)
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if p.nav.Current() != nav.History {
 				return core.Text{Content: "elsewhere"}
 			}
 			return core.Func(history.Page)
 		})
-	}, nsgotest.Size(1052, 820))
+	}, opts...)
 	return p
 }
 
@@ -266,6 +276,51 @@ func TestFilterAndOpenRunsOutliveTheVisit(t *testing.T) {
 		t.Errorf("rows %v after a request for every kind", got)
 	}
 	p.Find("id:run-u1 >> id:run-details")
+}
+
+// A run's details can be selected, and a line that starts with a path reveals it or copies it from its right-click menu.
+func TestDetailsSelectAndOfferTheirPaths(t *testing.T) {
+	files := &historyfake.Files{}
+	p := startWith(t, historyfake.New(runs()...), options{files: files, mac: true})
+	p.Press("id:run-j1-head")
+	p.WaitFor("id:run-j1 >> id:run-details", wait)
+	if !p.Find("id:run-j1 >> id:run-details").Props.SelectionArea {
+		t.Error("the details cannot be selected")
+	}
+	p.RightClick("id:run-line-1")
+	var labels []string
+	for _, it := range p.PopupMenu {
+		labels = append(labels, it.Label)
+	}
+	if want := []string{"在" + format.FileManagerName() + "中显示", "拷贝路径"}; !reflect.DeepEqual(labels, want) {
+		t.Fatalf("menu %q", labels)
+	}
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != "/Users/me/Library/Caches/x" {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	p.RightClick("id:run-line-1")
+	p.ChoosePopup("在" + format.FileManagerName() + "中显示")
+	p.WaitUntil(wait, func() bool { return len(files.Revealed()) == 1 })
+	if got := files.Revealed()[0]; got != "/Users/me/Library/Caches/x" {
+		t.Errorf("revealed %q", got)
+	}
+}
+
+// A run 放回原处 can put back offers it on a right click too; another run has no menu.
+func TestRestoreFromTheRowMenu(t *testing.T) {
+	svc := historyfake.New(runs()...)
+	svc.SetRestorable("u1")
+	ov := storefake.NewOverview(app.OverviewState{})
+	p := startWith(t, svc, options{overview: ov, mac: true})
+	p.WaitFor("id:run-u1-restore", wait)
+	p.RightClick("id:run-j1-head")
+	if p.PopupMenu != nil {
+		t.Errorf("a run without anything to put back has a menu %v", p.PopupMenu)
+	}
+	p.RightClick("id:run-u1-head")
+	p.ChoosePopup("放回原处")
+	p.WaitUntil(wait, func() bool { _, _, _, undos, _ := ov.Calls(); return len(undos) == 1 && undos[0] == "u1" })
 }
 
 func TestRefreshesWhenARunIsRecorded(t *testing.T) {

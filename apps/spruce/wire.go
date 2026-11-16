@@ -272,7 +272,7 @@ func wire(e env) (shell.Deps, error) {
 		Space:       uispace.Deps{Space: spaceSvc, Files: files},
 		Maintenance: uimaintenance.Deps{Maintenance: maint},
 		Health:      uihealth.Deps{Sysinfo: app.NewSysinfo(vitals)},
-		History:     uihistory.Deps{Catalog: maint},
+		History:     uihistory.Deps{Catalog: maint, Files: files, Home: e.home},
 		Settings:    uisettings.Deps{Files: files, Icon: appIcon},
 		Background: []func(ctx context.Context){
 			func(ctx context.Context) { app.RecoverInterrupted(ctx, ledger, historyStore, activity, e.log) },
