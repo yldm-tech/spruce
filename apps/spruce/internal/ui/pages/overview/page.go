@@ -191,9 +191,6 @@ func (p *page) asker(cx *core.Scope) func(kit.ConfirmDialog, func()) {
 	return func(d kit.ConfirmDialog, confirm func()) { opened = p.ask(d, confirm) }
 }
 
-// toast shows the toast t.
-func (p *page) toast(t store.Toast) { p.stores.Toasts.Show(t) }
-
 // cleaned is what a clean of 概览 leaves once it ended, shown in the app's scope so leaving the page does not lose it: the disks and the Trash read again, and the toast (CleanToast, with 撤销 when undo was possible as it started).
 func cleaned(stores *store.Stores, a advice.Action, out app.OverviewOutcome, err error, undo bool) {
 	stores.Locations.Bump()

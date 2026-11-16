@@ -103,7 +103,7 @@ func TestScreensSystemJunk(t *testing.T) {
 	a.WaitFor("id:drill-busy", wait)
 	a.Press("id:expand-system-junk:app-caches")
 	a.WaitForGone("id:items-system-junk:app-caches", wait)
-	a.Scroll("id:drill-system-junk", -5000)
+	scrollToTop(a, "id:drill-system-junk")
 	a.Screenshot("system-junk-busy")
 
 	// A source that failed and found nothing is not called clean.
