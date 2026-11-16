@@ -63,6 +63,15 @@ func Page(cx *core.Scope) core.Node {
 			})
 		})
 	}
+	// What the user allows in System Settings (打开登录项) is not announced, so the page reads the settings again as Spruce comes back to the front.
+	active := true
+	cx.Effect(func() {
+		now := cx.Env().Lifecycle() == core.LifecycleActive
+		if now && !active {
+			stores.Settings.Reload()
+		}
+		active = now
+	})
 	resetRef, clearRef := new(core.Ref), new(core.Ref)
 	resetting, resetBusy, resetErr := core.NewSignal(cx, false), core.NewSignal(cx, false), core.NewSignal(cx, "")
 	clearing := core.NewSignal(cx, false)

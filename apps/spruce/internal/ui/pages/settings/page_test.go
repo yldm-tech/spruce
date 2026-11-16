@@ -222,6 +222,25 @@ func TestLaunchAtLoginWaitingForApproval(t *testing.T) {
 	p.WaitForGone("id:launch-at-login-error", wait)
 }
 
+// What the user allows in System Settings is not announced: as Spruce comes back to the front the page reads the settings again, and the switch is on with nothing left to fix.
+func TestLaunchAtLoginAllowedInSystemSettings(t *testing.T) {
+	svc := settingsfake.New(dataDir)
+	svc.UpdateErr = app.ErrLoginNeedsApproval
+	p := start(t, options{svc: svc})
+	p.Press("role:switch 登录时启动 Spruce")
+	p.WaitFor("id:open-login-items", wait)
+	p.Press("id:open-login-items")
+	p.SetEnvironment(core.Environment{Lifecycle: core.LifecycleInactive})
+	svc.SetSystem(func(v *enginesettings.AppSettings) { v.General.LaunchAtLogin = true })
+	p.SetEnvironment(core.Environment{Lifecycle: core.LifecycleActive})
+	p.WaitUntil(wait, func() bool { return p.checked("登录时启动 Spruce") })
+	p.WaitForGone("id:launch-at-login-error", wait)
+	p.WaitForGone("id:open-login-items", wait)
+	if n := len(svc.Updates()); n != 1 {
+		t.Errorf("saved %d times, want only the refused one", n)
+	}
+}
+
 // A switch Go stored the other way says so in words.
 func TestAdjustedSwitchSaysOnOrOff(t *testing.T) {
 	svc := settingsfake.New(dataDir)

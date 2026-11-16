@@ -176,6 +176,17 @@ func (s *Settings) Save(next settings.AppSettings, done func(saved settings.AppS
 		})
 }
 
+// Reload reads the settings again, for what changes outside Spruce without an announcement: the login item, which the user may allow in System Settings. A Save made meanwhile wins.
+func (s *Settings) Reload() {
+	seq := s.seq
+	async.Do(s.cx, s.ctx, func(context.Context) (settings.AppSettings, error) { return s.svc.Get(), nil },
+		func(v settings.AppSettings, _ error) {
+			if seq == s.seq {
+				s.value.Set(v)
+			}
+		})
+}
+
 // Reset restores every default, then counts a generation and calls done.
 func (s *Settings) Reset(done func(error)) {
 	s.seq++

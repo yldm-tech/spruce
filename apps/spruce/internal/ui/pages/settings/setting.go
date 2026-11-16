@@ -26,6 +26,8 @@ type setting[T any] struct {
 	// err is the sentence the last save failed with, and failure that error, for a control that offers a way out of it; note says what Go stored instead of what was sent.
 	err, note *core.Signal[string]
 	failure   *core.Signal[error]
+	// failed is the value the failed save could not store.
+	failed T
 
 	pending *T
 	// timer holds the debounce's timer while a save waits; it is disposed as the save goes out, since the control's scope would otherwise keep every change's timer until the control goes.
@@ -38,6 +40,13 @@ func newSetting[T any](cx *core.Scope, st *store.Settings, field Field[T], debou
 		draft: core.NewSignal[*T](cx, nil), err: core.NewSignal(cx, ""), note: core.NewSignal(cx, ""), failure: core.NewSignal[error](cx, nil)}
 	// A save still waiting for its debounce goes out as the control goes (the page is left, or 恢复默认设置 redraws it).
 	cx.Cleanup(s.flush)
+	// A failure is over once what it could not store is stored after all: the user allowed Spruce in Login Items and the settings were read again.
+	cx.Effect(func() {
+		if s.failure.Get() != nil && equal(field.Get(st.Value()), s.failed) {
+			s.err.Set("")
+			s.failure.Set(nil)
+		}
+	})
 	return s
 }
 
@@ -104,6 +113,7 @@ func (s *setting[T]) commit(v T) {
 		}
 		s.draft.Set(nil)
 		if err != nil {
+			s.failed = v
 			s.err.Set(err.Error())
 			s.failure.Set(err)
 			return
