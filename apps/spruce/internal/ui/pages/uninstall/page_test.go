@@ -1058,3 +1058,38 @@ func TestComingBackLandsWhereTheListWasScrolled(t *testing.T) {
 		t.Errorf("the list came back at %v", got)
 	}
 }
+
+// A list that was put in a new order while the page was away comes back with the picked row in view, not where the old order was scrolled to.
+func TestComingBackAfterTheOrderChangedShowsThePickedRow(t *testing.T) {
+	var apps []app.UninstallApp
+	var sizes []app.UninstallAppDetails
+	for i := range 40 {
+		apps = append(apps, app.UninstallApp{ID: fmt.Sprint(i), Name: fmt.Sprintf("App %02d", i), Path: "/Applications/x.app"})
+		sizes = append(sizes, app.UninstallAppDetails{ID: fmt.Sprint(i), Size: uninstallfake.Size(int64(1_000_000_000 + i))})
+	}
+	// App 00 turns out the smallest: it goes from the top to the bottom once the measure ends.
+	sizes[0].Size = uninstallfake.Size(1)
+	svc := &uninstallfake.Service{List: apps}
+	sent, release := make(chan struct{}), make(chan struct{})
+	p := startWith(t, &steppedMeasure{Service: svc, sent: sent, release: release, first: sizes}, svc, uninstall.PlatformMac)
+	p.waitList()
+	<-sent
+	if got := p.rows(); len(got) == 0 || got[0] != "App 00" {
+		t.Fatalf("rows %v before the measure ended", got)
+	}
+	p.pick("App 00")
+	p.show(false)
+	close(release)
+	p.Advance(time.Second)
+	p.show(true)
+	p.Settle()
+	list := p.Find("id:app-list").Children[0]
+	off, height := list.Offset.Y, list.Frame.Size.Height
+	rows := p.Query("id:app-list >> role:option App 00")
+	if len(rows) != 1 {
+		t.Fatalf("the picked row is not in view (list at %v)", off)
+	}
+	if y := rows[0].Parent.Frame.Origin.Y; y < off || y+60 > off+height {
+		t.Errorf("the picked row at %v, the list showing %v to %v", y, off, off+height)
+	}
+}

@@ -142,12 +142,10 @@ func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 			scroll.ScrollToIndexAt(i, 0.5, 0, false)
 			return
 		}
-		top := core.Points(pos.Index)*rowHeight + pos.Offset
-		bottom := top + frame.Size.Height - 2*listPad
-		switch {
-		case core.Points(i)*rowHeight < top:
+		switch rowShown(i, pos, frame.Size.Height) {
+		case -1:
 			scroll.ScrollToIndexAt(i, 0, 0, false)
-		case core.Points(i+1)*rowHeight > bottom:
+		case 1:
 			scroll.ScrollToIndexAt(i, 1, 0, false)
 		}
 	}
@@ -159,14 +157,17 @@ func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 		}
 	})
 	landed := false
-	land := func(core.Bounds) {
+	land := func(b core.Bounds) {
 		if landed {
 			return
 		}
 		landed = true
+		// The list comes back where it was scrolled to, unless the picked row would not show there: the order or the search changed meanwhile.
 		if p, ok := s.ListPos(); ok {
-			scroll.ScrollToIndexAt(p.Index, 0, -p.Offset, false)
-			return
+			if i := s.Index(); i < 0 || rowShown(i, p, b.Size.Height) == 0 {
+				scroll.ScrollToIndexAt(p.Index, 0, -p.Offset, false)
+				return
+			}
 		}
 		reveal(s.Index())
 	}
@@ -216,6 +217,18 @@ func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 		},
 	}
 	return core.View{OnLayout: land, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)}, Children: []core.Node{list}}
+}
+
+// rowShown says where row i is in a list of height scrolled to pos: -1 above what it shows, 1 below, 0 shown whole.
+func rowShown(i int, pos core.ListPosition, height core.Points) int {
+	top := core.Points(pos.Index)*rowHeight + pos.Offset
+	switch {
+	case core.Points(i)*rowHeight < top:
+		return -1
+	case core.Points(i+1)*rowHeight > top+height-2*listPad:
+		return 1
+	}
+	return 0
 }
 
 // appRow is the look of one app of the list: its icon, name, version and last use, its badges and its size; the list's row around it takes the presses. A secondary click opens its menu: 卸载…, 在访达中显示, 拷贝路径.
