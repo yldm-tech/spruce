@@ -53,7 +53,7 @@ type Checkbox struct {
 func (c Checkbox) Render(cx *core.Scope) core.Node {
 	v := c.checkbox().Render(cx).(core.View)
 	if c.OnShift != nil {
-		// base.Checkbox hands OnChange only the value a press asks for, not the press, so its view's OnPress is wrapped to see Shift (NSGo issue pending).
+		// base.Checkbox hands OnChange only the value a press asks for, not the press, so its view's OnPress is wrapped to see Shift (https://github.com/nsgo-dev/nsgo/issues/398).
 		change := v.OnPress
 		v.OnPress = func(e core.PressEvent) {
 			if e.Modifiers.Shift {
