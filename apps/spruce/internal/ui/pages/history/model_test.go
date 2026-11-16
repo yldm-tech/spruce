@@ -252,7 +252,8 @@ func TestRestoreSummaryNoteAndToast(t *testing.T) {
 
 func TestDetailPath(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator)+"Users", "me")
-	abs := filepath.Join(string(filepath.Separator)+"Library", "Logs", "x.log")
+	// An absolute path on every platform; a path from the root alone is not one on Windows.
+	abs := filepath.Join(t.TempDir(), "Logs", "x.log")
 	type want struct {
 		path  string
 		moved bool

@@ -2,6 +2,7 @@ package history_test
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -297,13 +298,13 @@ func TestDetailsSelectAndOfferTheirPaths(t *testing.T) {
 		t.Fatalf("menu %q", labels)
 	}
 	p.ChoosePopup("拷贝路径")
-	if p.Clipboard != "/Users/me/Library/Caches/x" {
+	if p.Clipboard != filepath.FromSlash("/Users/me/Library/Caches/x") {
 		t.Errorf("clipboard %q", p.Clipboard)
 	}
 	p.RightClick("id:run-line-1")
 	p.ChoosePopup("在" + format.FileManagerName() + "中显示")
 	p.WaitUntil(wait, func() bool { return len(files.Revealed()) == 1 })
-	if got := files.Revealed()[0]; got != "/Users/me/Library/Caches/x" {
+	if got := files.Revealed()[0]; got != filepath.FromSlash("/Users/me/Library/Caches/x") {
 		t.Errorf("revealed %q", got)
 	}
 }
@@ -331,7 +332,7 @@ func TestMovedItemsAreNotRevealedFromTheTrash(t *testing.T) {
 		t.Errorf("menu while the run can put it back %q", got)
 	}
 	p.ChoosePopup("拷贝路径")
-	if p.Clipboard != "/Users/me/Movies/a.mov" {
+	if p.Clipboard != filepath.FromSlash("/Users/me/Movies/a.mov") {
 		t.Errorf("clipboard %q", p.Clipboard)
 	}
 	svc.SetRestorable()
