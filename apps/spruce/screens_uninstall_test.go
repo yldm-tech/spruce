@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/nsgotest"
+
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/pages/uninstall"
@@ -97,7 +100,7 @@ func TestScreensUninstall(t *testing.T) {
 			case <-release:
 			case <-ctx.Done():
 			}
-			return app.UninstallOutcome{App: "Blender", BundleRemoved: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 1_306_885_000, Removed: 5,
+			return app.UninstallOutcome{App: "Blender", BundleRemoved: true, RunID: "screens-run", Undoable: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 1_306_885_000, Removed: 5,
 				Categories: []cleanup.CategoryOutcome{
 					{CategoryID: "app", Removed: 1, Trashed: 1_210_000_000},
 					{CategoryID: "support", Removed: 4, Trashed: 96_885_000},
@@ -106,8 +109,9 @@ func TestScreensUninstall(t *testing.T) {
 	fakes := storefake.New(t.TempDir())
 	a := screensApp(t, fakes, shell.Deps{Uninstall: uninstall.Deps{Uninstall: svc, Files: &uninstallfake.Files{}, Platform: uninstall.PlatformMac}}, "uninstall")
 	a.WaitFor("id:app-list", 10*time.Second)
+	// The rows take the order of the sizes once the measure ends.
 	a.WaitUntil(10*time.Second, func() bool {
-		if a.Exists("id:app-list >> text:1.2 GB") {
+		if a.Exists("id:app-list >> text:1.2 GB") && a.Find("id:app-list >> role:option Blender").Parent.Frame.Origin.Y < rowsTop(a)+1 {
 			return true
 		}
 		a.Advance(40 * time.Millisecond)
@@ -137,9 +141,20 @@ func TestScreensUninstall(t *testing.T) {
 	})
 	a.Screenshot("uninstall-removing")
 
+	// A whole uninstall ends in the toast, with 撤销, and the selection lands on the row now where Blender was.
+	svc.SetList(apps[1:], nil)
 	close(release)
-	a.WaitFor("id:done", 10*time.Second)
+	a.WaitForGone("id:removing", 10*time.Second)
+	a.WaitFor("id:toast-undo", 10*time.Second)
+	a.WaitForGone("id:app-list >> role:option Blender", 10*time.Second)
 	a.Screenshot("uninstall-done")
-	a.Press("id:done-close")
-	a.WaitForGone("id:done", 10*time.Second)
+}
+
+// rowsTop is where the list's first row starts.
+func rowsTop(a *nsgotest.App) core.Points {
+	top := core.Points(math.MaxFloat32)
+	for _, v := range a.Query("id:app-list >> role:option") {
+		top = min(top, v.Parent.Frame.Origin.Y)
+	}
+	return top
 }
