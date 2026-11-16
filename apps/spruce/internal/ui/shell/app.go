@@ -30,10 +30,11 @@ func App(d Deps) func(app *core.Scope) {
 		store.Key.Provide(app, stores)
 		kit.BlockerKey.Provide(app, stores.Block)
 		kit.ToastShownKey.Provide(app, func() bool { return stores.Toasts.Current() != nil })
-		providePages(app, d)
 		// The navigator lives with the app, not the window: the tray, the notifications and a window opened again all go through it.
 		navigator := nav.NewNavigator(app, cmp.Or(d.Start, nav.Start))
 		nav.Key.Provide(app, navigator)
+		// What the pages keep beyond one showing may read the stores and the navigator.
+		providePages(app, d)
 		for _, work := range d.Background {
 			go work(ctx)
 		}
