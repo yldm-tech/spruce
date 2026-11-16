@@ -196,6 +196,36 @@ func TestRunShowsProgressThenTheSummary(t *testing.T) {
 	}
 }
 
+// 停止 ends the run: the overlay says 正在停止… until the run returns, then the done card says it was stopped.
+func TestStopEndsTheRun(t *testing.T) {
+	stopped := make(chan struct{})
+	svc := &maintenancefake.Service{Tasks: maintenancefake.MacCatalog(),
+		OnRun: func(ctx context.Context, ids []string, progress func(app.ProgressEvent)) (app.RunSummary, error) {
+			progress(app.ProgressEvent{Kind: app.ProgressStarted, TaskID: "dns", Done: 0, Total: len(ids)})
+			<-ctx.Done()
+			<-stopped
+			sum := maintenancefake.Summary(
+				maintenancefake.Result("dns", taskresult.Skipped, "已停止，无法确认是否执行"),
+				maintenancefake.Result("quicklook", taskresult.Skipped, "维护已中断，未执行"),
+			)
+			sum.Interrupted = true
+			return sum, nil
+		}}
+	p := start(t, svc, newFakes(t))
+	p.Press("id:run")
+	p.WaitFor("id:run-overlay", wait)
+	p.waitTicking("id:run-overlay >> text:刷新 DNS 缓存 · 已完成 0/4")
+	p.Find("text:部分任务需要管理员权限，请在系统弹出的授权窗口中确认")
+	p.Press("id:run-overlay >> id:overlay-cancel")
+	p.WaitFor("id:run-overlay >> text:正在停止…", wait)
+	if p.Exists("text:/管理员权限/") {
+		t.Error("the prompt note stays while stopping")
+	}
+	close(stopped)
+	p.WaitFor("id:done", wait)
+	p.Find("id:done >> role:header 维护已中断")
+}
+
 // runWith starts a run that answers summary at once and waits for its done card titled title.
 func runWith(t *testing.T, title string, summary app.RunSummary, err error) *page {
 	t.Helper()

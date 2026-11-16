@@ -61,14 +61,18 @@ func Page(cx *core.Scope) core.Node {
 		Ring: kit.ProgressRing{Label: "正在维护系统"},
 		Sub:  func() string { return RunSub(s.RunTasks.Get(), s.Progress.Get()) },
 		Lines: func() []string {
+			if s.Stopping.Get() {
+				return []string{"正在停止…"}
+			}
 			return []string{RunStatusText(s.RunTasks.Get(), s.Progress.Get())}
 		},
 		Note: func() string {
-			if AwaitingAdmin(s.RunTasks.Get(), s.Progress.Get()) {
+			if !s.Stopping.Get() && AwaitingAdmin(s.RunTasks.Get(), s.Progress.Get()) {
 				return "部分任务需要管理员权限，请在系统弹出的授权窗口中确认"
 			}
 			return ""
 		},
+		OnCancel: s.Stop,
 	}
 
 	done := core.Dynamic(func(cx *core.Scope) core.Node {

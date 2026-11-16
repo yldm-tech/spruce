@@ -42,6 +42,11 @@ type State struct {
 	RunErr  *core.Signal[string]
 	// Guided is set once the Full Disk Access guide granted the permission since the run started, so the done card may say that running again helps.
 	Guided *core.Signal[bool]
+	// Stopping is set once 停止 was pressed, until the run ends.
+	Stopping *core.Signal[bool]
+
+	// cancel ends the run going on; nil when none is.
+	cancel context.CancelFunc
 
 	// onSettled runs after each run, to read the permission again.
 	onSettled func()
@@ -58,6 +63,7 @@ func NewState(cx *core.Scope, svc Service, onSettled func()) *State {
 		Summary:   core.NewSignalFunc[*app.RunSummary](cx, nil, nil),
 		RunErr:    core.NewSignal(cx, ""),
 		Guided:    core.NewSignal(cx, false),
+		Stopping:  core.NewSignal(cx, false),
 	}
 	async.Do(cx, s.ctx, func(context.Context) ([]app.TaskView, error) { return svc.Catalog(), nil },
 		func(tasks []app.TaskView, _ error) { s.Catalog.Set(tasks) })
@@ -129,11 +135,14 @@ func (s *State) Run() {
 		s.Progress.Set(p)
 	})
 	run, cancel := context.WithCancel(s.ctx)
+	s.cancel = cancel
 	async.Do(s.cx, run, func(ctx context.Context) (app.RunSummary, error) {
 		defer events.Flush()
 		return s.svc.Run(ctx, ids, events.Send)
 	}, func(sum app.RunSummary, err error) {
 		cancel()
+		s.cancel = nil
+		s.Stopping.Set(false)
 		if err != nil {
 			s.RunErr.Set(err.Error())
 		} else {
@@ -144,6 +153,15 @@ func (s *State) Run() {
 			s.onSettled()
 		}
 	})
+}
+
+// Stop ends the run going on after its current task, and closes a system prompt for administrator rights the user has not answered; the done card then says the run was stopped.
+func (s *State) Stop() {
+	if s.cancel == nil || s.Stopping.GetUntracked() {
+		return
+	}
+	s.Stopping.Set(true)
+	s.cancel()
 }
 
 // Finish closes the done card and returns to choosing tasks.
