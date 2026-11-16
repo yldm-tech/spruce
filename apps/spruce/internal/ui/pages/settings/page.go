@@ -173,7 +173,8 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 			switchSetting{Field: FieldLowDiskAlert, Label: "空间不足时提醒我", Description: "系统盘可用空间低于下面的值时发一条通知。", TestID: "low-disk-alert",
 				OnTurnOn: notify.ask,
 				Below:    []core.Node{warningLine(notifyDeniedText, func() bool { return st.Value().General.LowDiskAlert && notify.denied() }, "notify-denied")}},
-			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold"},
+			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold",
+				Disabled: func() bool { return !st.Value().General.LowDiskAlert }},
 		),
 		permissionsGroup(stores.Permission),
 		group("", "section-reset",
@@ -280,14 +281,15 @@ func cleanupTab(st *store.Settings) []core.Node {
 
 func healthTab(st *store.Settings) []core.Node {
 	limits := st.Limits()
+	off := func() bool { return !st.Value().Health.Enabled }
 	return []core.Node{
 		group("高 CPU 提醒", "section-health",
 			switchSetting{Field: FieldHealthEnabled, Label: "启用高 CPU 提醒", Description: "有进程长时间占用大量 CPU 时提醒你。只提醒，不会结束进程。",
 				TestID: "health-enabled"},
 			sliderSetting{Field: FieldCPUThreshold, Label: "提醒阈值", Description: "按单个处理器核心计算：100% 表示占满一个核心，200% 表示占满两个核心。",
-				Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, TestID: "cpu-threshold"},
+				Range: limits.CPUThreshold, Step: 5, Format: func(v int) string { return strconv.Itoa(v) + "%" }, Disabled: off, TestID: "cpu-threshold"},
 			sliderSetting{Field: FieldSustainMinutes, Label: "持续时间", Description: "进程连续超过阈值这么久才提醒。",
-				Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, TestID: "sustain-minutes"},
+				Range: limits.SustainMinutes, Step: 1, Format: func(v int) string { return strconv.Itoa(v) + " 分钟" }, Disabled: off, TestID: "sustain-minutes"},
 		),
 	}
 }

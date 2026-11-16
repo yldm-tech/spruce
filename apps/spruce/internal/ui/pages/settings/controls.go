@@ -3,6 +3,7 @@ package settings
 import (
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 
@@ -24,18 +25,29 @@ type row struct {
 	Below       []core.Node
 	Error, Note func() string
 	Control     []core.Node
-	TestID      string
+	// Disabled, when set, dims the row while it reports true: its control is off then, as a threshold is while its alert is.
+	Disabled func() bool
+	TestID   string
 }
 
 // Render implements core.Node.
 func (r row) Render(*core.Scope) core.Node {
 	return core.View{TestID: r.TestID,
-		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding},
+		StyleFunc: func() core.Style {
+			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 24, MinHeight: core.Pt(56), Padding: rowPadding, Transition: rowFade}
+			if r.Disabled != nil && r.Disabled() {
+				st.Opacity = core.Alpha(0.45)
+			}
+			return st
+		},
 		Children: []core.Node{
 			rowText(r.Label, r.Description, r.DescriptionFunc, r.Below, r.Error, r.Note, r.TestID),
 			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 10, FlexShrink: 0}, Children: r.Control},
 		}}
 }
+
+// rowFade is how a row dims as its control turns off and back.
+var rowFade = core.Transition{Duration: 150 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionOpacity}
 
 // rowText is a row's label over its description and the lines below it, then its error and note lines; it takes the room the control leaves.
 func rowText(label, description string, descriptionFunc func() string, below []core.Node, err, note func() string, testID string) core.Node {
@@ -115,14 +127,16 @@ type sliderSetting struct {
 	Step               int
 	// Format is the value as shown and read out, e.g. "40%" or "10 分钟".
 	Format func(int) string
-	TestID string
+	// Disabled, when set, turns the slider off and dims its row while it reports true.
+	Disabled func() bool
+	TestID   string
 }
 
 // Render implements core.Node.
 func (c sliderSetting) Render(cx *core.Scope) core.Node {
 	s := newSetting(cx, store.Use(cx).Settings, c.Field, saveDebounce, equalInt, func(v int) string { return "已调整为 " + c.Format(v) })
-	return row{Label: c.Label, Description: c.Description, Error: s.err.Get, Note: s.note.Get, TestID: c.TestID,
-		Control: []core.Node{kit.Slider{Label: c.Label, TestID: c.TestID + "-slider",
+	return row{Label: c.Label, Description: c.Description, Error: s.err.Get, Note: s.note.Get, Disabled: c.Disabled, TestID: c.TestID,
+		Control: []core.Node{kit.Slider{Label: c.Label, TestID: c.TestID + "-slider", Disabled: c.Disabled,
 			Min: float64(c.Range.Min), Max: float64(c.Range.Max), Step: float64(c.Step),
 			Value:     func() float64 { return float64(s.value()) },
 			OnChange:  func(v float64) { s.change(int(math.Round(v))) },
@@ -138,7 +152,9 @@ type numberSetting struct {
 	Unit string
 	// Confirm, when set, holds a valid number until Return or the field losing the focus, never saving it as the user types, and then decides what becomes of it: save stores it, revert shows the stored value again. A number that is the stored one is not handed to it.
 	Confirm func(n int, save, revert func())
-	TestID  string
+	// Disabled, when set, turns the field off and dims its row while it reports true.
+	Disabled func() bool
+	TestID   string
 }
 
 // Render implements core.Node.
@@ -174,7 +190,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 			text.Set(nil)
 		}, func() { text.Set(nil) })
 	}
-	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid,
+	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid, Disabled: c.Disabled,
 		Value: func() string {
 			if t := text.Get(); t != nil {
 				return *t
@@ -201,7 +217,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 		field.OnBlur = submit
 		field.OnSubmit = func(string) { submit() }
 	}
-	return row{Label: c.Label, Description: c.Description, TestID: c.TestID,
+	return row{Label: c.Label, Description: c.Description, Disabled: c.Disabled, TestID: c.TestID,
 		Error: func() string {
 			if invalid() {
 				return RangeText(c.Range)

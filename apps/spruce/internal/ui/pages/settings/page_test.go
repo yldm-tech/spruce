@@ -276,6 +276,25 @@ func TestSlidersSaveOnceTheUserStops(t *testing.T) {
 	}
 }
 
+// A threshold is off while its alert is: 提醒阈值 under 空间不足时提醒我, and the CPU sliders under 启用高 CPU 提醒.
+func TestThresholdsFollowTheirAlert(t *testing.T) {
+	p := start(t, options{})
+	if p.Enabled("id:low-disk-threshold-field") {
+		t.Error("提醒阈值 is on while 空间不足时提醒我 is off")
+	}
+	p.Press("role:switch 空间不足时提醒我")
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:low-disk-threshold-field") })
+
+	p.tab("health")
+	for _, name := range []string{"提醒阈值", "持续时间"} {
+		if !p.Enabled(p.slider(name)) {
+			t.Errorf("%s is off while the alert is on", name)
+		}
+	}
+	p.Press("role:switch 启用高 CPU 提醒")
+	p.WaitUntil(wait, func() bool { return !p.Enabled(p.slider("提醒阈值")) && !p.Enabled(p.slider("持续时间")) })
+}
+
 func TestClampedValueSaysSo(t *testing.T) {
 	svc := settingsfake.New(dataDir)
 	svc.Clamp = func(next enginesettings.AppSettings) enginesettings.AppSettings {
@@ -905,6 +924,9 @@ func TestLowDiskAlertAsksForNotificationsAndSaysWhenDenied(t *testing.T) {
 	p.updates(2)
 	p.WaitForGone("id:notify-denied", wait)
 
+	// The threshold takes a number again once the alert is back on.
+	p.Press("role:switch 空间不足时提醒我")
+	p.updates(3)
 	p.Clear("id:low-disk-threshold-field")
 	p.Type("id:low-disk-threshold-field", "0")
 	if got := p.text("low-disk-threshold-error"); got != "请输入 1 到 500 之间的整数" {
@@ -913,7 +935,7 @@ func TestLowDiskAlertAsksForNotificationsAndSaysWhenDenied(t *testing.T) {
 	p.Clear("id:low-disk-threshold-field")
 	p.Type("id:low-disk-threshold-field", "50")
 	p.Advance(debounce)
-	if got := p.updates(3).General.LowDiskGB; got != 50 {
+	if got := p.updates(4).General.LowDiskGB; got != 50 {
 		t.Errorf("threshold saved as %d", got)
 	}
 }
