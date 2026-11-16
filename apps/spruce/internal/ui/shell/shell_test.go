@@ -357,29 +357,30 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 func TestSettingsComesBackWhereItWasLeft(t *testing.T) {
 	a, _ := startShell(t, storefake.New(t.TempDir()), nav.Settings)
 	a.Resize(960, 420)
-	a.WaitFor("id:tab-auto", wait)
-	a.Press("id:tab-auto")
-	a.WaitFor("id:settings-tab-auto", wait)
+	// 清理 is long on every platform; 自动清理 is one note on Windows.
+	a.WaitFor("id:tab-cleanup", wait)
+	a.Press("id:tab-cleanup")
+	a.WaitFor("id:settings-tab-cleanup", wait)
 	page := func() *nsgotest.View { return a.Find("id:settings-page") }
 	end := page().Content.Height - page().Frame.Size.Height
 	if end < 40 {
-		t.Fatalf("自动清理 does not scroll at 960x420 (%v)", end)
+		t.Fatalf("清理 does not scroll at 960x420 (%v)", end)
 	}
 	a.Scroll("id:settings-page", end)
 	a.Advance(200 * time.Millisecond)
 	a.Press("id:nav-history")
 	a.WaitFor("role:header 操作历史", wait)
 	a.ChooseMenu("前往", "设置")
-	a.WaitFor("id:settings-tab-auto", wait)
+	a.WaitFor("id:settings-tab-cleanup", wait)
 	a.Advance(time.Second)
 	if y := page().Offset.Y; y < end-1 {
-		t.Errorf("自动清理 at %v, left at %v", y, end)
+		t.Errorf("清理 at %v, left at %v", y, end)
 	}
 
 	a.Press("id:nav-history")
 	a.WaitFor("role:header 操作历史", wait)
 	a.ChooseMenu("Spruce", "设置…")
-	a.WaitFor("id:settings-tab-auto", wait)
+	a.WaitFor("id:settings-tab-cleanup", wait)
 }
 
 // Going to another page and back lands 概览 where it was left.
