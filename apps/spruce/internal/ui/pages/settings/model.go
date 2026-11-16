@@ -225,14 +225,14 @@ type License struct {
 	License string
 }
 
-// Licenses are the third-party modules linked into the app on macOS or Windows (go list -deps of the app for each target) and the bundled fonts, kept by hand with the dependencies, each with the licence its LICENSE file states: every one is under a permissive licence.
+// Licenses are the third-party modules linked into the app on macOS or Windows (go list -deps of the app for each target) and the bundled fonts, kept by hand with the dependencies, each with the licences of the code the app links from it: every one is permissive. NSGo is Apache-2.0, and the packages the app links carry Tailwind's palette (MIT), Ebitengine's Kage compiler as MyGo forked it (Apache-2.0 and MIT) and CLDR tables (Unicode-3.0), as its NOTICE says; plist's first licence is BSD-2-Clause with the FreeBSD "views and conclusions" clause, BSD-2-Clause-Views. The full texts ship in resources/THIRD_PARTY_NOTICES.txt, which scripts/notices.sh writes.
 var Licenses = []License{
-	{"NSGo", "Apache-2.0"},
+	{"NSGo", "Apache-2.0 AND MIT AND Unicode-3.0"},
 	{"purego", "Apache-2.0"},
 	{"gopsutil", "BSD-3-Clause"},
 	{"go-sysconf", "BSD-3-Clause"},
 	{"battery", "MIT"},
-	{"plist", "BSD-2-Clause AND BSD-3-Clause"},
+	{"plist", "BSD-2-Clause-Views AND BSD-3-Clause"},
 	{"wmi", "MIT"},
 	{"go-ole", "MIT"},
 	{"go-yaml", "MIT AND Apache-2.0"},

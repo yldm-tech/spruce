@@ -13,6 +13,6 @@ dev:
 build:
 	go tool nsgo build -target $(TARGET) apps/spruce
 
-# Every acceptance check CI runs: gofmt, vet and build for each target, the race tests, golangci-lint, the headless nsgo tests and nsgo check (apps/spruce/scripts/check.sh says what it needs).
+# Every acceptance check CI runs: gofmt, vet and build for each target, the third-party notices, the race tests, golangci-lint, the headless nsgo tests and nsgo check (apps/spruce/scripts/check.sh says what it needs).
 check:
 	apps/spruce/scripts/check.sh
