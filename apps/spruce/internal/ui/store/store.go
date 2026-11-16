@@ -314,6 +314,8 @@ type Permission struct {
 	state   *core.Signal[maintenance.PermissionState]
 	checked *core.Signal[bool]
 	guiding *core.Signal[bool]
+	// seq numbers the reads of the state: a check as it starts, the guide as it ends; applied is the read whose answer the state holds, so an answer from a read numbered before it is dropped.
+	seq, applied int
 }
 
 func newPermission(cx *core.Scope, ctx context.Context, svc PermissionService) *Permission {
@@ -334,13 +336,29 @@ func (p *Permission) Guiding() bool { return p.guiding.Get() }
 
 // Recheck reads the state again.
 func (p *Permission) Recheck() {
+	seq := p.next()
 	async.Do(p.cx, p.ctx, func(context.Context) (maintenance.PermissionState, error) { return p.svc.FullDiskAccess() },
 		func(st maintenance.PermissionState, err error) {
 			if err == nil {
-				p.state.Set(st)
+				p.apply(seq, st)
 			}
 			p.checked.Set(true)
 		})
+}
+
+// next numbers a read of the state.
+func (p *Permission) next() int {
+	p.seq++
+	return p.seq
+}
+
+// apply sets the state read by seq unless a read numbered later has answered already.
+func (p *Permission) apply(seq int, st maintenance.PermissionState) {
+	if seq < p.applied {
+		return
+	}
+	p.applied = seq
+	p.state.Set(st)
 }
 
 // Guide opens System Settings at Full Disk Access and waits there; done receives the state it ended with and the error that kept System Settings from opening. A second call while one waits does nothing.
@@ -351,7 +369,8 @@ func (p *Permission) Guide(done func(maintenance.PermissionState, error)) {
 	p.guiding.Set(true)
 	async.Do(p.cx, p.ctx, p.svc.GuideFullDiskAccess, func(st maintenance.PermissionState, err error) {
 		p.guiding.Set(false)
-		p.state.Set(st)
+		// The guide waits until the state changes, so its answer is as of its end: newer than any check that started before.
+		p.apply(p.next(), st)
 		p.checked.Set(true)
 		if done != nil {
 			done(st, err)
