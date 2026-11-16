@@ -7,13 +7,14 @@ type Stat struct {
 	Label, Value string
 }
 
-// ActionButton is the action bar's round button.
+// ActionButton is the action bar's round button. Tooltip, when set, shows on hover, also while the button is off (why it is).
 type ActionButton struct {
 	Label    string
 	OnPress  func()
 	Disabled func() bool
 	Ref      *core.Ref
 	TestID   string
+	Tooltip  core.Node
 }
 
 // ActionBar is the bottom of a page: the round action button between two figures, as on the 维护 page. It sits at the bottom of the page's column (its top margin takes the free space).
@@ -29,7 +30,8 @@ func (a ActionBar) Render(*core.Scope) core.Node {
 			JustifyContent: core.JustifyCenter, Gap: 28, Padding: core.Edges{Top: 18}},
 		Children: []core.Node{
 			statView(a.Start, true),
-			RunButton{Text: a.Button.Label, OnPress: a.Button.OnPress, Disabled: a.Button.Disabled, Ref: a.Button.Ref, TestID: a.Button.TestID},
+			RunButton{Text: a.Button.Label, OnPress: a.Button.OnPress, Disabled: a.Button.Disabled, Ref: a.Button.Ref, TestID: a.Button.TestID,
+				Tooltip: a.Button.Tooltip},
 			statView(a.End, false),
 		},
 	}

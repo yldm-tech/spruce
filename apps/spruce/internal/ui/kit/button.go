@@ -147,6 +147,8 @@ type RunButton struct {
 	Ref      *core.Ref
 	TestID   string
 	Label    string
+	// Tooltip shows on hover, as a View's.
+	Tooltip core.Node
 }
 
 // Render implements core.Node.
@@ -182,7 +184,7 @@ func (b RunButton) Render(*core.Scope) core.Node {
 	// The round button swells a little under the pointer and gives under a press.
 	st.Hover = &core.Style{Transform: core.Transform{Scale: 1.03}}
 	st = Pressable(st, 0.95)
-	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Ref: b.Ref, Disabled: b.Disabled, Style: st,
+	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Ref: b.Ref, Disabled: b.Disabled, Style: st, Tooltip: b.Tooltip,
 		OnPress: func(core.PressEvent) {
 			if b.OnPress != nil && !is(b.Disabled) {
 				b.OnPress()
