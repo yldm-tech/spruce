@@ -13,6 +13,7 @@ import (
 	"spruce/apps/spruce/internal/ui/async"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
+	"spruce/apps/spruce/internal/ui/store"
 )
 
 // timeNow is the clock the items' ages count from.
@@ -25,7 +26,7 @@ const (
 	itemRowHeight     core.Points = 48
 )
 
-// CategoryList is the result list of the cleaner pages: a toolbar with the totals, 全选 and 全不选 (acting on these categories only), and one glass card per category with its tri-state checkbox, tile, size and warning, expanding to its items, each with a checkbox, its folder, age and size and a button that shows it in Finder or Explorer. Selection is controlled: OnChange receives the next one (see selection.go). Reveal shows a path in the file manager; its error shows in the toolbar.
+// CategoryList is the result list of the cleaner pages: a toolbar with the totals, 全选 and 全不选 (acting on these categories only), and one glass card per category with its tri-state checkbox, tile, size and warning, expanding to its items, each with a checkbox, its folder, age and size and a button that shows it in Finder or Explorer. Selection is controlled: OnChange receives the next one (see selection.go). Reveal shows a path in the file manager; its error shows as a short toast (RevealFailed).
 type CategoryList struct {
 	Categories func() []cleanup.Category
 	Selection  func() Selection
@@ -46,23 +47,7 @@ type CategoryList struct {
 
 // Render implements core.Node.
 func (l CategoryList) Render(cx *core.Scope) core.Node {
-	ctx := cx.Context()
-	revealErr := core.NewSignal(cx, "")
-	seq := 0
-	reveal := func(path string) {
-		if l.Reveal == nil {
-			return
-		}
-		seq++
-		mine := seq
-		revealErr.Set("")
-		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, l.Reveal(ctx, path) }, func(_ struct{}, err error) {
-			if mine != seq || err == nil {
-				return
-			}
-			revealErr.Set(err.Error())
-		})
-	}
+	reveal := Revealer(cx, l.Reveal)
 	disabled := func() bool { return l.Disabled != nil && l.Disabled() }
 	summary := func() string {
 		cats := l.Categories()
@@ -70,7 +55,8 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 		for _, c := range cats {
 			total += c.Size
 		}
-		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total) + "，已选 " + strconv.Itoa(SelectedTotals(cats, l.Selection()).Count) + " 项"
+		// What is checked is the action bar's, pinned under the list.
+		return strconv.Itoa(len(cats)) + " 类，共 " + format.Bytes(total)
 	}
 	toolbar := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 8, ColumnGap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{AutoMargin: core.SideRight}, Children: []core.Node{
@@ -79,7 +65,6 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 			OnPress: func() { l.OnChange(SelectAll(core.Untracked(cx, l.Categories))) }},
 		kit.Button{Text: "全不选", Variant: kit.ButtonLink, Disabled: disabled, TestID: "select-none",
 			OnPress: func() { l.OnChange(NothingSelected) }},
-		core.View{Style: core.Style{FlexBasis: core.Pct(100)}, Children: []core.Node{kit.ErrorLine{Text: revealErr.Get, TestID: "reveal-error"}}},
 	}}
 	cards := core.Each(l.Categories, func(c cleanup.Category) string { return c.ID }, func(cx *core.Scope, c func() cleanup.Category, index func() int) core.Node {
 		return categoryCard(cx, c, l, disabled, reveal, core.Untracked(cx, index))
@@ -95,6 +80,21 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 		cx.Untrack(func() { kit.SettleLayout(cx) })
 	})
 	return core.View{Role: core.RoleRegion, Label: l.Label, TestID: l.TestID, Style: core.Style{Gap: 12}, Children: []core.Node{toolbar, cards}}
+}
+
+// Revealer is reveal for the rows of a list made in cx, which tells why it failed as a short toast: the toolbar is often far from the row pressed, and the toast shows wherever the page is scrolled. A toast with 撤销 stays, and the failure shows once it goes (Toasts.ShowLater). nil reveal shows nothing.
+func Revealer(cx *core.Scope, reveal func(ctx context.Context, path string) error) func(path string) {
+	ctx, toasts := cx.Context(), store.Use(cx).Toasts
+	return func(path string) {
+		if reveal == nil {
+			return
+		}
+		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, reveal(ctx, path) }, func(_ struct{}, err error) {
+			if err != nil {
+				toasts.ShowLater(store.Toast{Text: err.Error(), Duration: errorToast})
+			}
+		})
+	}
 }
 
 // categoryCard is one category: its head and, once expanded, its items.

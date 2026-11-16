@@ -69,12 +69,13 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		})
 	})
 
-	// The card's clean is the store's (store.Overview.Running), not the page's: it outlives 概览, so a page opened while it runs shows it as busy, with its progress and 停止.
-	busy := func() bool { o, ok := p.ov.Running(); return ok && o.Recommendation == id }
+	// The card's clean is the store's (store.Overview.Running), not the page's: it outlives 概览, so a page opened while it runs shows it as busy, with its progress and 停止. A 全部清理 that cleans the card shows it busy too, its progress and 停止 under the figure.
+	own := func() bool { o, ok := p.ov.Running(); return ok && o.Recommendation == id }
+	busy := func() bool { return own() || p.cleaningAll(id) }
 	// Past progressAfter a running action shows its progress, at once when the card comes back to a clean that has run since; the timer goes with the effect when the action ends.
-	showProgress.Set(core.Untracked(cx, busy))
+	showProgress.Set(core.Untracked(cx, own))
 	cx.Effect(func() {
-		if !busy() {
+		if !own() {
 			return
 		}
 		cx.AfterFunc(progressAfter, func() { showProgress.Set(true) })
@@ -102,7 +103,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		async.Do(cx, cardCtx, func(ctx context.Context) (struct{}, error) { return struct{}{}, p.deps.Files.Reveal(ctx, path) },
 			func(_ struct{}, err error) {
 				if err != nil {
-					p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
+					p.stores.Toasts.ShowLater(store.Toast{Text: err.Error(), Duration: toastShort})
 				}
 			})
 	}
@@ -116,7 +117,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		stores, k := p.stores, p.kept
 		p.active.Set(id)
 		p.hold(r, index())
-		k.setFailed(id, 0)
+		k.setFailed(id, 0, "")
 		showProgress.Set(a == advice.ActionDelete || a == advice.ActionCommand)
 		p.ov.Clean(p.cx, req, app.CleanOrigin{Recommendation: r.ID}, nil,
 			func(out app.OverviewOutcome, err error) {
@@ -127,7 +128,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			func(out app.OverviewOutcome, err error) {
 				// What could not be handled is kept with the card in the app's scope, also when 概览 went meanwhile.
 				if err == nil {
-					k.setFailed(id, len(out.Result.Failed))
+					k.setFailed(id, len(out.Result.Failed), out.RunID)
 				}
 				cleaned(stores, a, out, err, undo)
 			})
@@ -168,6 +169,8 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		ask(d, func() { run(a, r, req) })
 	}
 
+	// A result that may not be cleaned, with no check running, is checked again from where the user looks: the card's own button.
+	stale := core.NewMemo(cx, func() bool { return !p.actionable() && !p.checking() })
 	actLabel := func() string {
 		switch {
 		case busy():
@@ -175,11 +178,19 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		case !p.actionable() && p.checking():
 			return "正在核对…"
 		case !p.actionable():
-			return "重新检查后才能清理"
+			return "重新检查"
 		}
 		return ActionLabel(action.Get(), partial(), bytes.Get())
 	}
 	actButton := core.Dynamic(func(*core.Scope) core.Node {
+		if stale.Get() {
+			b := kit.Button{Variant: kit.ButtonGhost, TestID: "rec-" + id + "-act", TextFunc: actLabel, OnPress: p.checkNow,
+				Disabled: func() bool { return p.cleaning() || leaving() }}
+			if p.cleaning() {
+				b.Label, b.Tooltip = "正在清理，完成后再检查", "正在清理，完成后再检查"
+			}
+			return core.Func(func(*core.Scope) core.Node { return b })
+		}
 		b := kit.Button{Variant: kit.ButtonAccent, TestID: "rec-" + id + "-act", TextFunc: actLabel, OnPress: act, Busy: busy,
 			Disabled: func() bool { return !p.actionable() || other.Get() || len(refs()) == 0 || leaving() }}
 		if other.Get() {
@@ -208,14 +219,16 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		}}
 	}}
 	actions := core.Dynamic(func(*core.Scope) core.Node {
-		if busy() && showProgress.Get() {
-			return core.Func(func(*core.Scope) core.Node { return progressRow(id, p.ov.CleanProgress, p.ov.StopClean) })
+		if own() && showProgress.Get() {
+			return core.Func(func(*core.Scope) core.Node {
+				return progressRow("rec-"+id, action.Get, bytes.Get, p.ov.CleanProgress, p.ov.StopClean)
+			})
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, ColumnGap: 12, RowGap: 6}, Children: []core.Node{
 				actButton, autoLink,
-				core.Show{When: func() bool { return p.kept.failedOf(id) > 0 && !busy() }, Then: func(*core.Scope) core.Node {
-					return bodyText(func() string { return strconv.Itoa(p.kept.failedOf(id)) + " 项未能处理" }, kit.ColorWarning, "rec-"+id+"-failed")
+				core.Show{When: func() bool { return p.kept.failedOf(id).n > 0 && !busy() }, Then: func(*core.Scope) core.Node {
+					return failedLine(p, id)
 				}},
 			}}
 		})
@@ -302,24 +315,29 @@ func confirmDialog(c Confirm) kit.ConfirmDialog {
 	return d
 }
 
-// progressRow is a card's action while it runs past progressAfter: the bar, 已处理 {done}/{total} and 停止.
-func progressRow(id string, progress func() cleanup.Progress, stop func()) core.Node {
+// progressRow is a card's action while it runs past progressAfter, and 全部清理's while it runs: the bar, how far it is (CleanProgressText of the action a and the total bytes it cleans) and 停止; its parts' TestIDs start with prefix.
+func progressRow(prefix string, a func() advice.Action, total func() int64, progress func() cleanup.Progress, stop func()) core.Node {
+	text := kit.Tabular(kit.TextFunc(func() string { return CleanProgressText(a(), progress(), total()) }, kit.FontBody, kit.Regular, kit.ColorTextSecondary))
+	text.TestID = prefix + "-progress-text"
 	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(80)}, Children: []core.Node{
-			// The row shows only while the clean runs, so the bar's light always sweeps: one long item or a command stands at 0/1 until it ends.
-			kit.Meter{Height: 4, Label: "清理进度", TestID: "rec-" + id + "-progress", Active: func() bool { return true }, Value: func() float64 {
-				pr := progress()
-				if pr.Total <= 0 {
-					return 0
-				}
-				return min(1, float64(pr.Done)/float64(pr.Total))
-			}},
+			// The row shows only while the clean runs, so the bar's light always sweeps: one long item or a command stands still until it ends.
+			kit.Meter{Height: 4, Label: "清理进度", TestID: prefix + "-progress", Active: func() bool { return true },
+				Value: func() float64 { return CleanProgressFraction(progress(), total()) }},
 		}},
-		kit.Tabular(kit.TextFunc(func() string {
-			pr := progress()
-			return "已处理 " + strconv.Itoa(pr.Done) + "/" + strconv.Itoa(pr.Total)
-		}, kit.FontBody, kit.Regular, kit.ColorTextSecondary)),
-		kit.Button{Text: "停止", Variant: kit.ButtonLink, TestID: "rec-" + id + "-stop", OnPress: stop},
+		text,
+		kit.Button{Text: "停止", Variant: kit.ButtonLink, TestID: prefix + "-stop", OnPress: stop},
+	}}
+}
+
+// failedLine is 「{n} 项未能处理」 under a card whose last clean left items, with 查看, the run in 操作历史 that tells why, once the toast that offered it is gone.
+func failedLine(p *page, id string) core.Node {
+	f := func() failure { return p.kept.failedOf(id) }
+	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter}, Children: []core.Node{
+		bodyText(func() string { return strconv.Itoa(f().n) + " 项未能处理" }, kit.ColorWarning, "rec-"+id+"-failed"),
+		core.Show{When: func() bool { return f().run != "" }, Then: func(*core.Scope) core.Node {
+			return kit.Link{Text: fixed("查看"), TestID: "rec-" + id + "-failed-view", OnPress: func() { p.nav.GoHistory("", f().run) }}
+		}},
 	}}
 }
 

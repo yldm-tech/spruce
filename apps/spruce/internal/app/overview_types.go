@@ -96,6 +96,8 @@ type CleanOrigin struct {
 	Recommendation string
 	// Source is a drill-down source, recorded with that source's kind.
 	Source string
+	// All is 概览's 全部清理, the checked items of every card in one clean, recorded as KindSmartScan with its own Detail line.
+	All bool
 }
 
 // OverviewOutcome is what a clean of 概览 did.

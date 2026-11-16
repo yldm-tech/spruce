@@ -181,7 +181,7 @@ func TestDrillListsItsSource(t *testing.T) {
 		t.Error("defaults")
 	}
 	p.Find("id:category-system-junk:logs >> text:排查问题时可能用得到")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 3 项" {
+	if got := p.toolbar(); got != "3 类，共 13.5 MB" {
 		t.Errorf("toolbar %q", got)
 	}
 	if got := p.stat("可释放"); got != "13 MB" {
@@ -222,7 +222,7 @@ func TestCategoryListItems(t *testing.T) {
 func TestCategoryListSelectAllAndNone(t *testing.T) {
 	p := start(t, ready())
 	p.Press("id:select-all")
-	if got := p.toolbar(); got != "3 类，共 13.5 MB，已选 4 项" {
+	if got := p.stat("已选择"); got != "4 项" {
 		t.Errorf("toolbar %q", got)
 	}
 	p.Press("id:select-none")
@@ -236,19 +236,34 @@ func TestCategoryListSelectAllAndNone(t *testing.T) {
 	}
 }
 
-// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure.
+// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure, as a short toast rather than a line at the top of the list, which may be far from the row pressed.
 func TestCategoryListReveal(t *testing.T) {
 	p := start(t, ready())
 	p.files.Err = errors.New("这个项目已经不存在了")
 	p.Press("role:button 展开日志")
 	p.Press("role:button 在访达中显示 x.log")
-	p.WaitFor("id:reveal-error", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
 	if got := p.files.Revealed(); !reflect.DeepEqual(got, []string{"/Users/me/Library/Logs/x.log"}) {
 		t.Errorf("revealed %v", got)
 	}
-	if got := p.Find("id:reveal-error").Text; got != "这个项目已经不存在了" {
-		t.Errorf("error %q", got)
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second || got.UndoRun != "" {
+		t.Errorf("toast %+v", got)
 	}
+
+	// While the toast offers 撤销, the failure waits for it to go rather than take 撤销 away.
+	p.undoToast()
+	p.WaitUntil(wait, func() bool { t := p.stores.Toasts.Current(); return t != nil && t.UndoRun == "run-1" })
+	p.Press("role:button 在访达中显示 x.log")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 2 })
+	p.Settle()
+	if got := p.stores.Toasts.Current(); got == nil || got.UndoRun != "run-1" {
+		t.Errorf("the failure took 撤销 away: %+v", got)
+	}
+	p.Post(p.stores.Toasts.Dismiss)
+	p.WaitUntil(wait, func() bool {
+		t := p.stores.Toasts.Current()
+		return t != nil && t.Text == "这个项目已经不存在了"
+	})
 }
 
 // The design's largest case: 3,000 items in one category scroll inside the card and mount only the rows near view.
@@ -516,7 +531,7 @@ func (p *page) waitText(selector, want string) {
 	p.WaitUntil(wait, func() bool { vs := p.Query(selector); return len(vs) == 1 && vs[0].Text == want })
 }
 
-// One thing at a time: a clean elsewhere disables 清理.
+// One thing at a time: a clean elsewhere disables 清理, and the view says why, under its header and on the button.
 func TestBusyElsewhere(t *testing.T) {
 	st := ready()
 	st.Phase = app.OverviewCleaning
@@ -524,8 +539,49 @@ func TestBusyElsewhere(t *testing.T) {
 	if p.Enabled("id:clean") {
 		t.Error("清理 is enabled while another clean runs")
 	}
+	p.Find("id:drill-busy >> text:正在清理其他项目…")
+	if got := p.Find("id:clean").Props.Label; got != "正在清理其他项目…" {
+		t.Errorf("清理's label %q", got)
+	}
 	p.set(ready())
 	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
+	p.WaitForGone("id:drill-busy", wait)
+	if got := p.Find("id:clean").Props.Label; got != "" {
+		t.Errorf("清理's label %q once nothing else runs", got)
+	}
+}
+
+// The view's clean ends on one goroutine and the controller says so on another: while the controller still cleans after the view's clean ended, that is the view's own clean, so 正在清理其他项目… does not show.
+func TestOwnCleanEndingIsNotAnotherClean(t *testing.T) {
+	p := start(t, ready())
+	cleaning := ready()
+	cleaning.Phase = app.OverviewCleaning
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, _ func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		p.ov.Set(cleaning)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{Result: cleanup.CleanResult{Trashed: 10_000_000, Removed: 1}, RunID: "run-1", Undoable: true}, nil
+	}
+	p.Press("id:check-system-junk:caches")
+	p.Press("id:clean")
+	p.WaitUntil(wait, func() bool { return p.stores.Overview.State().Phase == app.OverviewCleaning })
+	close(release)
+	p.WaitForGone("id:clean-overlay", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if p.Exists("id:drill-busy") {
+		t.Error("the view's own clean shows as another clean as it ends")
+	}
+	p.set(ready())
+	p.Settle()
+	if p.Exists("id:drill-busy") {
+		t.Error("正在清理其他项目… once nothing runs")
+	}
+	// Another clean after it still shows as one.
+	p.set(cleaning)
+	p.WaitFor("id:drill-busy", wait)
 }
 
 // Nothing of the source: the empty state; a failed source and unreadable places are told.

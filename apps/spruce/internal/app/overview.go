@@ -763,7 +763,27 @@ func lastMonday10(t time.Time) time.Time {
 	return m
 }
 
-// readDisk reads free space every Policy.DiskEvery (and after a clean or a settings change) and posts the low-disk notification when the alert is on and schedule.LowDiskAlert says so.
+// ReadDisk reads free space again at once, which is cheap (statfs): the window coming back and 概览 opening show it as it is now, and so do moves and uninstalls outside 概览's cleans, which DiskEvery alone would leave up to 15 minutes old. It reads and publishes here rather than in the loop, which may be inside a check for a while; the loop's next turn reads it again for the low-disk alert, and logs a failed read.
+func (o *Overview) ReadDisk() {
+	o.mu.Lock()
+	o.diskDue = true
+	o.mu.Unlock()
+	o.poke()
+	if o.cfg.Disk == nil {
+		return
+	}
+	d, err := o.cfg.Disk(context.Background())
+	if err != nil {
+		return
+	}
+	d.Low, d.At = DiskLow(d.Free, d.Total), o.now()
+	o.mu.Lock()
+	o.disk = &d
+	o.mu.Unlock()
+	o.publish()
+}
+
+// readDisk reads free space every Policy.DiskEvery (and after a clean, a settings change or ReadDisk) and posts the low-disk notification when the alert is on and schedule.LowDiskAlert says so.
 func (o *Overview) readDisk(ctx context.Context, s settings.AppSettings) {
 	if o.cfg.Disk == nil {
 		return
@@ -852,8 +872,11 @@ func (o *Overview) Clean(ctx context.Context, req cleanup.CleanRequest, origin C
 	return out, nil
 }
 
-// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：已清理 {n} 项，释放 {size}」 first, counted from what the clean did; a drill-down view's with its source's kind.
+// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：已清理 {n} 项，释放 {size}」 first, counted from what the clean did, and 全部清理's the same with 全部清理 as its title; a drill-down view's with its source's kind.
 func (o *Overview) cleanOptions(r OverviewResult, origin CleanOrigin) CleanOptions {
+	if origin.All {
+		return CleanOptions{Kind: history.KindSmartScan, DetailOf: o.cardDetail("全部清理")}
+	}
 	if origin.Source != "" {
 		if kind, ok := cleanerKinds[CleanerID(origin.Source)]; ok && origin.Recommendation == "" {
 			return CleanOptions{Kind: kind}
@@ -865,14 +888,19 @@ func (o *Overview) cleanOptions(r OverviewResult, origin CleanOrigin) CleanOptio
 	opts := CleanOptions{Kind: history.KindSmartScan}
 	for _, rec := range r.Recommendations {
 		if rec.ID == origin.Recommendation {
-			title, windows := rec.Title, o.cfg.GOOS == "windows"
-			opts.DetailOf = func(res cleanup.CleanResult) string {
-				return fmt.Sprintf("%s：已清理 %d 项，释放 %s", title, res.Removed, format.BytesIn(res.Freed+res.Trashed, windows))
-			}
+			opts.DetailOf = o.cardDetail(rec.Title)
 			break
 		}
 	}
 	return opts
+}
+
+// cardDetail is the first Details line of a clean of 概览 titled title: 「{title}：已清理 {n} 项，释放 {size}」, counted from what the clean did.
+func (o *Overview) cardDetail(title string) func(cleanup.CleanResult) string {
+	windows := o.cfg.GOOS == "windows"
+	return func(res cleanup.CleanResult) string {
+		return fmt.Sprintf("%s：已清理 %d 项，释放 %s", title, res.Removed, format.BytesIn(res.Freed+res.Trashed, windows))
+	}
 }
 
 // dropLocked takes what a clean of cleaner handled out of the current result, when it is that instance's, as the instance itself forgets it: the items, and a command category whose command ran as a whole. The cards are derived again. o.mu is held.

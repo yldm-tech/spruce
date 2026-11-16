@@ -38,6 +38,7 @@ func (f *fakeOverview) Subscribe() (<-chan app.OverviewState, func()) { return f
 func (f *fakeOverview) Notices() (<-chan app.Notice, func())          { return nil, func() {} }
 func (f *fakeOverview) CheckNow() error                               { return errors.New("正在清理，完成后再检查") }
 func (f *fakeOverview) StopCheck()                                    {}
+func (f *fakeOverview) ReadDisk()                                     {}
 func (f *fakeOverview) Clean(ctx context.Context, _ cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
 	f.mu.Lock()
 	f.cleans = append(f.cleans, origin)
@@ -245,5 +246,30 @@ func TestToasts(t *testing.T) {
 	st.Toasts.Dismiss()
 	if st.Toasts.Current() != nil {
 		t.Error("not dismissed")
+	}
+
+	// A passing message waits while the toast offers 撤销 and shows once it goes; without 撤销 it shows at once, and a newer Show drops one that waits.
+	failed := Toast{Text: "这个项目已经不存在了", Duration: 6 * time.Second}
+	st.Toasts.ShowLater(failed)
+	if got := st.Toasts.Current(); got == nil || *got != failed {
+		t.Errorf("without 撤销 %+v", got)
+	}
+	undo := Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "r1", Duration: 10 * time.Second}
+	st.Toasts.Show(undo)
+	st.Toasts.ShowLater(failed)
+	if got := st.Toasts.Current(); got == nil || *got != undo {
+		t.Errorf("the message took 撤销 away: %+v", got)
+	}
+	st.Toasts.Dismiss()
+	if got := st.Toasts.Current(); got == nil || *got != failed {
+		t.Errorf("after 撤销 went %+v", got)
+	}
+	st.Toasts.Show(undo)
+	st.Toasts.ShowLater(failed)
+	put := Toast{Text: "已放回原处 1 项", Duration: 6 * time.Second}
+	st.Toasts.Show(put)
+	st.Toasts.Dismiss()
+	if got := st.Toasts.Current(); got != nil {
+		t.Errorf("a message that waited came after a newer toast: %+v", got)
 	}
 }

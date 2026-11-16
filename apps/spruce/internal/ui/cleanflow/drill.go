@@ -59,6 +59,8 @@ type Drill struct {
 	toast    Toaster
 	cats     *core.Memo[[]cleanup.Category]
 	cleaning *core.Signal[bool]
+	// settling is set from the view's own clean ending until the controller says its clean has ended too: the two come on separate goroutines, and meanwhile the controller's OverviewCleaning is the view's clean, not another (BusyElsewhere).
+	settling *core.Signal[bool]
 	// reading is set while the Trash is measured for the confirmation of a clean that empties it.
 	reading *core.Signal[bool]
 	// undoShown reports whether the toast offers 撤销, which emptying the Trash would make fail.
@@ -79,9 +81,15 @@ func NewDrill(cx *core.Scope, source string, toast Toaster) *Drill {
 		CheckErr:  core.NewSignal(cx, ""),
 		Page:      new(core.Ref),
 		cleaning:  core.NewSignal(cx, false),
+		settling:  core.NewSignal(cx, false),
 		reading:   core.NewSignal(cx, false),
 	}
 	d.undoShown = core.NewMemo(cx, func() bool { t := stores.Toasts.Current(); return t != nil && t.UndoRun != "" })
+	cx.Effect(func() {
+		if d.State().Phase != app.OverviewCleaning {
+			cx.Untrack(func() { d.settling.Set(false) })
+		}
+	})
 	if n := nav.Use(cx); n != nil {
 		d.Reveal = n.TakeReveal()
 	}
@@ -170,6 +178,12 @@ func (d *Drill) Cleaning() bool { return d.cleaning.Get() }
 func (d *Drill) Busy() bool {
 	return d.cleaning.Get() || d.ov.Busy() || d.State().Phase == app.OverviewCleaning
 }
+
+// BusyElsewhere reports whether a clean or an 撤销 runs that is not the view's own: 清理 waits for it (BusyText).
+func (d *Drill) BusyElsewhere() bool { return d.Busy() && !d.Cleaning() && !d.settling.Get() }
+
+// BusyText is why 清理 waits while BusyElsewhere.
+const BusyText = "正在清理其他项目…"
 
 // CanClean reports whether 清理 may act on a selection of count items: a result to act on, no check and no clean running, the Trash not being measured, and no Trash checked while the toast offers 撤销 (TrashWait).
 func (d *Drill) CanClean(count int) bool {
@@ -352,6 +366,7 @@ func (d *Drill) run(req cleanup.CleanRequest, action advice.Action, sub string) 
 		}
 		d.cancel = nil
 		d.cx.Batch(func() {
+			d.settling.Set(core.Untracked(d.cx, d.State).Phase == app.OverviewCleaning)
 			d.cleaning.Set(false)
 			d.Progress.Set(cleanup.Progress{})
 		})

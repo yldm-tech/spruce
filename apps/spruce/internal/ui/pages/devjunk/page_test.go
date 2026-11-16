@@ -237,7 +237,6 @@ func TestProjectFilters(t *testing.T) {
 	if got := textOf(p.Find("id:projects-filter-idle")); got != "闲置超过 30 天" {
 		t.Errorf("idle chip %q", got)
 	}
-	p.Find("text:按大小排序")
 	count := func() int { return len(p.Query("id:projects >> role:checkbox")) }
 	p.Press("id:projects-filter-idle")
 	p.WaitUntil(wait, func() bool { return count() == 3 })
@@ -519,4 +518,75 @@ func TestProjectHeadTakesPresses(t *testing.T) {
 	}
 	p.Press(tool + "-head")
 	p.WaitForGone(tool+"-items", wait)
+}
+
+// Showing a project that is no longer there in Finder says why in a short toast, not at the top of the list, which may be far from the row pressed.
+func TestProjectRevealFails(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.files.Err = fmt.Errorf("这个项目已经不存在了")
+	p.Press(p.project("/Users/me/Workspace/shop") + "-reveal")
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second {
+		t.Errorf("toast %+v", got)
+	}
+	if p.Exists("id:reveal-error") {
+		t.Error("the error is also shown at the top of the list")
+	}
+}
+
+// The projects show largest first or by their last activity, most recent first, and the view keeps the order chosen from one visit to the next.
+func TestProjectSort(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	order := func() []string {
+		var out []string
+		for _, r := range p.Query("id:projects >> role:group") {
+			if strings.HasPrefix(r.Props.TestID, "project-") && !strings.HasSuffix(r.Props.TestID, "-items") {
+				out = append(out, r.Props.Label)
+			}
+		}
+		return out
+	}
+	if !p.Find("id:projects-sort-size").Props.Pressed {
+		t.Error("大小 is not the first order")
+	}
+	if got := order(); !reflect.DeepEqual(got, []string{"shop", "blog", "tool", "lib"}) {
+		t.Errorf("by size %v", got)
+	}
+	p.Press("id:projects-sort-active")
+	p.WaitUntil(wait, func() bool { return reflect.DeepEqual(order(), []string{"tool", "shop", "blog", "lib"}) })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitForGone("id:drill-dev-junk", wait)
+	p.Post(func() { p.nav.Go(nav.DevJunk) })
+	p.WaitFor("id:projects", wait)
+	if got := order(); !reflect.DeepEqual(got, []string{"tool", "shop", "blog", "lib"}) {
+		t.Errorf("after coming back %v", got)
+	}
+}
+
+// A long list of projects lays out at its full length in the page but mounts only the rows near view, and a row scrolled to works as any other.
+func TestManyProjectsMountOnlyNearView(t *testing.T) {
+	var items []cleanup.Item
+	for i := range 120 {
+		project := fmt.Sprintf("/Users/me/Workspace/p%03d", i)
+		p := project + "/node_modules"
+		items = append(items, cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: int64(10000 - i), ModTime: now.Add(-100 * 24 * time.Hour), Project: project,
+			Git: cleanup.GitClean, Selected: true, Dir: true, Note: fmt.Sprintf("p%03d", i)})
+	}
+	nm := cleanup.Category{ID: "dev-junk:artifact-node-modules", Source: "dev-junk", Title: "node_modules", Icon: "node", Kind: cleanup.KindProjectArtifact,
+		Deletion: cleanup.DeletePermanent, Items: items}
+	p := start(t, stateOf(nm), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.WaitFor("id:projects", wait)
+	if n := len(p.QueryMounted("id:projects >> role:checkbox")); n == 0 || n > 60 {
+		t.Fatalf("%d project rows mounted for 120 projects", n)
+	}
+	last := p.project("/Users/me/Workspace/p119")
+	p.ScrollTo("id:drill-dev-junk", core.Point{Y: 74 * 130})
+	p.WaitUntil(wait, func() bool { return len(p.QueryMounted(last+"-check")) == 1 })
+	if !p.checked(last + "-check") {
+		t.Fatal("the last project is not checked by default")
+	}
+	p.Press(last + "-check")
+	if got := p.stat("已选择"); got != "119 个项目" {
+		t.Errorf("已选择 %q", got)
+	}
 }

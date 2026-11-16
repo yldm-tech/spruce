@@ -176,6 +176,40 @@ func ActionLabel(a advice.Action, partial bool, bytes int64) string {
 	return s
 }
 
+// CleanProgressText is a card's progress line while its clean of total bytes runs: 已处理 {done}/{total} over several items. One item (or a command) reports nothing until it ends, so until then it says what is being handled (正在删除 17.2 GB, 正在运行清理命令) rather than a 0 B freed that reads as stuck, and once bytes come how much is freed (or moved to the Trash, for a move) of total.
+func CleanProgressText(a advice.Action, pr cleanup.Progress, total int64) string {
+	if pr.Total > 1 {
+		return "已处理 " + strconv.Itoa(pr.Done) + "/" + strconv.Itoa(pr.Total)
+	}
+	if pr.Bytes == 0 {
+		switch a {
+		case advice.ActionDelete:
+			return "正在删除 " + format.Bytes(total)
+		case advice.ActionCommand:
+			return "正在运行清理命令"
+		case advice.ActionMixed:
+			return "正在清理 " + format.Bytes(total)
+		}
+		return "正在移到" + format.TrashName() + " " + format.Bytes(total)
+	}
+	verb := "已释放 "
+	if a == advice.ActionTrash {
+		verb = "已移到" + format.TrashName() + " "
+	}
+	return verb + format.Bytes(pr.Bytes) + " / " + format.Bytes(total)
+}
+
+// CleanProgressFraction is how far a card's clean of total bytes is, as CleanProgressText counts it: by items over several, by bytes for one.
+func CleanProgressFraction(pr cleanup.Progress, total int64) float64 {
+	switch {
+	case pr.Total > 1:
+		return min(1, float64(pr.Done)/float64(pr.Total))
+	case total > 0:
+		return min(1, float64(pr.Bytes)/float64(total))
+	}
+	return 0
+}
+
 // BusyLabel is a card's button while its action runs.
 func BusyLabel(a advice.Action) string {
 	switch a {
@@ -422,6 +456,66 @@ func cardCategories(scan cleanup.ScanResult, r advice.Recommendation) []cleanup.
 			}
 			out = append(out, cat)
 			break
+		}
+	}
+	return out
+}
+
+// CleanAll is what 全部清理 cleans: the checked items of every card in one selection over the cards' categories, each once, merged in the cards' order. A tool's command is left out: it runs a program, which its own card asks about. Cards are the cards with something in it.
+type CleanAll struct {
+	Categories []cleanup.Category
+	Sel        cleanflow.Selection
+	Cards      []string
+}
+
+// AllOf is 全部清理 over the cards recs, with what ch checks among their items in scan.
+func AllOf(recs []advice.Recommendation, ch cleanflow.Choice, scan cleanup.ScanResult) CleanAll {
+	all := CleanAll{Sel: cleanflow.Selection{}}
+	at := map[string]int{}
+	for _, r := range recs {
+		pick := CardPick(r, ch, scan)
+		in := false
+		for _, c := range cardCategories(scan, r) {
+			ids := pick.Sel[c.ID]
+			if c.Command != "" || len(ids) == 0 {
+				continue
+			}
+			in = true
+			items := c.Items
+			i, ok := at[c.ID]
+			if !ok {
+				i, at[c.ID] = len(all.Categories), len(all.Categories)
+				c.Items, c.Size = nil, 0
+				all.Categories = append(all.Categories, c)
+				all.Sel[c.ID] = map[string]struct{}{}
+			}
+			merged := &all.Categories[i]
+			for _, it := range items {
+				if _, checked := ids[it.ID]; checked && !slices.ContainsFunc(merged.Items, func(m cleanup.Item) bool { return m.ID == it.ID }) {
+					merged.Items = append(merged.Items, it)
+					merged.Size += it.Size
+					all.Sel[c.ID][it.ID] = struct{}{}
+				}
+			}
+		}
+		if in {
+			all.Cards = append(all.Cards, r.ID)
+		}
+	}
+	return all
+}
+
+// FailedByCard counts the failures of a 全部清理 of cards by the card whose item failed, leaving out cards with none.
+func FailedByCard(recs []advice.Recommendation, cards []string, failed []cleanup.Failure) map[string]int {
+	out := map[string]int{}
+	for _, r := range recs {
+		if !slices.Contains(cards, r.ID) {
+			continue
+		}
+		for _, f := range failed {
+			if slices.Contains(r.Items, advice.ItemRef{CategoryID: f.CategoryID, ItemID: f.ItemID}) {
+				out[r.ID]++
+			}
 		}
 	}
 	return out

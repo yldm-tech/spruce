@@ -249,23 +249,30 @@ func TestProjects(t *testing.T) {
 		devjunk.HoldTip(byPath["/w/lib"]) != "构建产物文件夹里有纳入版本控制的文件，删除后仓库会出现改动。" || devjunk.HoldTip(byPath["/w/tool"]) != "" {
 		t.Error("hold tips")
 	}
-	if devjunk.Checkable(byPath["/w/blog"], res.Categories) || !devjunk.Checkable(byPath["/w/tool"], res.Categories) {
+	arts := devjunk.ArtifactsByProject(ps, res.Categories)
+	for _, p := range ps {
+		if got, want := arts[p.ID], devjunk.ProjectItems(p, res.Categories); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s artifacts %+v, want %+v", p.Path, got, want)
+		}
+	}
+	of := func(path string) []devjunk.ProjectArtifact { return arts[byPath[path].ID] }
+	if devjunk.Checkable(byPath["/w/blog"], of("/w/blog")) || !devjunk.Checkable(byPath["/w/tool"], of("/w/tool")) {
 		t.Error("checkable")
 	}
 
 	sel := cleanflow.DefaultSelection(res.Categories)
-	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, sel) != cleanflow.CheckAll || devjunk.ProjectState(byPath["/w/tool"], res.Categories, sel) != cleanflow.CheckNone {
+	if devjunk.ProjectState(of("/w/shop"), sel) != cleanflow.CheckAll || devjunk.ProjectState(of("/w/tool"), sel) != cleanflow.CheckNone {
 		t.Error("default states")
 	}
 	if devjunk.SelectedProjects(ps, sel) != 1 {
 		t.Errorf("selected %d", devjunk.SelectedProjects(ps, sel))
 	}
 	all := devjunk.SetProjects(sel, ps, res.Categories, true)
-	if devjunk.SelectedProjects(ps, all) != 2 || devjunk.ProjectState(byPath["/w/blog"], res.Categories, all) != cleanflow.CheckNone {
+	if devjunk.SelectedProjects(ps, all) != 2 || devjunk.ProjectState(of("/w/blog"), all) != cleanflow.CheckNone {
 		t.Errorf("checking every project checked held output: %v", all)
 	}
 	part := cleanflow.SetItem(all, res.Categories[1], cleanup.ItemID("/w/shop/.next"), false)
-	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, part) != cleanflow.CheckSome {
+	if devjunk.ProjectState(of("/w/shop"), part) != cleanflow.CheckSome {
 		t.Error("part of a project")
 	}
 	if got := devjunk.SetProjects(all, ps, res.Categories, false); len(got) != 0 {
@@ -315,5 +322,27 @@ func TestArtifactsOfAndProjectNames(t *testing.T) {
 	}
 	if got := devjunk.ProjectNames(many, all); got != "项目：p1、p2、p3、p4、p5 等 7 个" {
 		t.Errorf("many %q", got)
+	}
+}
+
+// 最近活动 puts the most recently active first and a project of unknown activity last; ties keep the larger first, as 大小 does.
+func TestSortProjects(t *testing.T) {
+	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ps := []engdev.Project{{ID: "big", LastActive: at}, {ID: "unknown"}, {ID: "tie", LastActive: at}, {ID: "recent", LastActive: at.Add(time.Hour)}}
+	ids := func(ps []engdev.Project) []string {
+		out := make([]string, len(ps))
+		for i, p := range ps {
+			out[i] = p.ID
+		}
+		return out
+	}
+	if got := ids(devjunk.SortProjects(ps, devjunk.SortSize)); !slices.Equal(got, []string{"big", "unknown", "tie", "recent"}) {
+		t.Errorf("by size %v", got)
+	}
+	if got := ids(devjunk.SortProjects(ps, devjunk.SortActive)); !slices.Equal(got, []string{"recent", "big", "tie", "unknown"}) {
+		t.Errorf("by activity %v", got)
+	}
+	if ps[0].ID != "big" {
+		t.Error("sorting changed the check's projects")
 	}
 }

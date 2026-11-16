@@ -328,9 +328,12 @@ func TestCachedWhileChecking(t *testing.T) {
 	p := open(t, st)
 	// Opening on a cached result checks again.
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
-	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
-	if !p.disabled("id:rec-app-caches-act") {
-		t.Error("a card of the cache can act")
+	// A card of the cache cannot clean; its button checks again instead, where the user looks.
+	p.waitText("id:rec-app-caches-act", "重新检查")
+	p.Press("id:rec-app-caches-act")
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+	if len(p.cleans()) != 0 {
+		t.Fatal("a card of the cache cleaned")
 	}
 	st.Phase = app.OverviewChecking
 	p.set(st)
@@ -355,6 +358,12 @@ func TestStale(t *testing.T) {
 	p := open(t, st)
 	p.waitText("id:checked-at", "上次检查：昨天，结果可能已经变化")
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	p.waitText("id:rec-tool-npm-act", "重新检查")
+	p.Press("id:rec-tool-npm-act")
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+	if p.Exists("id:rec-confirm") || len(p.cleans()) != 0 {
+		t.Error("a stale card asked or cleaned")
+	}
 }
 
 // State D on a window shown again after it was hidden: 概览 stayed mounted, and decides again on the state then.
@@ -386,6 +395,20 @@ func TestWindowShownAgainChecks(t *testing.T) {
 	if p.checks() != 1 {
 		t.Errorf("%d checks on showing the window during a check", p.checks())
 	}
+}
+
+// Free space is read again as 概览 opens, as the window comes back and after anything changes the Trash (a move in 空间透视, an uninstall), whichever page shows; the controller's own timer alone would leave it 15 minutes old.
+func TestFreeSpaceReadAgain(t *testing.T) {
+	p := open(t, ready())
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 1 })
+	p.Post(p.nav.WindowShown)
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 2 })
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitForGone("id:overview-page", wait)
+	p.Post(p.stores.Trash.Bump)
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 3 })
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.WaitUntil(wait, func() bool { return p.ov.DiskReads() == 4 })
 }
 
 // A change of the exclusions or folders while 概览 is open checks again at once.
@@ -711,6 +734,99 @@ func TestCardCleanSeenAfterComingBack(t *testing.T) {
 	}
 }
 
+// 全部清理 under the figure cleans every card's checked items but the command's in one clean, after one question with the plan; the cards it cleans show it as theirs, and what failed stays with its card.
+func TestCleanAll(t *testing.T) {
+	p := open(t, ready())
+	p.waitText("id:clean-all", "全部清理 4.5 GB…")
+	p.Press("id:clean-all")
+	p.WaitFor("id:all-confirm", wait)
+	p.WaitFor("id:all-confirm >> id:plan-permanent", wait)
+	p.WaitFor("id:all-confirm >> id:plan-trash", wait)
+	if p.Exists("id:all-confirm >> id:plan-commands") {
+		t.Error("全部清理 runs a command")
+	}
+	p.Press("id:confirm-cancel")
+	p.WaitForGone("id:all-confirm", wait)
+	if len(p.cleans()) != 0 {
+		t.Fatal("取消 cleaned")
+	}
+
+	logs := cleanup.ItemID(home + "/Library/Logs/a.log")
+	p.ov.CleanRelease = make(chan struct{})
+	p.ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{RunID: "r9", Undoable: true, Result: cleanup.CleanResult{Freed: 3200 * mb, Trashed: 1300 * mb, Removed: 6,
+			Failed: []cleanup.Failure{{CategoryID: "system-junk:logs", ItemID: logs, Reason: "没有权限"}}}}, nil
+	}
+	p.Press("id:clean-all")
+	p.WaitFor("id:all-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	c := p.cleans()[0]
+	if !c.Origin.All || c.Origin.Recommendation != "" || c.Origin.Source != "" {
+		t.Errorf("origin %+v", c.Origin)
+	}
+	if slices.Contains(c.Req.CategoryIDs, "dev-junk:tool-npm") || len(c.Req.ItemIDs) != 7 {
+		t.Errorf("request %+v", c.Req)
+	}
+	p.WaitFor("id:clean-all-progress", wait)
+	p.WaitFor("id:clean-all-stop", wait)
+	p.waitText("id:rec-app-caches-act", "正在删除…")
+	if !p.Find("id:rec-app-caches-act").Props.Busy {
+		t.Error("a card 全部清理 cleans is not busy")
+	}
+	if l := p.Find("id:rec-tool-npm-act").Props.Label; l != "正在清理另一项，完成后再试" || !p.disabled("id:rec-tool-npm-act") {
+		t.Errorf("the command card while 全部清理 runs: %q", l)
+	}
+	close(p.ov.CleanRelease)
+	p.ticking(func() bool { return p.toast() != nil })
+	if got := p.toast(); got.Text != "已释放 3.2 GB，移到废纸篓 1.3 GB，1 项未能处理" || got.UndoRun != "r9" || got.ViewRun != "r9" {
+		t.Errorf("toast %+v", got)
+	}
+	p.WaitForGone("id:clean-all-progress", wait)
+	p.Press("id:recs-more")
+	p.waitText("id:rec-logs-failed", "1 项未能处理")
+	if p.Exists("id:rec-app-caches-failed") {
+		t.Error("a failure counted on a card it is not of")
+	}
+}
+
+// 全部清理 shows only when it does more than one card's button, and only on a result that may be cleaned.
+func TestCleanAllOnlyWhenItHelps(t *testing.T) {
+	st := ready()
+	st.Result.Stale, st.Result.Actionable = true, false
+	p := open(t, st)
+	p.WaitFor("id:rec-app-caches", wait)
+	if p.Exists("id:clean-all") {
+		t.Error("全部清理 on a result that may not be cleaned")
+	}
+	one := ready()
+	one.Result.Recommendations = one.Result.Recommendations[:1]
+	p.set(one)
+	p.waitText("id:rec-app-caches-act", "删除…")
+	if p.Exists("id:clean-all") {
+		t.Error("全部清理 beside a single card")
+	}
+}
+
+// One big item reports nothing until it ends: the card's progress says what it handles rather than 0/1 or 0 B freed.
+func TestCardProgressOfOneItem(t *testing.T) {
+	p := open(t, ready())
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: 0, Total: 1})
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{RunID: "r1", Undoable: true, Result: cleanup.CleanResult{Trashed: 600 * mb, Removed: 1}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.ticking(func() bool { return p.Exists("id:rec-installers-progress") })
+	p.waitText("id:rec-installers-progress-text", "正在移到废纸篓 600 MB")
+	close(release)
+	p.ticking(func() bool { return p.toast() != nil })
+}
+
 // A clean that leaves items keeps the card with how many, and the toast offers 查看.
 func TestTrashCardPartlyFailed(t *testing.T) {
 	p := open(t, ready())
@@ -726,6 +842,12 @@ func TestTrashCardPartlyFailed(t *testing.T) {
 	}
 	p.waitText("id:rec-incomplete-downloads-failed", "2 项未能处理")
 	p.ticking(func() bool { return p.Exists("id:rec-incomplete-downloads") })
+	// Once the toast is gone, the card still leads to what was not handled.
+	p.Press("id:rec-incomplete-downloads-failed-view")
+	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.History })
+	if kind, run := p.nav.TakeHistoryFilter(); kind != "" || run != "r2" {
+		t.Errorf("history asked for %q %q, want the run r2", kind, run)
+	}
 }
 
 // How many items a card's clean could not handle stays while 概览 shows the check it cleaned, also after leaving 概览, and goes with a newer check.
@@ -1250,9 +1372,9 @@ func TestStopACheckOverACachedResult(t *testing.T) {
 
 	p.set(cached())
 	p.waitText("id:recheck", "重新检查")
-	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
-	if !p.disabled("id:rec-app-caches-act") {
-		t.Error("a card acts on a cached result")
+	p.waitText("id:rec-app-caches-act", "重新检查")
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card of a cached result does not offer to check again")
 	}
 	if !p.nav.CanRefresh() {
 		t.Error("⌘R cannot check again after the check stopped")
