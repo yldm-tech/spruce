@@ -2,6 +2,7 @@ package space_test
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -110,7 +111,7 @@ func TestFolderListLandsWhereItShould(t *testing.T) {
 	}
 	inside := app.SpaceListing{Entry: target, Ancestors: []app.SpaceEntry{svc.Listings[0].Entry, target},
 		Children: []app.SpaceEntry{spacefake.Entry(900, app.SpaceFile, "inner.bin", target.Size)}}
-	inside.Children[0].Path = target.Path + "/inner.bin"
+	inside.Children[0].Path = filepath.Join(target.Path, "inner.bin")
 	svc.SetListing(target.ID, inside)
 	p.Press(homeList + ` >> role:button "` + target.Name + `"`)
 	list := `role:group "` + target.Name + ` 的内容"`
@@ -181,27 +182,27 @@ func TestRowAndCellMenus(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
 	p.WaitFor(homeList, wait)
-	p.RightClick(homeList + ` >> role:option "Projects" >> text:"6 GB"`)
-	if got := p.menuLabels(); !slices.Equal(got, []string{"打开", "在访达中显示", "拷贝路径", "-", "移到废纸篓"}) {
+	p.RightClick(homeList + ` >> role:option "Projects" >> text:"` + spacefake.Size(6e9) + `"`)
+	if got := p.menuLabels(); !slices.Equal(got, []string{"打开", revealItem, "拷贝路径", "-", trashItem}) {
 		t.Errorf("folder menu %q", got)
 	}
 	p.ChoosePopup("拷贝路径")
 	if p.Clipboard != spacefake.Projects.Path {
 		t.Errorf("clipboard %q", p.Clipboard)
 	}
-	p.RightClick(homeList + ` >> role:option "Movies" >> text:"500 MB"`)
+	p.RightClick(homeList + ` >> role:option "Movies" >> text:"` + spacefake.Size(500e6) + `"`)
 	got := p.menuLabels()
-	if len(got) != 6 || got[4] != "移到废纸篓" || !p.PopupMenu[4].Disabled || got[5] != spacefake.Movies.Locked {
+	if len(got) != 6 || got[4] != trashItem || !p.PopupMenu[4].Disabled || got[5] != spacefake.Movies.Locked {
 		t.Errorf("locked menu %q", got)
 	}
-	p.ChoosePopup("在访达中显示")
+	p.ChoosePopup(revealItem)
 	p.WaitUntil(wait, func() bool { return len(p.files.Reveals()) == 1 })
 
 	p.WaitUntil(wait, func() bool { return len(p.cellLabels()) == 2 })
-	p.RightClick(`id:treemap >> role:button "打开 Projects，6 GB"`)
-	p.ChoosePopup("移到废纸篓")
+	p.RightClick(`id:treemap >> role:button "打开 Projects，` + spacefake.Size(6e9) + `"`)
+	p.ChoosePopup(trashItem)
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「Projects」（6 GB）移到废纸篓。需要时可以从废纸篓放回原处。")
+	p.Find("id:trash-confirm >> text:" + confirmText("「Projects」", 6e9) + confirmRestore)
 }
 
 // TestFileCellPicksItsRow: a file's cell is no button, but pressing it chooses its row in the list.
@@ -231,15 +232,15 @@ func TestCarelessMovesAskFirst(t *testing.T) {
 	projects := `role:group "Projects 的内容"`
 	p.WaitFor(projects, wait)
 
-	p.Press(projects + ` >> role:button "将 app 移到废纸篓"`)
+	p.Press(moveButton(projects, "app"))
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「app」（4 GB）移到废纸篓。移走后可以撤销。")
+	p.Find("id:trash-confirm >> text:" + confirmText("「app」", 4e9) + confirmUndo)
 	p.Press("id:confirm-cancel")
 	p.WaitForGone("id:trash-confirm", wait)
 
-	p.Press(projects + ` >> role:button "将 data.bin 移到废纸篓"`)
+	p.Press(moveButton(projects, "data.bin"))
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「data.bin」（2 GB）移到废纸篓。它5分钟前还在修改，可能正在使用。移走后可以撤销。")
+	p.Find("id:trash-confirm >> text:" + confirmText("「data.bin」", 2e9) + "它5分钟前还在修改，可能正在使用。" + confirmUndo)
 	p.Press("id:confirm-cancel")
 	p.WaitForGone("id:trash-confirm", wait)
 	if len(svc.Trashes()) != 0 {
@@ -247,8 +248,8 @@ func TestCarelessMovesAskFirst(t *testing.T) {
 	}
 
 	// The two buttons of a row stand 10 points apart.
-	reveal := p.Find(projects + ` >> role:button "在访达中显示 app"`)
-	trash := p.Find(projects + ` >> role:button "将 app 移到废纸篓"`)
+	reveal := p.Find(revealButton(projects, "app"))
+	trash := p.Find(moveButton(projects, "app"))
 	if gap := trash.Frame.Origin.X - reveal.Frame.Origin.X - reveal.Frame.Size.Width; gap < 8 {
 		t.Errorf("the buttons are %v apart", gap)
 	}
@@ -270,10 +271,10 @@ func TestChosenLargeFilesMoveTogether(t *testing.T) {
 	p.WaitFor("id:trash-chosen", wait)
 	p.Find("text:已选择")
 	p.Find(`id:page-footer >> text:"2 项"`)
-	p.Find(`id:page-footer >> text:"5 GB"`)
+	p.Find(`id:page-footer >> text:"` + spacefake.Size(5e9) + `"`)
 	p.Press("id:trash-chosen")
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把 2 项（5 GB）移到废纸篓。移走后可以撤销。")
+	p.Find("id:trash-confirm >> text:" + confirmText(" 2 项", 5e9) + confirmUndo)
 	if len(svc.Trashes()) != 0 {
 		t.Fatalf("moved before the confirmation: %v", svc.Trashes())
 	}
@@ -306,7 +307,7 @@ func TestOneMoveKeepsTheOthersChosen(t *testing.T) {
 	p.Press(`role:checkbox "选择 big.iso"`)
 	p.Press(`role:checkbox "选择 data.bin"`)
 	p.WaitFor(`id:page-footer >> text:"2 项"`, wait)
-	p.Press(`role:group "大文件" >> role:button "将 clip.mov 移到废纸篓"`)
+	p.Press(moveButton(`role:group "大文件"`, "clip.mov"))
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
 	p.waitToast()
 	if got := svc.Trashes()[0]; !slices.Equal(got, []string{clip.Path}) {
@@ -327,9 +328,9 @@ func TestNothingMovesDuringARescan(t *testing.T) {
 	p.WaitFor("id:space-stop", wait)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
 
-	p.Press(projects + ` >> role:button "将 data.bin 移到废纸篓"`)
-	p.RightClick(projects + ` >> role:option "data.bin" >> text:"2 GB"`)
-	if got := p.menuLabels(); len(got) == 0 || got[len(got)-1] != "移到废纸篓" || !p.PopupMenu[len(got)-1].Disabled {
+	p.Press(moveButton(projects, "data.bin"))
+	p.RightClick(projects + ` >> role:option "data.bin" >> text:"` + spacefake.Size(2e9) + `"`)
+	if got := p.menuLabels(); len(got) == 0 || got[len(got)-1] != trashItem || !p.PopupMenu[len(got)-1].Disabled {
 		t.Errorf("menu %q", got)
 	}
 	p.ClosePopup()
@@ -361,7 +362,7 @@ func TestChosenMoveConfirmsWhereItCannotBeUndone(t *testing.T) {
 	p.Press(`role:checkbox "选择 data.bin"`)
 	p.Press("id:trash-chosen")
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把 2 项（5 GB）移到废纸篓。需要时可以从废纸篓放回原处。")
+	p.Find("id:trash-confirm >> text:" + confirmText(" 2 项", 5e9) + confirmRestore)
 }
 
 // TestLargeFileLinks: a large file's folder opens on the 空间分布 tab, and 设置 opens where the size is set.
@@ -371,9 +372,10 @@ func TestLargeFileLinks(t *testing.T) {
 	p.WaitFor(homeList, wait)
 	p.Press("id:tab-large")
 	p.WaitFor(`role:group "大文件"`, wait)
-	p.Press(`role:link "在空间分布中打开 ` + spacefake.Home + `/Projects"`)
+	projects := filepath.Join(spacefake.Home, "Projects")
+	p.Press(`role:link "在空间分布中打开 ` + projects + `"`)
 	p.WaitFor(`role:group "Projects 的内容"`, wait)
-	if got := svc.FolderCalls(); got[len(got)-1] != spacefake.Home+"/Projects" {
+	if got := svc.FolderCalls(); got[len(got)-1] != projects {
 		t.Errorf("folders %v", got)
 	}
 	p.Press("id:tab-large")
@@ -397,7 +399,7 @@ func TestDiskScanSaysHowFarItIs(t *testing.T) {
 	p.WaitFor("id:volume-/", wait)
 	// Macintosh HD uses 380 GB.
 	p.Press("id:volume-/")
-	p.waitTicking("text:已扫描 1,000 个文件 · 190 GB")
+	p.waitTicking("text:已扫描 1,000 个文件 · " + spacefake.Size(190e9))
 	if v := p.Find("id:space-scan-ring").Props.Value; v.NoNow || v.Now != 50 {
 		t.Errorf("ring %+v", v)
 	}

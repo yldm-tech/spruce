@@ -95,14 +95,14 @@ func (s *Service) Children(scanID string, id int) (app.SpaceListing, error) {
 	return l, nil
 }
 
-// Folder implements the page's Service: the listing whose folder is at path, else the nearest one above it, else the root's (id 0).
+// Folder implements the page's Service: the listing whose folder is at path, else the nearest one above it, else the root's (id 0). Paths compare cleaned, so a fixture written with / matches the page's filepath.Dir on Windows.
 func (s *Service) Folder(scanID, path string) (app.SpaceListing, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.folders = append(s.folders, path)
-	for p := path; ; p = filepath.Dir(p) {
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
 		for _, l := range s.Listings {
-			if l.Entry.Path == p {
+			if filepath.Clean(l.Entry.Path) == p {
 				return l, nil
 			}
 		}
@@ -210,8 +210,8 @@ func (f *Files) Reveals() []string {
 	return append([]string(nil), f.reveals...)
 }
 
-// Home is the home folder of the fixtures.
-const Home = "/Users/me"
+// Home is the home folder of the fixtures, /Users/me in this system's separator; the fixtures' paths under it are made with filepath.Join, as the scanner's are, so the page's path/filepath handling sees what it sees for real.
+var Home = filepath.FromSlash("/Users/me")
 
 // Entry returns an entry of the home folder: a folder or a file at Home/name, or a folded group without a path.
 func Entry(id int, kind app.SpaceKind, name string, size int64) app.SpaceEntry {
@@ -220,7 +220,7 @@ func Entry(id int, kind app.SpaceKind, name string, size int64) app.SpaceEntry {
 	case (kind == app.SpaceDir || kind == app.SpaceFile) && id == 0:
 		path = Home
 	case kind == app.SpaceDir || kind == app.SpaceFile:
-		path = Home + "/" + name
+		path = filepath.Join(Home, name)
 	}
 	return app.SpaceEntry{ID: id, Kind: kind, Name: name, Path: path, Size: size, Files: 1}
 }
@@ -237,8 +237,8 @@ var (
 	})
 	Other = with(Entry(3, app.SpaceOther, "", 0.3e9), func(e *app.SpaceEntry) { e.Count = 4 })
 	Small = with(Entry(4, app.SpaceFiles, "", 0.2e9), func(e *app.SpaceEntry) { e.Count = 30 })
-	App   = with(Entry(6, app.SpaceDir, "app", 4e9), func(e *app.SpaceEntry) { e.Path = Home + "/Projects/app" })
-	Data  = with(Entry(7, app.SpaceFile, "data.bin", 2e9), func(e *app.SpaceEntry) { e.Path = Home + "/Projects/data.bin" })
+	App   = with(Entry(6, app.SpaceDir, "app", 4e9), func(e *app.SpaceEntry) { e.Path = filepath.Join(Home, "Projects", "app") })
+	Data  = with(Entry(7, app.SpaceFile, "data.bin", 2e9), func(e *app.SpaceEntry) { e.Path = filepath.Join(Home, "Projects", "data.bin") })
 )
 
 func with(e app.SpaceEntry, fn func(*app.SpaceEntry)) app.SpaceEntry {
@@ -255,7 +255,7 @@ func Locations() app.SpaceLocations {
 		},
 		Targets: []app.SpaceTarget{
 			{ID: "home", Name: "个人文件夹", Path: Home},
-			{ID: "downloads", Name: "下载", Path: Home + "/Downloads"},
+			{ID: "downloads", Name: "下载", Path: filepath.Join(Home, "Downloads")},
 			{ID: "applications", Name: "应用程序", Path: "/Applications"},
 		},
 	}

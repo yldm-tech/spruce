@@ -122,6 +122,21 @@ func movedText(n int64) string { return "已移到" + spacefake.Trash + " " + sp
 
 var restoreText = "，需要时可以在" + spacefake.Trash + "里还原"
 
+// revealItem and trashItem are the context menu's 在访达中显示 and 移到废纸篓 in this system's words.
+var (
+	revealItem = "在" + spacefake.FileManager + "中显示"
+	trashItem  = "移到" + spacefake.Trash
+)
+
+// confirmText is how the confirmation starts for what (「big.iso」, 2 项) of n bytes: 将把「big.iso」（3 GB）移到废纸篓。 It goes on with confirmUndo where Spruce can undo the move, else with confirmRestore.
+func confirmText(what string, n int64) string {
+	return "将把" + what + "（" + spacefake.Size(n) + "）移到" + spacefake.Trash + "。"
+}
+
+var confirmRestore = "需要时可以从" + spacefake.Trash + "放回原处。"
+
+const confirmUndo = "移走后可以撤销。"
+
 func TestStartListsDisksAndFolders(t *testing.T) {
 	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
 	p.WaitFor("id:volume-/", wait)
@@ -137,7 +152,7 @@ func TestStartListsDisksAndFolders(t *testing.T) {
 	for _, id := range []string{"home", "downloads", "applications"} {
 		p.Find("id:target-" + id)
 	}
-	p.Find(`id:target-downloads >> text:"/Users/me/Downloads"`)
+	p.Find(`id:target-downloads >> text:"` + filepath.Join(spacefake.Home, "Downloads") + `"`)
 	p.Find("id:choose-folder >> text:选择其他文件夹…")
 	if p.Exists("id:return-results") || p.Exists("id:change-location") {
 		t.Error("a header action shows without a scan")
@@ -419,7 +434,7 @@ func TestTrashAfterConfirming(t *testing.T) {
 	trashGen := p.stores.Trash.Generation()
 	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「big.iso」（" + spacefake.Size(3e9) + "）移到" + spacefake.Trash + "。需要时可以从" + spacefake.Trash + "放回原处。")
+	p.Find("id:trash-confirm >> text:" + confirmText("「big.iso」", 3e9) + confirmRestore)
 	if !p.stores.Block.Blocked() {
 		t.Error("the shell is not blocked while the confirmation shows")
 	}
@@ -561,7 +576,7 @@ func TestLargeFilesTab(t *testing.T) {
 		t.Errorf("large calls %d", svc.LargeCalls())
 	}
 	p.Find(`role:group "大文件" >> text:big.iso`)
-	p.Find(`role:group "大文件" >> text:"` + spacefake.Home + `/Projects"`)
+	p.Find(`role:group "大文件" >> text:"` + filepath.Join(spacefake.Home, "Projects") + `"`)
 	p.Find("id:space-large-note >> text:「个人文件夹」中 " + spacefake.Size(500e6) + " 以上的文件，最多列出 200 个。可以在")
 	p.Find("id:space-large-settings >> text:设置")
 	if p.Exists("id:treemap") {

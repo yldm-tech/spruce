@@ -55,7 +55,7 @@ func TestScreensSpace(t *testing.T) {
 	// A disk's scan fills its ring against the disk's used space; Escape stops it.
 	a.Press("id:volume-/")
 	a.WaitUntil(wait, func() bool {
-		if a.Exists("text:已扫描 182,406 个文件 · 61.7 GB") {
+		if a.Exists("text:已扫描 182,406 个文件 · " + format.Bytes(61.7e9)) {
 			return true
 		}
 		a.Advance(20 * time.Millisecond)
@@ -83,7 +83,7 @@ func TestScreensSpace(t *testing.T) {
 	// 重新扫描 keeps the results, dimmed, with the scan's progress in the action bar.
 	a.Press("id:rescan")
 	a.WaitUntil(wait, func() bool {
-		if a.Exists("text:正在重新扫描") && a.Exists("text:61.7 GB") {
+		if a.Exists("text:正在重新扫描") && a.Exists("text:"+format.Bytes(61.7e9)) {
 			return true
 		}
 		a.Advance(20 * time.Millisecond)

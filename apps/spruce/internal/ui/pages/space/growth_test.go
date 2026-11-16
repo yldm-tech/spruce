@@ -88,7 +88,7 @@ func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 		t.Errorf("undos %v", undos)
 	}
 	// The results stay while the scan runs: dimmed, the action bar with its progress against the 7 GB the folder came to after the move, and 停止.
-	p.waitTicking("text:5 GB")
+	p.waitTicking("text:" + spacefake.Size(5e9))
 	p.Find(projects)
 	if p.Exists("id:space-scanning") {
 		t.Error("the scan took the results' place")
@@ -283,13 +283,13 @@ func TestGoSpaceScansTheFolderAsThePageOpens(t *testing.T) {
 // growthFakes are fakes whose controller lists two locations that grew, the first covered by the 应用缓存 card.
 func growthFakes(t *testing.T, now time.Time) *storefake.Services {
 	fakes := newFakes(t)
-	spotify := spacefake.Home + "/Library/Caches/com.spotify.client"
+	spotify := filepath.Join(spacefake.Home, "Library", "Caches", "com.spotify.client")
 	res := cleanup.ScanResult{Categories: []cleanup.Category{{ID: "system-junk:app-caches", Items: []cleanup.Item{{ID: "i1", Path: spotify, Size: 6e9, Selected: true}}, Size: 6e9}}, Items: 1, Size: 6e9}
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle, CanUndo: true, Result: &app.OverviewResult{Scan: res,
 		Recommendations: []advice.Recommendation{{ID: "app-caches", Title: "应用缓存", Items: []advice.ItemRef{{CategoryID: "system-junk:app-caches", ItemID: "i1"}}}}}})
 	fakes.Overview.GrowthList = []growth.Growth{
 		{Path: spotify, Icon: "cache", Before: 1e9, After: 7e9, Since: now.Add(-3 * 24 * time.Hour)},
-		{Path: spacefake.Home + "/Movies", Label: "影片", Icon: "video", Before: 10e9, After: 12e9, Since: now.Add(-6 * time.Hour), AtLeast: true},
+		{Path: filepath.Join(spacefake.Home, "Movies"), Label: "影片", Icon: "video", Before: 10e9, After: 12e9, Since: now.Add(-6 * time.Hour), AtLeast: true},
 	}
 	return fakes
 }
@@ -350,7 +350,7 @@ func TestGrowthRowActions(t *testing.T) {
 	p.Find("id:growth-row-1-space >> text:扫描")
 	p.Press(`id:growth-row-1-reveal`)
 	p.WaitUntil(wait, func() bool { return len(p.files.Reveals()) == 1 })
-	if got := p.files.Reveals()[0]; got != spacefake.Home+"/Movies" {
+	if got := p.files.Reveals()[0]; got != filepath.Join(spacefake.Home, "Movies") {
 		t.Errorf("reveal %q", got)
 	}
 	if got := p.Find("id:growth-row-1-reveal").Props.Label; got != "在"+spacefake.FileManager+"中显示 影片" {
@@ -360,7 +360,7 @@ func TestGrowthRowActions(t *testing.T) {
 	p.Press("id:growth-row-1-space")
 	p.WaitFor("text:正在分析「Movies」…", wait)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
-	if got := svc.Scans()[0]; got != spacefake.Home+"/Movies" {
+	if got := svc.Scans()[0]; got != filepath.Join(spacefake.Home, "Movies") {
 		t.Errorf("scan %q", got)
 	}
 	p.Press("id:space-stop")
