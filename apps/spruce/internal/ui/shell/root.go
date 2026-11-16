@@ -51,10 +51,11 @@ func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame), 
 	return kit.PageBackground{Children: []core.Node{Sidebar{Nav: navigator, Block: block}, main, quitConfirm(asking, quit)}}
 }
 
-// quitConfirm asks before Spruce quits while a run is active: 继续清理, which has the focus, keeps it running; 停止并退出 calls quit, and the run stops after its current item.
+// quitConfirm asks before Spruce quits while a run is active: 继续清理, which has the focus, keeps it running; 停止并退出 calls quit, and the run stops after its current item. Either answer closes the question.
 func quitConfirm(asking *core.Signal[bool], quit func()) core.Node {
 	return kit.ConfirmDialog{Open: asking.Get, Title: "正在清理", Lines: []string{"现在退出，清理会在当前项目完成后停止。"},
-		ConfirmLabel: "停止并退出", CancelLabel: "继续清理", Danger: true, OnConfirm: quit, OnCancel: func() { asking.Set(false) }, TestID: "quit-confirm"}
+		ConfirmLabel: "停止并退出", CancelLabel: "继续清理", Danger: true, OnConfirm: func() { asking.Set(false); quit() }, OnCancel: func() { asking.Set(false) },
+		TestID: "quit-confirm"}
 }
 
 // toastLayer shows the stores' toast centred at the bottom of the page area, a new kit.Toast for every message so its time starts again. 撤销 puts the run's items back through 概览's controller and then says how it went; 查看 opens the run in 操作历史.

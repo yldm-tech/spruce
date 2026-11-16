@@ -68,6 +68,7 @@ func App(d Deps) func(app *core.Scope) {
 		w := &windows{host: host, nav: navigator, keepInTray: keepInTray, view: func(cx *core.Scope) core.Node {
 			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f }, asking, app.Quit)
 		}, blocked: func() bool { return core.Untracked(app, stores.Block.Blocked) }, busy: busy, asking: asking, end: app.Quit}
+		w.followRun(app)
 		// The menu bar on macOS; on Windows, where the window has no menu bar, its shortcuts alone.
 		app.Effect(func() {
 			desktop.SetApplicationMenu(app, applicationMenu(navigator, stores.Block.Blocked(), runtime.GOOS == "darwin", w.quit))

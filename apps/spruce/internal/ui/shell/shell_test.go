@@ -268,6 +268,24 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 	if a.Quits != 2 {
 		t.Errorf("退出 with nothing running: %d quits", a.Quits)
 	}
+
+	// A run that ends before the question is answered leaves nothing to ask about: Spruce quits, as asked.
+	_, end, err = activity.BeginClean(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Advance(2 * time.Second)
+	if a.Quits != 2 {
+		t.Fatalf("quit while the clean still runs: %d quits", a.Quits)
+	}
+	end()
+	a.Advance(time.Second)
+	a.WaitForGone("id:quit-confirm", wait)
+	if a.Quits != 3 {
+		t.Errorf("the question outlived its run: %d quits", a.Quits)
+	}
 }
 
 // Going to another page and back lands 概览 where it was left.

@@ -2,6 +2,7 @@ package shell
 
 import (
 	"strings"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
@@ -102,6 +103,28 @@ func (w *windows) quit() {
 	}
 	w.show("")
 	w.asking.Set(true)
+}
+
+// quitPoll is how often a question before quitting looks whether its run has ended (followRun): schedule.Activity tells no one.
+const quitPoll = 500 * time.Millisecond
+
+// followRun quits for a question before quitting that is still up when its run ends: there is nothing left to ask about, and the user asked to quit. It looks every quitPoll while the question is up, in cx.
+func (w *windows) followRun(cx *core.Scope) {
+	cx.Effect(func() {
+		if !w.asking.Get() {
+			return
+		}
+		var look func()
+		look = func() {
+			if w.active() {
+				cx.AfterFunc(quitPoll, look)
+				return
+			}
+			w.asking.Set(false)
+			w.end()
+		}
+		cx.AfterFunc(quitPoll, look)
+	})
 }
 
 // held reports whether an overlay holds the sidebar now.
