@@ -17,6 +17,9 @@ const mdlsTime = "2006-01-02 15:04:05 -0700"
 // mdlsNull is what mdls prints for an attribute the item does not have.
 const mdlsNull = "(null)"
 
+// earliestUse is the first last-use date taken as real. Spotlight reports 1979-12-31 15:00:00 +0000 for some apps it has no real date for, apps used the same day among them. Spotlight came with Mac OS X 10.4 in 2005, so any date before 2001 is such a placeholder.
+var earliestUse = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // lastUsed asks Spotlight when each app was last opened, in batches. It asks for kMDItemContentType too, which every indexed bundle has, to tell an app never opened (type known, no date) from one Spotlight does not know (neither). A batch whose answer cannot be lined up with its paths (mdls skips a bundle that vanished) is asked again one bundle at a time; anything that still fails is unknown.
 func (e *Engine) lastUsed(ctx context.Context, apps []App) []Details {
 	out := make([]Details, 0, len(apps))
@@ -58,7 +61,7 @@ func (e *Engine) mdls(ctx context.Context, apps []App) ([]Details, bool) {
 	return parseMdls(string(res.Stdout), len(apps))
 }
 
-// parseMdls parses the answer of `mdls -raw -name kMDItemContentType -name kMDItemLastUsedDate` for n bundles: NUL-separated values, the attributes of each bundle in alphabetical order.
+// parseMdls parses the answer of `mdls -raw -name kMDItemContentType -name kMDItemLastUsedDate` for n bundles: NUL-separated values, the attributes of each bundle in alphabetical order. A date before earliestUse is unknown.
 func parseMdls(out string, n int) ([]Details, bool) {
 	vals := strings.Split(strings.TrimRight(out, "\x00\n"), "\x00")
 	if n == 0 || len(vals) != 2*n {
@@ -70,7 +73,7 @@ func parseMdls(out string, n int) ([]Details, bool) {
 		switch {
 		case used != "" && used != mdlsNull:
 			t, err := time.Parse(mdlsTime, used)
-			if err != nil {
+			if err != nil || t.Before(earliestUse) {
 				res[i] = Details{Usage: UsageUnknown}
 				continue
 			}
