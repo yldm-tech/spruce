@@ -1,0 +1,186 @@
+name: Release
+
+# Releases main once CI has passed on it, with the version the Conventional Commits since the last tag call for (.github/scripts/next-version.sh: feat a minor bump, fix, perf and revert a patch one, other types none): it writes the version into nsgo.yaml (.github/scripts/set-version.sh) and the version's release notes, from the same commits, into CHANGELOG.md (.github/scripts/changelog.sh), commits both to main as chore(release), tags the commit, and creates a draft GitHub release with those notes. The Package workflow then builds, signs and notarizes the installers from the tag, and the last job checks them against the checksums Package took, uploads them with checksums.txt to the draft and publishes it. Run it by hand from main to force a bump; it releases only a commit main's CI has passed on. Adapted from yldm-tech/Kando's Release workflow.
+#
+# The jobs run in one workflow, one after another, because a tag pushed with the workflow's GITHUB_TOKEN starts no other workflow. They run on the Mac Studio's self-hosted runners, as the repository is private and GitHub's runners would bill every minute.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Bump to make, whatever the commits call for
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version
+    # A run by hand must start from main: from another branch it would push that branch's commits to main.
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ${{ fromJSON(vars.MACOS_RUNNER || '["self-hosted","yldm-macos"]') }}
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      tag: ${{ steps.commit.outputs.sha != '' && steps.version.outputs.version || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Next version
+        id: version
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          version=$(.github/scripts/next-version.sh "$SHA" "$BUMP")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -n "$version" ]; then
+            echo "Releasing $version from $SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Nothing to release at $SHA" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # A run that CI started follows CI's success on the commit; a run by hand checks that main's CI passed on it.
+      - name: Check CI
+        if: steps.version.outputs.version != '' && github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&status=success" --jq .total_count)
+          if [ "$passed" -eq 0 ]; then
+            echo "::error::CI has not passed on $SHA, main's head; release it once it has."
+            exit 1
+          fi
+      # Checked before anything is committed or tagged, so a missing secret fails here in seconds instead of leaving a tag whose packages could not be signed.
+      - name: Check the signing secrets
+        if: steps.version.outputs.version != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPSTORE_API_KEY_P8: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          missing=()
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD APPSTORE_API_KEY_P8 APPSTORE_API_KEY_ID APPSTORE_API_ISSUER_ID; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Not released: the secrets ${missing[*]} are not set, so the macOS packages could not be signed and notarized."
+            exit 1
+          fi
+      # The version goes to main in a commit of its own, which the tag points at, so that the app built from the tagged tree carries it, together with its section of CHANGELOG.md. A section written by hand before the release is kept. The push only fast-forwards main from the commit CI tested: if main has moved since, its own CI run releases these commits with it.
+      - name: Commit the version
+        id: commit
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          .github/scripts/set-version.sh "$VERSION"
+          .github/scripts/changelog.sh add "$VERSION"
+          # Named, as the changelog is a new file until the first release writes it, and git commit -a leaves new files out.
+          git add -- nsgo.yaml CHANGELOG.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): $VERSION"
+          fi
+          if git push origin HEAD:refs/heads/main; then
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            # A push that a branch rule refuses fails here too, so the message names both causes.
+            message="Could not fast-forward main. Either main moved on, and its next release takes these commits, or a rule on main refused github-actions[bot], which then needs a bypass of the rule."
+            echo "::warning::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # GitHub sometimes refuses a push for a fault of its own, so the push is tried again before the run gives up. Should it still fail, main keeps the version commit untagged, and the run of the next push to main releases it: next-version.sh gives the same version, set-version.sh and changelog.sh change nothing, and the tag goes on that push's commit.
+      - name: Tag
+        if: steps.commit.outputs.sha != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          git tag -a "$VERSION" -m "$VERSION" "$SHA"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "refs/tags/$VERSION"; then
+              exit 0
+            fi
+            echo "::warning::Pushing $VERSION failed (attempt $attempt of 5)."
+            sleep $((attempt * 15))
+          done
+          echo "::error::Could not push the tag $VERSION."
+          exit 1
+      # The release's notes are the version's section of CHANGELOG.md. The macOS disk images are signed and notarized (see package.yml); the Windows installers are not signed yet, which the notes say.
+      - name: Draft the release
+        if: steps.commit.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          > [!NOTE]
+          > The macOS disk images are signed with a Developer ID and notarized by Apple. The Windows installers are not signed yet, so SmartScreen warns before the first run: choose More info, then Run anyway. `checksums.txt` lists the SHA-256 of every file.
+          EOF
+          {
+            echo
+            .github/scripts/changelog.sh notes "$VERSION"
+          } >> "$RUNNER_TEMP/notes.md"
+          gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+  package:
+    name: Package
+    needs: version
+    if: needs.version.outputs.tag != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/package.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    secrets:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPSTORE_API_KEY_P8: ${{ secrets.APPSTORE_API_KEY_P8 }}
+      APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+      APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+
+  publish:
+    name: Publish
+    needs: [version, package]
+    if: needs.version.outputs.tag != ''
+    runs-on: ${{ fromJSON(vars.MACOS_RUNNER || '["self-hosted","yldm-macos"]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: spruce-packages
+          path: ${{ runner.temp }}/dist
+      # Package took the checksums from the files nsgo build made, so this catches a package changed on its way here.
+      - name: Check the checksums
+        working-directory: ${{ runner.temp }}/dist
+        run: shasum -a 256 --check --strict checksums.txt
+      - name: Upload and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          DIST: ${{ runner.temp }}/dist
+        run: |
+          gh release upload "$TAG" "$DIST"/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          rm -rf "$DIST"

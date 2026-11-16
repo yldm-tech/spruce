@@ -1,0 +1,42 @@
+name: CI
+
+# Runs scripts/check.sh, the acceptance checks every change must pass (gofmt, vet and build for macOS and Windows on both architectures, the tests with the race detector, golangci-lint, the headless nsgo tests and nsgo check), on every pull request and every push to main. A push to main that passes starts the Release workflow, which releases it when its commits call for a new version.
+#
+# The job runs on the Mac Studio's self-hosted runners: the repository is private, so GitHub's macOS runners would bill every minute, and the runners keep their Go caches between runs.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ${{ fromJSON(vars.MACOS_RUNNER || '["self-hosted","yldm-macos"]') }}
+    timeout-minutes: 60
+    env:
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # golangci-lint is built with the job's Go, as one built with an older Go cannot load packages that need a newer one; the version is the one .golangci.yml was written for.
+      - name: Install golangci-lint
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Check
+        run: scripts/check.sh
+      - name: Check the release scripts
+        run: .github/scripts/changelog-test.sh
