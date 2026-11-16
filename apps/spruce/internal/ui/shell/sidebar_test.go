@@ -73,3 +73,20 @@ func TestSidebarHasNoTipBesideADialog(t *testing.T) {
 		t.Error("the overlay's tip shows beside a dialog")
 	}
 }
+
+// An entry the user is not on takes a faint fill under the pointer; the lit one keeps its look.
+func TestSidebarEntriesAnswerThePointer(t *testing.T) {
+	a, _ := sidebarApp(t, true)
+	lit := a.Find("id:nav-overview").Style.Background
+	if got := a.Find("id:nav-space").Style.Background; got != 0 {
+		t.Fatalf("an entry has a fill before the pointer comes: %v", got)
+	}
+	a.Hover("id:nav-space")
+	if got := a.Find("id:nav-space").Style.Background; got == 0 {
+		t.Error("an entry does not answer the pointer")
+	}
+	a.Hover("id:nav-overview")
+	if got := a.Find("id:nav-overview").Style.Background; got != lit {
+		t.Errorf("the lit entry changes under the pointer: %v, was %v", got, lit)
+	}
+}

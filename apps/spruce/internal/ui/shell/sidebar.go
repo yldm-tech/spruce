@@ -91,6 +91,8 @@ func (s Sidebar) item(r nav.Route, footer bool) core.Node {
 				Disabled:     &core.Style{Cursor: core.CursorDefault}}
 			if current() {
 				st.FontFamily, st.FontWeight, st.Color, st.Background = kit.FontFace(kit.Semibold), kit.FaceWeight(kit.Semibold), kit.ColorText, kit.SurfaceNavActive
+			} else {
+				st.Hover = kit.HoverEntry()
 			}
 			// The highlight fades from the page left to the page opened, and the entry gives a little under a press.
 			return kit.Pressable(st, 0.98)
