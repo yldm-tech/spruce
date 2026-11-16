@@ -519,7 +519,7 @@ func (p *page) waitText(selector, want string) {
 	p.WaitUntil(wait, func() bool { vs := p.Query(selector); return len(vs) == 1 && vs[0].Text == want })
 }
 
-// One thing at a time: a clean elsewhere disables 清理.
+// One thing at a time: a clean elsewhere disables 清理, and the view says why, under its header and on the button.
 func TestBusyElsewhere(t *testing.T) {
 	st := ready()
 	st.Phase = app.OverviewCleaning
@@ -527,8 +527,16 @@ func TestBusyElsewhere(t *testing.T) {
 	if p.Enabled("id:clean") {
 		t.Error("清理 is enabled while another clean runs")
 	}
+	p.Find("id:drill-busy >> text:正在清理其他项目…")
+	if got := p.Find("id:clean").Props.Label; got != "正在清理其他项目…" {
+		t.Errorf("清理's label %q", got)
+	}
 	p.set(ready())
 	p.WaitUntil(wait, func() bool { return p.Enabled("id:clean") })
+	p.WaitForGone("id:drill-busy", wait)
+	if got := p.Find("id:clean").Props.Label; got != "" {
+		t.Errorf("清理's label %q once nothing else runs", got)
+	}
 }
 
 // Nothing of the source: the empty state; a failed source and unreadable places are told.

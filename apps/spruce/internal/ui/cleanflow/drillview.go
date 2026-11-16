@@ -96,16 +96,25 @@ func DeniedText(denied int64) string {
 	return "有 " + strconv.FormatInt(denied, 10) + " 个位置没有读取权限，结果可能不完整"
 }
 
-// DrillBar is a drill-down view's action bar, which the view pins under its page (kit.Page's Footer, which rises above the shell's toast): the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait).
+// DrillBar is a drill-down view's action bar, which the view pins under its page (kit.Page's Footer, which rises above the shell's toast): the two figures beside 清理, which is disabled while count is 0 or CanClean says no (naming why while another clean runs, Drill.BusyElsewhere), and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait).
 func DrillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref *core.Ref) core.Node {
-	return core.View{TestID: "drill-action-bar", Children: []core.Node{
-		core.Show{When: d.TrashWait, Then: func(*core.Scope) core.Node {
-			return core.Text{Content: "请等撤销提示消失后再清空" + format.TrashName(), TestID: "drill-trash-wait", Style: core.Style{FontFamily: kit.FontSans,
-				FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, TextAlign: core.TextAlignCenter}}
-		}},
-		kit.ActionBar{Start: start, End: end,
-			Button: kit.ActionButton{Label: "清理", OnPress: clean, Ref: ref, TestID: "clean", Disabled: func() bool { return !d.CanClean(count()) }}},
-	}}
+	return core.Func(func(cx *core.Scope) core.Node {
+		elsewhere := core.NewMemo(cx, d.BusyElsewhere)
+		bar := core.Dynamic(func(*core.Scope) core.Node {
+			b := kit.ActionButton{Label: "清理", OnPress: clean, Ref: ref, TestID: "clean", Disabled: func() bool { return !d.CanClean(count()) }}
+			if elsewhere.Get() {
+				b.Why = BusyText
+			}
+			return core.Func(func(*core.Scope) core.Node { return kit.ActionBar{Start: start, End: end, Button: b} })
+		})
+		return core.View{TestID: "drill-action-bar", Children: []core.Node{
+			core.Show{When: d.TrashWait, Then: func(*core.Scope) core.Node {
+				return core.Text{Content: "请等撤销提示消失后再清空" + format.TrashName(), TestID: "drill-trash-wait", Style: core.Style{FontFamily: kit.FontSans,
+					FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, TextAlign: core.TextAlignCenter}}
+			}},
+			bar,
+		}}
+	})
 }
 
 // DrillRecheck is a drill-down view's 重新检查 in its header, as 概览's: 正在检查… while a check runs, disabled while a clean does.
@@ -150,9 +159,9 @@ func StaleText(checkErr, err string, hasResult bool) string {
 	return "重新检查后才能清理"
 }
 
-// DrillStatus is the row under the header: why the header's 重新检查 was refused, 正在检查… while a check runs, else, while the result may not be cleaned, why and 重新检查.
+// DrillStatus is the row under the header: why the header's 重新检查 was refused, 正在检查… while a check runs, 正在清理其他项目… while a clean elsewhere holds 清理, else, while the result may not be cleaned, why and 重新检查.
 func DrillStatus(d *Drill) core.Node {
-	stale := func() bool { return !d.Checking() && !d.Actionable() }
+	stale := func() bool { return !d.Checking() && !d.Actionable() && !d.BusyElsewhere() }
 	line := func(text func() string, testID string) core.Text {
 		return core.Text{ContentFunc: text, TestID: testID, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
 			Color: kit.ColorTextMuted}}
@@ -172,6 +181,11 @@ func DrillStatus(d *Drill) core.Node {
 		core.Show{When: d.Checking, Then: func(*core.Scope) core.Node {
 			r := row(kit.Spinner{Size: 14, Label: "正在检查"}, line(func() string { return "正在检查…" }, ""))
 			r.TestID = "drill-checking"
+			return r
+		}},
+		core.Show{When: func() bool { return d.BusyElsewhere() && !d.Checking() }, Then: func(*core.Scope) core.Node {
+			r := row(kit.Spinner{Size: 14, Label: BusyText}, line(func() string { return BusyText }, ""))
+			r.TestID = "drill-busy"
 			return r
 		}},
 		core.Show{When: stale, Then: func(*core.Scope) core.Node {
