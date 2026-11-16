@@ -236,18 +236,21 @@ func TestCategoryListSelectAllAndNone(t *testing.T) {
 	}
 }
 
-// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure.
+// Ported from CategoryList.test.tsx: reveals an item in the file manager and reports a failure, as a short toast rather than a line at the top of the list, which may be far from the row pressed.
 func TestCategoryListReveal(t *testing.T) {
 	p := start(t, ready())
 	p.files.Err = errors.New("这个项目已经不存在了")
 	p.Press("role:button 展开日志")
 	p.Press("role:button 在访达中显示 x.log")
-	p.WaitFor("id:reveal-error", wait)
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
 	if got := p.files.Revealed(); !reflect.DeepEqual(got, []string{"/Users/me/Library/Logs/x.log"}) {
 		t.Errorf("revealed %v", got)
 	}
-	if got := p.Find("id:reveal-error").Text; got != "这个项目已经不存在了" {
-		t.Errorf("error %q", got)
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second || got.UndoRun != "" {
+		t.Errorf("toast %+v", got)
+	}
+	if p.Exists("id:reveal-error") {
+		t.Error("the error is also shown at the top of the list")
 	}
 }
 

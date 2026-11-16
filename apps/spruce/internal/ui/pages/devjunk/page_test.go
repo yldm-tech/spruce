@@ -520,3 +520,17 @@ func TestProjectHeadTakesPresses(t *testing.T) {
 	p.Press(tool + "-head")
 	p.WaitForGone(tool+"-items", wait)
 }
+
+// Showing a project that is no longer there in Finder says why in a short toast, not at the top of the list, which may be far from the row pressed.
+func TestProjectRevealFails(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.files.Err = fmt.Errorf("这个项目已经不存在了")
+	p.Press(p.project("/Users/me/Workspace/shop") + "-reveal")
+	p.WaitUntil(wait, func() bool { return p.stores.Toasts.Current() != nil })
+	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second {
+		t.Errorf("toast %+v", got)
+	}
+	if p.Exists("id:reveal-error") {
+		t.Error("the error is also shown at the top of the list")
+	}
+}

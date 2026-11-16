@@ -1,7 +1,6 @@
 package devjunk
 
 import (
-	"context"
 	"path/filepath"
 	"strconv"
 
@@ -10,7 +9,6 @@ import (
 
 	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
-	"spruce/apps/spruce/internal/ui/async"
 	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
@@ -68,19 +66,7 @@ func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.No
 func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lists, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
 	days := func() int { return set.Value().Cleanup.DevArtifactMinAgeDays }
 	shown, artifacts := l.shown, l.artifacts.Get
-	ctx := cx.Context()
-	revealErr := core.NewSignal(cx, "")
-	revealPath := func(path string) {
-		if rev == nil {
-			return
-		}
-		revealErr.Set("")
-		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, rev(ctx, path) }, func(_ struct{}, err error) {
-			if err != nil {
-				revealErr.Set(err.Error())
-			}
-		})
-	}
+	revealPath := cleanflow.Revealer(cx, rev)
 	disabled := d.Cleaning
 	chips := core.Dynamic(func(*core.Scope) core.Node {
 		idle := IdleLabel(days())
@@ -114,7 +100,6 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lis
 			kit.Button{Text: "全不选", Variant: kit.ButtonLink, Disabled: disabled, TestID: "select-none", OnPress: func() {
 				d.Change(SetProjects(d.Selection.GetUntracked(), shown.GetUntracked(), core.Untracked(cx, artifacts), false))
 			}},
-			core.View{Style: core.Style{FlexBasis: core.Pct(100)}, Children: []core.Node{kit.ErrorLine{Text: revealErr.Get, TestID: "reveal-error"}}},
 		}}
 	rows := core.Each(shown.Get, func(p engdev.Project) string { return p.ID }, func(cx *core.Scope, p func() engdev.Project, i func() int) core.Node {
 		return projectRow(cx, d, p, i, artifacts, disabled, revealPath)
