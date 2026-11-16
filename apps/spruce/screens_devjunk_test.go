@@ -99,6 +99,11 @@ func TestScreensDevJunk(t *testing.T) {
 	a.Press("id:confirm-cancel")
 	a.WaitForGone("id:confirm", wait)
 
+	a.Press("id:projects-sort-active")
+	a.WaitUntil(wait, func() bool { return a.Find("id:projects-sort-active").Props.Pressed })
+	a.Screenshot("dev-projects-recent")
+	a.Press("id:projects-sort-size")
+
 	a.Press("id:projects-filter-dirty")
 	blog := "id:project-" + cleanup.ItemID(devJunkRoots[0]+"/blog")
 	a.WaitUntil(wait, func() bool { return len(a.Query("id:projects >> role:checkbox")) == 1 })

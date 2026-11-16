@@ -175,6 +175,36 @@ func TestScreensOverview(t *testing.T) {
 	a.Press("id:toast-close")
 	a.WaitForGone("id:toast", wait)
 
+	// 全部清理: one question with the plan, then its progress in its place; what it could not handle stays with the card it is of.
+	allRelease := make(chan struct{})
+	cards := ov.OnClean
+	ov.OnClean = func(ctx context.Context, req cleanup.CleanRequest, origin app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		if !origin.All {
+			return cards(ctx, req, origin, progress)
+		}
+		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: 4, Total: len(req.ItemIDs), Bytes: 3_210_000_000})
+		select {
+		case <-allRelease:
+		case <-ctx.Done():
+		}
+		spotify := cleanup.ItemID("/Users/me/Library/Caches/com.spotify.client-00")
+		return app.OverviewOutcome{RunID: "run-all", Undoable: true, Result: cleanup.CleanResult{Freed: 5_650_000_000, Trashed: 2_442_000_000, Removed: len(req.ItemIDs) - 1,
+			Failed: []cleanup.Failure{{CategoryID: "system-junk:app-caches", ItemID: spotify, Reason: "没有权限"}}}}, nil
+	}
+	a.Scroll("id:overview-page", -2000)
+	a.Press("id:clean-all")
+	a.WaitFor("id:all-confirm", wait)
+	a.Screenshot("overview-clean-all-confirm")
+	a.Press("id:confirm-ok")
+	a.WaitFor("id:clean-all-progress", wait)
+	a.Screenshot("overview-clean-all")
+	close(allRelease)
+	a.WaitFor("id:toast", wait)
+	a.Press("id:toast-close")
+	a.WaitForGone("id:toast", wait)
+	a.WaitFor("id:rec-app-caches-failed-view", wait)
+	a.Screenshot("overview-left-items")
+
 	// D: outdated.
 	stale := overviewState(res)
 	stale.Result.Stale, stale.Result.Actionable = true, false
