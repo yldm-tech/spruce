@@ -392,7 +392,6 @@ func TestUninstallsTheAppWithTheCheckedLeftovers(t *testing.T) {
 		t.Errorf("size %q", got)
 	}
 	p.Find("text:已选 2/3 项，共 25 MB")
-	p.Find("text:应用本身 100 MB，会和勾选的文件一起移到废纸篓。")
 	p.Press("role:checkbox 缓存：cache")
 	if got := p.stat("已选择"); got != "2 项" {
 		t.Errorf("selected %q", got)
@@ -506,6 +505,10 @@ func TestRefusesARunningAppUntilItQuits(t *testing.T) {
 	if p.Enabled("id:uninstall") {
 		t.Error("卸载 enabled for a running app")
 	}
+	// The button says why it is off.
+	p.Hover("id:uninstall")
+	p.settle(func() bool { return p.Exists("text:先退出「Runner」") })
+	p.HoverOut()
 	plan.Running = false
 	svc.SetPlan(plan, nil)
 	p.Press("id:recheck-running")
@@ -591,6 +594,32 @@ func TestAnAppsMenuUninstallsRevealsAndCopies(t *testing.T) {
 	p.RightClick("id:app-list >> text:Foo")
 	p.ChoosePopup("卸载…")
 	p.WaitFor("id:confirm >> text:卸载「Foo」", wait)
+}
+
+func TestTheTotalWaitsForTheLeftovers(t *testing.T) {
+	svc := macService()
+	release := make(chan struct{})
+	svc.OnLeftovers = func(ctx context.Context, _ string) (app.UninstallPlan, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return fooPlan(), nil
+	}
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Runner")
+	// Runner's size is not known: the total waits.
+	if got := p.stat("将移到废纸篓"); got != "…" {
+		t.Errorf("total %q while the leftovers are looked up", got)
+	}
+	p.waitTicking("id:app-list >> text:120 MB")
+	p.pick("Foo")
+	if got := p.stat("将移到废纸篓"); got != "120 MB" {
+		t.Errorf("total %q while the leftovers are looked up", got)
+	}
+	close(release)
+	p.WaitUntil(wait, func() bool { return p.stat("将移到废纸篓") == "125 MB" })
 }
 
 func TestTheOrderHoldsWhileSizesStreamIn(t *testing.T) {

@@ -92,7 +92,7 @@ func Page(cx *core.Scope) core.Node {
 		})
 	})
 
-	footnote := "系统自带的应用不会列出。卸载会把应用和勾选的相关文件移到" + bin + "，可以随时放回。"
+	footnote := "系统自带的应用不会列出。"
 	if windows {
 		footnote = "这里列出通过安装程序安装的桌面程序；Microsoft Store 应用请在 Windows「设置 → 应用」中卸载。卸载时会运行程序自带的卸载程序，Spruce 只把它留下的文件移到回收站。"
 	}
@@ -113,10 +113,23 @@ func Page(cx *core.Scope) core.Node {
 			if windows {
 				return kit.Stat{Label: "卸载方式", Value: "自带卸载程序"}
 			}
+			label := "将移到" + bin
+			a, ok := s.App()
+			if !ok {
+				return kit.Stat{Label: label, Value: format.BytesIn(0, windows)}
+			}
+			if s.Plan.Get() == nil {
+				// Until its leftovers are found the total is not known: the app's own size, when measured, else an ellipsis.
+				if d := s.DetailsOf(a.ID); d.HasSize {
+					return kit.Stat{Label: label, Value: format.BytesIn(d.Size, windows)}
+				}
+				return kit.Stat{Label: label, Value: "…"}
+			}
 			_, size := s.Totals()
-			return kit.Stat{Label: "将移到" + bin, Value: format.BytesIn(s.BundleSize()+size, windows)}
+			return kit.Stat{Label: label, Value: format.BytesIn(s.BundleSize()+size, windows)}
 		},
-		Button: kit.ActionButton{Label: "卸载", Ref: actionRef, TestID: "uninstall", OnPress: s.Start, Disabled: func() bool { return !s.CanUninstall() }},
+		Button: kit.ActionButton{Label: "卸载", Ref: actionRef, TestID: "uninstall", OnPress: s.Start, Disabled: func() bool { return !s.CanUninstall() },
+			Tooltip: blockedTip(cx, s)},
 	}
 
 	return core.Group{
@@ -129,6 +142,23 @@ func Page(cx *core.Scope) core.Node {
 		kit.LiveStatus{Text: s.LiveText},
 		flow(cx, s, actionRef),
 	}
+}
+
+// blockedTip is the tooltip of 卸载 while the picked app runs, which says why it is off; it shows nothing otherwise.
+func blockedTip(cx *core.Scope, s *State) core.Node {
+	reason := core.NewMemo(cx, func() string {
+		if a, ok := s.App(); ok && !s.windows && s.Running() {
+			return "先退出「" + a.Name + "」"
+		}
+		return ""
+	})
+	return core.Dynamic(func(*core.Scope) core.Node {
+		r := reason.Get()
+		if r == "" {
+			return core.Group{}
+		}
+		return core.Func(func(*core.Scope) core.Node { return kit.Tooltip(r) })
+	})
 }
 
 // column is the page's column as kit.Page lays it out, without its scroll view: the columns take the height between the header and the action bar and scroll inside, as the design's grid row minmax(0, 1fr) does, which a scroll view's unbounded content height cannot. It fills the shell's main area absolutely, so its content never sizes the main area. The window's minimum height leaves the columns more than their 300-point minimum, so the page itself never needs to scroll.
