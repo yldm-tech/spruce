@@ -288,6 +288,30 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 	}
 }
 
+// 设置 opens on 通用 again, so where another tab was scrolled to means nothing there: it opens at the top until the tab it was on is kept as well.
+func TestSettingsComesBackAtTheTop(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), nav.Settings)
+	a.Resize(960, 420)
+	a.WaitFor("id:tab-auto", wait)
+	a.Press("id:tab-auto")
+	a.WaitFor("id:settings-tab-auto", wait)
+	page := func() *nsgotest.View { return a.Find("id:settings-page") }
+	end := page().Content.Height - page().Frame.Size.Height
+	if end < 40 {
+		t.Fatalf("自动清理 does not scroll at 960x420 (%v)", end)
+	}
+	a.Scroll("id:settings-page", end)
+	a.Advance(200 * time.Millisecond)
+	a.Press("id:nav-history")
+	a.WaitFor("role:header 操作历史", wait)
+	a.ChooseMenu("前往", "设置")
+	a.WaitFor("id:settings-tab-general", wait)
+	a.Advance(time.Second)
+	if y := page().Offset.Y; y != 0 {
+		t.Errorf("通用 at %v, scrolled to where 自动清理 was left", y)
+	}
+}
+
 // Going to another page and back lands 概览 where it was left.
 func TestOverviewComesBackWhereItWasLeft(t *testing.T) {
 	a, _ := startShell(t, storefake.New(t.TempDir()), "")

@@ -37,7 +37,7 @@ func Page(cx *core.Scope) core.Node {
 		}
 	}}
 	return core.Group{
-		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, ScrollKey: nav.DevJunk, Header: kit.PageHeader{Route: nav.DevJunk}, Children: []core.Node{
+		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, Header: kit.PageHeader{Route: nav.DevJunk}, Children: []core.Node{
 			cleanflow.DrillStatus(d), cleanflow.DrillNotices(d, DeniedNotice), body,
 		}},
 		cleanflow.DrillLayers(d),
