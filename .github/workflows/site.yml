@@ -1,0 +1,124 @@
+name: Site
+
+# Builds the landing page, spruce.yldm.ai, with apps/site (TanStack Start prerendered to static files, built with Vite+) and deploys it to GitHub Pages. It runs on GitHub-hosted runners, named as literal labels, so that no setting can send it to another machine.
+#
+# Actions are pinned to commit SHAs with the tag in a trailing comment. A tag is a moving pointer its owner can repoint, and the deploy job runs with write scopes.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/site/**"
+      # The page copies the screenshots, the app icon and the menu bar icons into the site, so a change to them changes what is deployed.
+      - "docs/assets/**"
+      - "apps/spruce/assets/**"
+      - ".github/workflows/site.yml"
+  # The page names the version in apps/spruce/nsgo.yaml and links that release's files, so it is rebuilt after every Release run on main that succeeds, which includes the runs that find nothing to release. Release pushes its version commit with GITHUB_TOKEN, which starts no workflow, so the push trigger above never sees it; and nsgo.yaml is not one of its paths because the version commit lands while the release is still a draft, whose files 404 for visitors. The build job checks that the release is published whatever started it.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Pages deployment authenticates through OIDC, so no token is stored. The build job runs the site's npm dependencies (vp install, vp build, vp test), so it gets read scopes only and no stored git credentials; only the deploy job, which runs nothing but actions/deploy-pages, can write to Pages and mint an OIDC token.
+permissions:
+  contents: read
+
+# A queued deploy supersedes a waiting one rather than racing it, but a deploy in flight is allowed to finish so that the site is never left half-written.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    # GitHub Pages needs a public repository on this plan, so a private one skips the site rather than failing in configure-pages. A Release run that failed rebuilds nothing; the release check below covers the draft it may have left.
+    if: ${{ !github.event.repository.private && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # configure-pages reads the Pages site's settings; the release check reads the repository's releases.
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      published: ${{ steps.release.outputs.published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Download buttons link the files of the version in nsgo.yaml, which 404 while that release is a draft: between Release's version commit and its Publish job, or for good when Publish failed. The site is then left as it is; the Release run that publishes the release starts this workflow again. The endpoint returns published releases only, so a draft answers 404 like a missing release.
+      - name: Check the release is published
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=v$(sed -nE 's/^version: *"?([0-9.]+)"? *$/\1/p' apps/spruce/nsgo.yaml)
+          if [ "$tag" = v ]; then
+            echo "::error::apps/spruce/nsgo.yaml names no version."
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --silent 2>"$RUNNER_TEMP/release.err"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif grep -qF "HTTP 404" "$RUNNER_TEMP/release.err"; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            message="$tag, the version in apps/spruce/nsgo.yaml, is not a published release yet, so the site is not deployed. The Release run that publishes it deploys the site."
+            echo "::warning::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat "$RUNNER_TEMP/release.err" >&2
+            exit 1
+          fi
+
+      # Vite+ installs the Node.js of apps/site/.node-version, the pnpm of its package.json and the locked dependencies (vp install), and caches the dependencies by the lockfile.
+      - if: steps.release.outputs.published == 'true'
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          working-directory: apps/site
+          version-file: package.json
+          node-version-file: .node-version
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Build site
+        if: steps.release.outputs.published == 'true'
+        working-directory: apps/site
+        run: vp build
+
+      - name: Test site
+        if: steps.release.outputs.published == 'true'
+        working-directory: apps/site
+        env:
+          SPRUCE_SITE_DIST: dist
+        run: vp test run
+
+      # The router's route tree is generated by the build and committed; a route added without it fails here.
+      - name: Route tree is current
+        if: steps.release.outputs.published == 'true'
+        working-directory: apps/site
+        run: git diff --exit-code -- src/routeTree.gen.ts
+
+      - if: steps.release.outputs.published == 'true'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      # The pages are in dist/client, with the CNAME that names the custom domain; dist/server is the prerender's server bundle, which is not deployed. The domain itself comes from the repository's Pages settings.
+      - if: steps.release.outputs.published == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: apps/site/dist/client
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: needs.build.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
