@@ -1,0 +1,155 @@
+<!doctype html>
+<!-- The link preview image of a language (media/og/<code>.png), as scripts/media.ts renders it at 1200×630: the app icon and name, the headline with its mark and a short line on the app's window background, beside the overview screenshot in a window. The script fills in the {{name}} fields; the fonts are the system's, as on the page. -->
+<html lang="{{lang}}">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      }
+      :lang(zh-Hant) {
+        --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+      }
+      :lang(ja) {
+        --sans:
+          "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", "Noto Sans JP",
+          sans-serif;
+      }
+      :lang(ko) {
+        --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+      }
+      body {
+        position: relative;
+        background:
+          radial-gradient(700px 520px at 85% 0, rgba(255, 200, 60, 0.42), transparent 60%),
+          radial-gradient(620px 520px at 8% 100%, rgba(214, 70, 120, 0.4), transparent 60%), linear-gradient(160deg, #8a4a12 0%, #4a2238 45%, #1c0f26 100%);
+        color: #fff;
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      .text {
+        position: absolute;
+        left: 64px;
+        top: 60px;
+        width: 480px;
+        height: 510px;
+        display: flex;
+        flex-direction: column;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 30px;
+        font-weight: 700;
+      }
+      .icon {
+        width: 72px;
+        height: 72px;
+        filter: drop-shadow(0 12px 22px rgba(245, 166, 35, 0.4));
+      }
+      h1 {
+        margin: 34px 0 0;
+        font-size: 56px;
+        line-height: 1.1;
+        font-weight: 800;
+        letter-spacing: -0.035em;
+      }
+      /* Chinese, Japanese and Korean headlines break where the content string does, so each line is kept whole and the size steps down until it fits (the script at the end). */
+      :lang(zh-Hans) h1,
+      :lang(zh-Hant) h1,
+      :lang(ja) h1,
+      :lang(ko) h1 {
+        letter-spacing: -0.01em;
+        line-height: 1.22;
+        white-space: nowrap;
+      }
+      :lang(ja) {
+        word-break: auto-phrase;
+      }
+      :lang(ko) {
+        word-break: keep-all;
+      }
+      .mark {
+        font-style: normal;
+        background: linear-gradient(100deg, #ffe066 10%, #ffd23f 45%, #f5a623);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      p {
+        margin: 22px 0 0;
+        text-wrap: balance;
+        font-size: 24px;
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.8);
+      }
+      .site {
+        margin-top: auto;
+        font-size: 20px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      .stage {
+        position: absolute;
+        left: 580px;
+        top: 84px;
+        width: 590px;
+        height: 461px;
+      }
+      .glow {
+        position: absolute;
+        inset: 40px 30px -30px 30px;
+        border-radius: 40px;
+        background: rgba(245, 166, 35, 0.32);
+        filter: blur(50px);
+      }
+      /* The overview without its sidebar: the screenshot at 720 pixels wide, moved left by the sidebar's width, so that the space it can free and the first cards fill the window. */
+      .window {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border-radius: 16px;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.18),
+          0 30px 60px rgba(8, 3, 14, 0.5);
+      }
+      .still {
+        display: block;
+        width: 720px;
+        margin-left: -130px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="text">
+      <div class="brand"><img class="icon" src="{{icon}}" alt="" />Spruce</div>
+      <h1>{{title}}</h1>
+      <p>{{tagline}}</p>
+      <div class="site">spruce.yldm.ai</div>
+    </div>
+    <div class="stage">
+      <div class="glow"></div>
+      <div class="window"><img class="still" src="{{shot}}" alt="" /></div>
+    </div>
+    <script>
+      // The headline takes the room the short line and the address leave it: its size steps down until the column fits, and until each of its lines fits on one.
+      const text = document.querySelector(".text");
+      const h1 = document.querySelector("h1");
+      for (let size = 56; size > 32 && (text.scrollHeight > text.clientHeight || h1.scrollWidth > h1.clientWidth); size -= 2) {
+        h1.style.fontSize = size + "px";
+      }
+    </script>
+  </body>
+</html>
