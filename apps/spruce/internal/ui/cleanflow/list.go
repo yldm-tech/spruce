@@ -128,10 +128,15 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 		}
 		return strconv.Itoa(len(cat.Items)) + " 项"
 	}
-	// The whole head opens and closes the items; the chevron stays the control the keyboard reaches.
+	// The whole head opens and closes the items, and looks it only when there are items to show; the chevron stays the control the keyboard reaches.
 	head := core.View{TestID: "head-" + id, NoFocus: true, OnPress: func(core.PressEvent) { toggle() },
-		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(16, 18), Cursor: core.CursorPointer,
-			Hover: &core.Style{Background: kit.SurfaceRowHover}},
+		StyleFunc: func() core.Style {
+			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(16, 18)}
+			if !empty() {
+				st.Cursor, st.Hover = core.CursorPointer, &core.Style{Background: kit.SurfaceRowHover}
+			}
+			return st
+		},
 		Children: []core.Node{
 			kit.Checkbox{Label: core.Untracked(cx, title), TestID: "check-" + id,
 				Checked:       func() bool { return state() == CheckAll },

@@ -890,3 +890,17 @@ func TestRowsAndHeadsTakePresses(t *testing.T) {
 	p.Press("id:head-system-junk:caches")
 	p.WaitForGone("id:items-system-junk:caches", wait)
 }
+
+// A category with no items has nothing to open: its head does not look pressable.
+func TestEmptyCategoryHeadLooksInert(t *testing.T) {
+	empty := cleanup.Category{ID: "system-junk:empty", Source: "system-junk", Title: "空的分类", Icon: "cache", Kind: cleanup.KindCache, Deletion: cleanup.DeletePermanent}
+	p := start(t, stateOf(append(junk(), empty)...))
+	full, none := p.Find("id:head-system-junk:caches"), p.Find("id:head-system-junk:empty")
+	if full.Style.Cursor == none.Style.Cursor {
+		t.Errorf("the empty category's head has the pointer cursor %v of one with items", none.Style.Cursor)
+	}
+	p.Press("id:head-system-junk:empty")
+	if p.Exists("id:items-system-junk:empty") {
+		t.Error("an empty category opened")
+	}
+}
