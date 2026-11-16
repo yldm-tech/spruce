@@ -797,7 +797,7 @@ func TestOverviewStopCheck(t *testing.T) {
 	}
 }
 
-// TestOverviewReadDisk: free space is read again at the next turn after ReadDisk, well before DiskEvery, as the window comes back or something outside a clean (a move in 空间透视, an uninstall) frees space; without it the next turn keeps the reading.
+// TestOverviewReadDisk: ReadDisk reads free space again at once, well before DiskEvery and without waiting for the loop's turn (which may be inside a check), as the window comes back or something outside a clean (a move in 空间透视, an uninstall) frees space; it also has the next turn read it again; without it the next turn keeps the reading.
 func TestOverviewReadDisk(t *testing.T) {
 	f := newOvFixture(t, ovOptions{})
 	f.update(func(s *settings.AppSettings) { s.Background.Enabled = false })
@@ -810,9 +810,13 @@ func TestOverviewReadDisk(t *testing.T) {
 		t.Fatalf("free %v read again before DiskEvery without ReadDisk", got)
 	}
 	o.ReadDisk()
-	f.step()
 	if got := o.State().Disk.Free; got != 150e9 {
-		t.Errorf("free %v after ReadDisk, want 150e9", got)
+		t.Errorf("free %v at once after ReadDisk, want 150e9", got)
+	}
+	f.setFree(140e9)
+	f.step()
+	if got := o.State().Disk.Free; got != 140e9 {
+		t.Errorf("free %v at the turn after ReadDisk, want 140e9", got)
 	}
 	select {
 	case <-o.wake:
