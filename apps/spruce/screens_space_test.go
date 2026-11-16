@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,17 +18,21 @@ import (
 	"spruce/apps/spruce/internal/ui/store/storefake"
 )
 
-// TestScreensSpace shows the 空间透视 page before a scan, scanning, with the results of a home folder of 302 cells, on the 大文件 tab, asking before a move to the Trash and with folders it could not read, for comparison with the design.
+// TestScreensSpace shows the 空间透视 page before a scan, scanning a disk and a folder, with the results of a home folder of 302 cells, scanning them again in place, on the 大文件 tab with files chosen, and asking before a move to the Trash, for comparison with the design.
 func TestScreensSpace(t *testing.T) {
 	const wait = 10 * time.Second
 	svc := spacefake.Crowded(time.Now().Add(-3 * time.Minute))
 	crowded := *svc.Kept
 	svc.Kept = nil
-	release := make(chan struct{})
+	release, again := make(chan struct{}), make(chan struct{})
 	svc.OnScan = func(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error) {
 		progress(app.SpaceProgress{Files: 182_406, Dirs: 21_380, Bytes: 61.7e9, Path: spacefake.Home + "/Library/Developer/CoreSimulator/Devices"})
+		hold := release
+		if svc.Current() != nil {
+			hold = again
+		}
 		select {
-		case <-release:
+		case <-hold:
 		case <-ctx.Done():
 			return app.SpaceSummary{}, ctx.Err()
 		}
@@ -46,6 +51,19 @@ func TestScreensSpace(t *testing.T) {
 	a.WaitFor("id:volume-/", wait)
 	a.Screenshot("space-idle")
 
+	// A disk's scan fills its ring against the disk's used space; Escape stops it.
+	a.Press("id:volume-/")
+	a.WaitUntil(wait, func() bool {
+		if a.Exists("text:已扫描 182,406 个文件 · 61.7 GB") {
+			return true
+		}
+		a.Advance(20 * time.Millisecond)
+		return false
+	})
+	a.Screenshot("space-scanning-disk")
+	a.Key("Escape")
+	a.WaitFor("id:target-home", wait)
+
 	a.Press("id:target-home")
 	a.WaitUntil(wait, func() bool {
 		if a.Exists("text:已扫描 182,406 个文件 · 61.7 GB") {
@@ -61,9 +79,26 @@ func TestScreensSpace(t *testing.T) {
 	a.WaitUntil(wait, func() bool { return len(a.Query("id:treemap >> role:button")) > 20 })
 	a.Screenshot("space-results")
 
+	// 重新扫描 keeps the results, dimmed, with the scan's progress in the action bar.
+	a.Press("id:rescan")
+	a.WaitUntil(wait, func() bool {
+		if a.Exists("text:正在重新扫描") && a.Exists("text:61.7 GB") {
+			return true
+		}
+		a.Advance(20 * time.Millisecond)
+		return false
+	})
+	a.Screenshot("space-rescanning")
+	close(again)
+	a.WaitFor("id:rescan", wait)
+
 	a.Press("id:tab-large")
 	a.WaitFor(`role:group "大文件"`, wait)
 	a.Screenshot("space-large")
+	a.Press(`role:checkbox "选择 big.iso"`)
+	a.Press(`role:checkbox "选择 data.bin"`)
+	a.WaitFor("id:trash-chosen", wait)
+	a.Screenshot("space-large-chosen")
 	a.Press("id:tab-map")
 	a.WaitFor("id:treemap", wait)
 
@@ -124,8 +159,13 @@ func TestScreensSpaceGrowth(t *testing.T) {
 	svc := spacefake.New(now.Add(-time.Minute))
 	listing := svc.Listings[0]
 	svc.Kept = nil
+	// Every scan has an id of its own, as the service gives it.
+	scans := 0
 	svc.OnScan = func(context.Context, string, func(app.SpaceProgress)) (app.SpaceSummary, error) {
-		return spacefake.Summary(time.Now()), nil
+		scans++
+		sum := spacefake.Summary(time.Now())
+		sum.ScanID = "scan-" + strconv.Itoa(scans)
+		return sum, nil
 	}
 	a := screensApp(t, fakes, shell.Deps{Space: space.Deps{Space: svc, Files: &spacefake.Files{}}}, "space")
 	a.WaitFor("id:growth-row-4", wait)
