@@ -1,3 +1,7 @@
 /build/
+/apps/spruce/build/
+# The program go build leaves in apps/spruce when run there.
+/apps/spruce/spruce
+/apps/spruce/spruce.exe
 *.log
-/.nsgo/
+**/.nsgo/

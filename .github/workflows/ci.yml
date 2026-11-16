@@ -1,8 +1,8 @@
 name: CI
 
-# Runs scripts/check.sh, the acceptance checks every change must pass (gofmt, vet and build for macOS and Windows on both architectures, the tests with the race detector, golangci-lint, the headless nsgo tests and nsgo check), on every pull request and every push to main. A push to main that passes starts the Release workflow, which releases it when its commits call for a new version.
+# The checks every pull request and every push to main must pass. A push to main that passes starts the Release workflow, which releases it when its commits call for a new version.
 #
-# The job runs on the Mac Studio's self-hosted runners: the repository is private, so GitHub's macOS runners would bill every minute, and the runners keep their Go caches between runs.
+# Every job runs on a GitHub-hosted runner, named as a literal label rather than from a variable. A fork's pull request runs the workflow file of its own branch, so this file cannot keep it off a self-hosted runner: the organization's runner groups must not allow public repositories. Pull requests run with the pull_request event only: a fork's code gets a read-only token and no secrets.
 on:
   pull_request:
   push:
@@ -17,9 +17,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # apps/spruce/scripts/check.sh, the acceptance checks of the app: gofmt, vet and build for macOS and Windows on both architectures without cgo, the third-party notices, the tests with the race detector, golangci-lint for macOS and Windows, the headless nsgo tests and nsgo check. It runs on macOS, where the app's own tests run.
   check:
-    name: Check
-    runs-on: ${{ fromJSON(vars.MACOS_RUNNER || '["self-hosted","yldm-macos"]') }}
+    name: Check (macOS)
+    runs-on: macos-latest
     timeout-minutes: 60
     env:
       GOFLAGS: -trimpath
@@ -29,14 +30,178 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
           cache: false
-      # golangci-lint is built with the job's Go, as one built with an older Go cannot load packages that need a newer one; the version is the one .golangci.yml was written for.
+      # Each job that builds keeps a Go cache of its own: setup-go's cache has one key for every job, so the first job to finish would save it for all of them.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+            ~/Library/Caches/golangci-lint
+          key: go-${{ runner.os }}-${{ github.job }}-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ github.job }}-
+      # golangci-lint is built with the job's Go, as one built with an older Go cannot load packages that need a newer one; the version is the one apps/spruce/.golangci.yml was written for.
       - name: Install golangci-lint
         run: |
           GOBIN="$RUNNER_TEMP/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Check
-        run: scripts/check.sh
-      - name: Check the release scripts
+        run: apps/spruce/scripts/check.sh
+
+  # The app's tests on Windows, which check.sh only vets: without the race detector, which needs cgo there. The job does not fail the run yet, so that a Windows-only failure cannot hold up a release before these tests have a record on CI.
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      GOFLAGS: -trimpath
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
+          key: go-${{ runner.os }}-${{ github.job }}-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ github.job }}-
+      # The repository root is a Go workspace (go.work), not a module, so ./... matches nothing there: the app's folder is named.
+      - name: Test
+        run: go test ./apps/spruce/...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Go cache: this job builds little, and the cache storage is left to the jobs that build.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: false
+      - name: go mod tidy
+        run: |
+          (cd apps/spruce && go mod tidy)
+          git diff --exit-code -- '*go.mod' '*go.sum'
+      # A merge or rebase resolved by hand can leave its markers behind in a file that still builds, such as a Markdown or YAML file.
+      - name: Conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|>>>>>>>)( |$)|^\|\|\|\|\|\|\| '; then
+            echo "::error::Conflict markers are left in the files above."
+            exit 1
+          fi
+      - name: shellcheck
+        run: shellcheck .github/scripts/*.sh apps/spruce/scripts/*.sh
+      # changelog.sh and next-version.sh run only when Release runs, where a mistake would stop a release or release the wrong thing, so their test runs on every change.
+      - name: Release scripts
         run: .github/scripts/changelog-test.sh
+
+  # Spruce builds for macOS and Windows only, so govulncheck looks at the code each of them compiles.
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No Go cache: this job builds little, and the cache storage is left to the jobs that build.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache: false
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      # govulncheck needs a module, so it runs in the app's.
+      - env:
+          CGO_ENABLED: "0"
+        run: |
+          for goos in darwin windows; do
+            echo "::group::$goos"
+            GOOS=$goos govulncheck -C apps/spruce ./...
+            echo "::endgroup::"
+          done
+
+  # Whether a pull request changes how the packages are made: the workflows and scripts, the Go workspace, or the app's nsgo.yaml, module, changelog, icons or resources. A pull request that changes none of them has its packages built on main after it merges, and again by Release, rather than waiting on the package builds, the macOS one the slowest job of CI, for a change they cannot catch. And whether it changes what the landing page is built from: apps/site, the screenshots, the app's icons, the version in nsgo.yaml, or the workflows that build it.
+  changes:
+    name: Changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      package: ${{ steps.diff.outputs.package }}
+      site: ${{ steps.diff.outputs.site }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE...$HEAD" > "$RUNNER_TEMP/changed.txt"
+          if grep -qE '^(\.github/(workflows/(ci|package|release)\.yml|scripts/)|go\.work|apps/spruce/(nsgo\.yaml|go\.(mod|sum)|CHANGELOG\.md|assets/|resources/))' "$RUNNER_TEMP/changed.txt"; then
+            echo "package=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package=false" >> "$GITHUB_OUTPUT"
+          fi
+          if grep -qE '^(apps/site/|docs/assets/|apps/spruce/(nsgo\.yaml|assets/)|\.github/workflows/(ci|site)\.yml)' "$RUNNER_TEMP/changed.txt"; then
+            echo "site=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "site=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The landing page, apps/site: the format, lint and type checks, the build with its prerender, and the tests against the built pages; on every push to main, and on a pull request that changes what it is built from (changes). The site is deployed by site.yml.
+  site:
+    name: Site
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.site == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Vite+ installs the Node.js of .node-version, the pnpm of package.json and the locked dependencies (vp install), and caches the dependencies by the lockfile.
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          working-directory: apps/site
+          version-file: package.json
+          node-version-file: .node-version
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+      - run: vp check
+      - run: vp build
+      - run: vp test run
+        env:
+          SPRUCE_SITE_DIST: dist
+      # The router's route tree is generated by the build and committed; a route added without it fails here.
+      - name: Route tree is current
+        run: git diff --exit-code -- src/routeTree.gen.ts
+
+  # The packages Release builds, from the same workflow and unsigned: on every push to main, and on a pull request that changes how they are made (changes), so that such a change that breaks one shows on its pull request.
+  package:
+    name: Package
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.package == 'true') }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/package.yml

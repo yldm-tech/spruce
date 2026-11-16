@@ -2,15 +2,15 @@
 # changelog.sh add <vX.Y.Z> [commit]
 # changelog.sh notes <vX.Y.Z>
 #
-# Spruce's release notes live in CHANGELOG.md, beside nsgo.yaml, a "## X.Y.Z - date" section per version, newest first. The Release workflow writes the section with add when it bumps the version, and makes the same section the GitHub release's notes with notes.
+# Spruce's release notes live in apps/spruce/CHANGELOG.md, beside nsgo.yaml, a "## X.Y.Z - date" section per version, newest first. The Release workflow writes the section with add when it bumps the version, and makes the same section the GitHub release's notes with notes.
 #
-# add writes the section of a version from the Conventional Commits from the version tag before the commit (HEAD by default) to the commit, the range next-version.sh reads: breaking changes (a type ending in "!" or a "BREAKING CHANGE:" footer), features (feat), fixes (fix and revert) and performance (perf), each under a heading of its own, as their subjects without the type. A pull request's merge commit stands for the pull request with its title, so the commits that made it, review fixes among them, are not listed one by one (see entries). The types that release nothing (docs, test, ci, chore, refactor, style, build) are left out, and so are the scopes that are not the app (deps), so a release of nothing else gets a line that says so, as the release's notes would otherwise be empty. A change and a revert of it in the same range are both left out. A version that has a section already keeps it, so notes written by hand before the release are the ones that ship, and the way to leave a change out of them; write one only for the version next-version.sh gives the commits, as it is kept as it is when that version comes. The new section goes above the sections of older versions.
+# add writes the section of a version from the Conventional Commits from the version tag before the commit (HEAD by default) to the commit, the range next-version.sh reads: breaking changes (a type ending in "!" or a "BREAKING CHANGE:" footer), features (feat), fixes (fix and revert) and performance (perf), each under a heading of its own, as their subjects without the type. A pull request's merge commit stands for the pull request with its title, so the commits that made it, review fixes among them, are not listed one by one (see entries). The types that release nothing (docs, test, ci, chore, refactor, style, build) are left out, and so are the scopes that are not the app (site, deps), breaking or not, so a release of nothing else gets a line that says so, as the release's notes would otherwise be empty. A change and a revert of it in the same range are both left out. A version that has a section already keeps it, so notes written by hand before the release are the ones that ship, and the way to leave a change out of them; write one only for the version next-version.sh gives the commits, as it is kept as it is when that version comes. The new section goes above the sections of older versions.
 #
 # notes prints the section of a version without its heading, as the GitHub release's notes.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
-file=$root/CHANGELOG.md
+file=$root/apps/spruce/CHANGELOG.md
 new=$(mktemp)
 trap 'rm -f "$new" "$file.tmp"' EXIT
 
@@ -54,8 +54,8 @@ section() {
   ' "$file"
 }
 
-# Scopes of changes that are not the app's, left out of its notes: dependency bumps.
-skip_scopes=" deps "
+# Scopes of changes left out of the app's notes: the website and dependency bumps. next-version.sh releases nothing for the website's, but a dependency bump does release, so a release of bumps alone gets the line that says nothing worth listing changed; changelog-test.sh checks that next-version.sh's list is part of this one.
+skip_scopes=" site deps "
 
 # classify <subject> <body> prints the "<group>\t<text>" line of a Conventional Commit subject worth listing, and fails for one that is not: another type, a skipped scope or no Conventional Commit at all. The group is breaking, feat, fix, perf or revert, and the text is the subject without its type; a revert's is the subject it reverts, without that one's type.
 classify() {
@@ -68,12 +68,12 @@ classify() {
   scope=${BASH_REMATCH[3]}
   breaking=${BASH_REMATCH[4]}
   text=${BASH_REMATCH[5]}
+  if [ -n "$scope" ] && [[ $skip_scopes == *" $scope "* ]]; then
+    return 1
+  fi
   if [ "$breaking" = "!" ] || grep -qE '^BREAKING[ -]CHANGE:' <<<"$2"; then
     group=breaking
   else
-    if [ -n "$scope" ] && [[ $skip_scopes == *" $scope "* ]]; then
-      return 1
-    fi
     case $type in
       feat) group=feat ;;
       fix) group=fix ;;
@@ -182,14 +182,14 @@ add() {
   local version=$1 commit=$2 notes
   if notes=$(section "$version"); then
     if [ -z "$notes" ]; then
-      echo "CHANGELOG.md has an empty section for $version: write its notes or remove its heading" >&2
+      echo "apps/spruce/CHANGELOG.md has an empty section for $version: write its notes or remove its heading" >&2
       exit 1
     fi
-    echo "CHANGELOG.md has notes for $version already; keeping them" >&2
+    echo "apps/spruce/CHANGELOG.md has notes for $version already; keeping them" >&2
     return
   fi
   if [ ! -f "$file" ]; then
-    printf '# Changelog\n\nWhat changed in each version of Spruce, newest first. The app shows the section of a new version when it offers the update.\n' >"$file"
+    printf '# Changelog\n\nWhat changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.\n' >"$file"
   fi
   write "$version" "$commit" >"$new"
   awk -v new="$new" -v want="$version" '
@@ -229,7 +229,7 @@ case ${1:-} in
     [ "$#" -eq 2 ] || usage
     v=$(version "$2")
     if ! notes=$(section "$v") || [ -z "$notes" ]; then
-      echo "CHANGELOG.md has no notes for $v" >&2
+      echo "apps/spruce/CHANGELOG.md has no notes for $v" >&2
       exit 1
     fi
     echo "$notes"

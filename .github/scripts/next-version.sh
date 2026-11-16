@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # next-version.sh <commit> [major|minor|patch]
 #
-# Prints the version tag the commit should get, or nothing when it should get none. Without a bump given, the bump follows the Conventional Commits since the last version tag before the commit: a breaking change (a type ending in "!" or a "BREAKING CHANGE:" footer) is a major bump, feat a minor one, fix, perf and revert a patch one; other types (docs, test, ci, chore, refactor, style, build) release nothing. While the major version is 0, a breaking change bumps the minor version, as SemVer leaves 0.x free to break. Merge commits are skipped, as the commits they bring are counted themselves. Spruce merges pull requests with merge commits, so the bump follows the Conventional Commits the pull requests bring.
+# Prints the version tag the commit should get, or nothing when it should get none. Without a bump given, the bump follows the Conventional Commits since the last version tag before the commit: a breaking change (a type ending in "!" or a "BREAKING CHANGE:" footer) is a major bump, feat a minor one, fix, perf and revert a patch one; other types (docs, test, ci, chore, refactor, style, build) release nothing. Commits scoped to the website (skip_scopes, part of changelog.sh's list) release nothing either, breaking or not, so a change to the website alone never releases the app. Dependency bumps (deps) do release, as they change the binary, security fixes among them; changelog.sh leaves them out of the notes. While the major version is 0, a breaking change bumps the minor version, as SemVer leaves 0.x free to break. Merge commits are skipped, as the commits they bring are counted themselves. Spruce merges pull requests with merge commits, so the bump follows the Conventional Commits the pull requests bring.
 #
 # Nothing is printed when the commit already has a version tag, or when it is not after the newest version tag (CI on an older push of main that finished late).
 set -euo pipefail
+
+# Scopes of changes that are not the app's, which release nothing: the website. changelog.sh leaves these scopes out of the notes too, and changelog-test.sh checks that each of them is in its list.
+skip_scopes=" site "
 
 sha=$(git rev-parse "$1^{commit}")
 forced=${2:-}
@@ -29,14 +32,18 @@ fi
 bump=$forced
 if [ -z "$bump" ]; then
   bump=none
-  type_re='^([a-z]+)(\([^)]*\))?(!?):'
+  type_re='^([a-z]+)(\(([^)]*)\))?(!?):'
   while read -r commit; do
     subject=$(git log -1 --format=%s "$commit")
     body=$(git log -1 --format=%b "$commit")
     if [[ $subject =~ $type_re ]]; then
       type=${BASH_REMATCH[1]}
-      breaking=${BASH_REMATCH[3]}
+      scope=${BASH_REMATCH[3]}
+      breaking=${BASH_REMATCH[4]}
     else
+      continue
+    fi
+    if [ -n "$scope" ] && [[ $skip_scopes == *" $scope "* ]]; then
       continue
     fi
     if [ "$breaking" = "!" ] || grep -qE '^BREAKING[ -]CHANGE:' <<<"$body"; then
