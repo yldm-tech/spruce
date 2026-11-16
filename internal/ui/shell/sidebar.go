@@ -77,7 +77,8 @@ func (s Sidebar) item(r nav.Route, footer bool) core.Node {
 			if current() {
 				st.FontFamily, st.FontWeight, st.Color, st.Background = kit.FontFace(kit.Semibold), kit.FaceWeight(kit.Semibold), kit.ColorText, kit.SurfaceNavActive
 			}
-			return st
+			// The highlight fades from the page left to the page opened, and the entry gives a little under a press.
+			return kit.Pressable(st, 0.98)
 		},
 		Children: []core.Node{icon, core.Text{Content: m.Title}}}
 }
