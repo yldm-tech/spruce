@@ -253,16 +253,14 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 			return r.Menu(cx, e)
 		},
 	}
-	// The keys act on the results while no dialog holds the window (a binding stays live under a newer layer that does not bind the same key).
-	free := func() bool {
-		return (stores == nil || !stores.Block.Blocked()) && r.page.Scanning.GetUntracked() == nil
-	}
+	// The keys act on the results while no dialog holds the window (a binding stays live under a newer layer that does not bind the same key). Backspace and Cmd+↑ go up during a scan of the location too, as a click on the path does; back is left to the page then, which stops the scan.
+	free := func() bool { return stores == nil || !stores.Block.Blocked() }
 	up := func() {
 		if free() {
 			r.Up()
 		}
 	}
-	cx.OnBackPress(func() bool { return free() && r.Up() })
+	cx.OnBackPress(func() bool { return free() && r.page.Scanning.GetUntracked() == nil && r.Up() })
 	cx.OnKeyWith("backspace", core.KeyOptions{When: core.KeyNotEditing}, up)
 	cx.OnKey("mod+up", up)
 	cx.OnKey("mod+backspace", func() {
@@ -368,7 +366,7 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 						Style: core.Style{MinWidth: core.Pt(0), MinHeight: core.Pt(0), CornerRadius: kit.RadiusCard, Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard,
 							Overflow: core.Hidden},
 						Children: []core.Node{EntryList{Label: func() string { return folderName() + " 的内容" }, Entries: children, Detail: DetailShare,
-							Total: total, Actions: actions, Selection: r.Cursor, Busy: r.Trashing.Get, Ref: r.List, TestID: "space-list"}}},
+							Total: total, Actions: actions, Selection: r.Cursor, Busy: r.Busy, Ref: r.List, TestID: "space-list"}}},
 				}}
 		}},
 	}}
@@ -429,7 +427,7 @@ func largeView(r *Results, actions EntryActions, summary func() app.SpaceSummary
 				Children: []core.Node{core.View{Style: core.Style{MaxHeight: core.Pct(100), CornerRadius: kit.RadiusCard,
 					Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Overflow: core.Hidden},
 					Children: []core.Node{EntryList{Label: func() string { return "大文件" }, Entries: large, Detail: DetailLocation,
-						Actions: actions, Selection: r.Chosen, Checks: true, Busy: r.Trashing.Get, TestID: "space-large"}}}}}
+						Actions: actions, Selection: r.Chosen, Checks: true, Busy: r.Busy, TestID: "space-large"}}}}}
 		}},
 	}}
 }

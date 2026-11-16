@@ -52,7 +52,7 @@ type EntryList struct {
 	Actions   EntryActions
 	Selection *base.Selection
 	Checks    bool
-	// Busy draws the rows' buttons as unavailable while a move to the Trash runs.
+	// Busy draws the rows' buttons as unavailable while nothing can be moved to the Trash (Results.Busy).
 	Busy func() bool
 	// Ref is the list's, for its position and ScrollToIndex.
 	Ref    *core.Ref

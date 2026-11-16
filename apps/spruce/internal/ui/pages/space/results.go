@@ -333,7 +333,7 @@ func (r *Results) Menu(cx *core.Scope, e app.SpaceEntry) []desktop.MenuItem {
 		items = append(items, desktop.MenuItem{Label: "打开", OnSelect: func() { r.Open(e) }})
 	}
 	items = append(items, kit.RevealItem(format.FileManagerName(), func() { r.Reveal(e) }), kit.CopyPathItem(cx, e.Path), desktop.MenuItem{Separator: true})
-	trash := desktop.MenuItem{Label: "移到" + format.TrashName(), Disabled: e.Locked != "" || r.Trashing.GetUntracked(), OnSelect: func() { r.RequestTrash(e) }}
+	trash := desktop.MenuItem{Label: "移到" + format.TrashName(), Disabled: e.Locked != "" || r.busy(), OnSelect: func() { r.RequestTrash(e) }}
 	items = append(items, trash)
 	if e.Locked != "" {
 		items = append(items, desktop.MenuItem{Label: e.Locked, Disabled: true})
@@ -364,9 +364,17 @@ func (r *Results) ChosenEntries() []app.SpaceEntry {
 	return out
 }
 
-// RequestTrash moves entries to the Trash at once when the move can be undone and none of them is easy to move by mistake (needsCare), else asks to confirm it; an entry the page may not move says why instead.
+// Busy reports whether a move to the Trash or a scan runs, while the rows' buttons are dimmed and nothing more can be moved (the service refuses a move during a scan); reading it subscribes.
+func (r *Results) Busy() bool { return r.Trashing.Get() || r.page.Scanning.Get() != nil }
+
+// busy is Busy without subscribing.
+func (r *Results) busy() bool {
+	return r.Trashing.GetUntracked() || r.page.Scanning.GetUntracked() != nil
+}
+
+// RequestTrash moves entries to the Trash at once when the move can be undone and nothing in it is easy to make by mistake (needsCare), else asks to confirm it; an entry the page may not move says why instead. Nothing happens while the page is busy (Busy), as the dimmed buttons show.
 func (r *Results) RequestTrash(entries ...app.SpaceEntry) {
-	if len(entries) == 0 {
+	if len(entries) == 0 || r.busy() {
 		return
 	}
 	if e := entries[0]; len(entries) == 1 && e.Locked != "" {

@@ -30,7 +30,7 @@ type Service struct {
 	// TrashRelease, when set, holds each Trash until it receives or its ctx ends.
 	TrashRelease chan struct{}
 
-	// scanning refuses a scan while another runs, as *app.Space does until the walk it runs returns.
+	// scanning refuses a scan while another runs, and a move during one, as *app.Space does until the walk it runs returns.
 	scanning atomic.Bool
 
 	scans    []string
@@ -112,8 +112,11 @@ func (s *Service) LargeFiles(scanID string) ([]app.SpaceEntry, error) {
 	return s.Large, nil
 }
 
-// Trash implements the page's Service.
+// Trash implements the page's Service. A move during a scan fails at once, as *app.Space's does.
 func (s *Service) Trash(ctx context.Context, scanID string, paths []string) (app.SpaceTrashResult, error) {
+	if s.scanning.Load() {
+		return app.SpaceTrashResult{}, errors.New("正在扫描，请等扫描结束后再试")
+	}
 	s.mu.Lock()
 	s.trashes = append(s.trashes, paths)
 	release := s.TrashRelease

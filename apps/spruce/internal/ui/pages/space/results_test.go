@@ -287,6 +287,40 @@ func TestChosenLargeFilesMoveTogether(t *testing.T) {
 	p.WaitFor(`id:page-footer >> text:"2 项"`, wait)
 }
 
+// TestNothingMovesDuringARescan: while the location of the results is scanned again, which refuses a move, the rows' 移到废纸篓 does nothing and the menu's is disabled; Backspace and Cmd+↑ still go up a folder.
+func TestNothingMovesDuringARescan(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	p := start(t, svc, newFakes(t), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	p.WaitFor(homeList, wait)
+	projects := `role:group "Projects 的内容"`
+	p.Press(homeList + ` >> role:button "Projects"`)
+	p.WaitFor(projects, wait)
+	p.Press("id:rescan")
+	p.WaitFor("id:space-stop", wait)
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
+
+	p.Press(projects + ` >> role:button "将 data.bin 移到废纸篓"`)
+	p.RightClick(projects + ` >> role:option "data.bin" >> text:"2 GB"`)
+	if got := p.menuLabels(); len(got) == 0 || got[len(got)-1] != "移到废纸篓" || !p.PopupMenu[len(got)-1].Disabled {
+		t.Errorf("menu %q", got)
+	}
+	p.ClosePopup()
+	p.Press(projects + ` >> role:option "data.bin"`)
+	p.Key("mod+backspace")
+	p.Settle()
+	if p.Exists("id:trash-confirm") || p.Exists("id:space-notice-error") || len(svc.Trashes()) != 0 {
+		t.Fatalf("a move during the scan: confirm %v, trashes %v, %v", p.Exists("id:trash-confirm"), svc.Trashes(), p.Texts())
+	}
+
+	for _, key := range []string{"backspace", "mod+up"} {
+		p.Key(key)
+		p.WaitFor(homeList, wait)
+		p.Press(homeList + ` >> role:button "Projects"`)
+		p.WaitFor(projects, wait)
+	}
+	p.Find("id:space-stop")
+}
+
 // TestChosenMoveConfirmsWhereItCannotBeUndone: on Windows the move of the files chosen is confirmed, naming how many and how much.
 func TestChosenMoveConfirmsWhereItCannotBeUndone(t *testing.T) {
 	svc := spacefake.New(time.Now())
