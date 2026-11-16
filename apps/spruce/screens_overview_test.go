@@ -180,7 +180,7 @@ func TestScreensOverview(t *testing.T) {
 	stale.Result.Stale, stale.Result.Actionable = true, false
 	stale.Result.CheckedAt = time.Now().Add(-30 * time.Hour)
 	ov.Set(stale)
-	a.WaitFor("id:rec-app-caches-act >> text:重新检查后才能清理", wait)
+	a.WaitFor("id:rec-app-caches-act >> text:重新检查", wait)
 	a.Screenshot("overview-stale")
 
 	// The folders a background check skipped, and a scheduled check waiting for power.

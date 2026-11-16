@@ -328,9 +328,12 @@ func TestCachedWhileChecking(t *testing.T) {
 	p := open(t, st)
 	// Opening on a cached result checks again.
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
-	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
-	if !p.disabled("id:rec-app-caches-act") {
-		t.Error("a card of the cache can act")
+	// A card of the cache cannot clean; its button checks again instead, where the user looks.
+	p.waitText("id:rec-app-caches-act", "重新检查")
+	p.Press("id:rec-app-caches-act")
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+	if len(p.cleans()) != 0 {
+		t.Fatal("a card of the cache cleaned")
 	}
 	st.Phase = app.OverviewChecking
 	p.set(st)
@@ -355,6 +358,12 @@ func TestStale(t *testing.T) {
 	p := open(t, st)
 	p.waitText("id:checked-at", "上次检查：昨天，结果可能已经变化")
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	p.waitText("id:rec-tool-npm-act", "重新检查")
+	p.Press("id:rec-tool-npm-act")
+	p.WaitUntil(wait, func() bool { return p.checks() == 2 })
+	if p.Exists("id:rec-confirm") || len(p.cleans()) != 0 {
+		t.Error("a stale card asked or cleaned")
+	}
 }
 
 // State D on a window shown again after it was hidden: 概览 stayed mounted, and decides again on the state then.
@@ -1289,9 +1298,9 @@ func TestStopACheckOverACachedResult(t *testing.T) {
 
 	p.set(cached())
 	p.waitText("id:recheck", "重新检查")
-	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
-	if !p.disabled("id:rec-app-caches-act") {
-		t.Error("a card acts on a cached result")
+	p.waitText("id:rec-app-caches-act", "重新检查")
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("a card of a cached result does not offer to check again")
 	}
 	if !p.nav.CanRefresh() {
 		t.Error("⌘R cannot check again after the check stopped")

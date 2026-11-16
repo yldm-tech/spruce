@@ -168,6 +168,8 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		ask(d, func() { run(a, r, req) })
 	}
 
+	// A result that may not be cleaned, with no check running, is checked again from where the user looks: the card's own button.
+	stale := core.NewMemo(cx, func() bool { return !p.actionable() && !p.checking() })
 	actLabel := func() string {
 		switch {
 		case busy():
@@ -175,11 +177,19 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		case !p.actionable() && p.checking():
 			return "正在核对…"
 		case !p.actionable():
-			return "重新检查后才能清理"
+			return "重新检查"
 		}
 		return ActionLabel(action.Get(), partial(), bytes.Get())
 	}
 	actButton := core.Dynamic(func(*core.Scope) core.Node {
+		if stale.Get() {
+			b := kit.Button{Variant: kit.ButtonGhost, TestID: "rec-" + id + "-act", TextFunc: actLabel, OnPress: p.checkNow,
+				Disabled: func() bool { return p.cleaning() || leaving() }}
+			if p.cleaning() {
+				b.Label, b.Tooltip = "正在清理，完成后再检查", "正在清理，完成后再检查"
+			}
+			return core.Func(func(*core.Scope) core.Node { return b })
+		}
 		b := kit.Button{Variant: kit.ButtonAccent, TestID: "rec-" + id + "-act", TextFunc: actLabel, OnPress: act, Busy: busy,
 			Disabled: func() bool { return !p.actionable() || other.Get() || len(refs()) == 0 || leaving() }}
 		if other.Get() {
