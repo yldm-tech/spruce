@@ -74,6 +74,13 @@ func (s *setting[T]) stopTimer() {
 	}
 }
 
+// drop forgets a change that has not gone out (text in a number field that is no longer a valid number): its waiting save and its draft, so a slip such as 18 on the way from 180 to 1 is never saved.
+func (s *setting[T]) drop() {
+	s.stopTimer()
+	s.pending = nil
+	s.draft.Set(nil)
+}
+
 // flush sends a debounced save now, as the control loses the focus or goes.
 func (s *setting[T]) flush() {
 	s.stopTimer()

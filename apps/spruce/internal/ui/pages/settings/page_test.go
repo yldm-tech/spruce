@@ -336,6 +336,30 @@ func TestNumbersAreValidatedBeforeTheyAreSaved(t *testing.T) {
 	}
 }
 
+// A number that turns invalid on its way to another (500 → 50 → 5) drops the save it scheduled: 50 is never saved.
+func TestASlipOnTheWayIsNotSaved(t *testing.T) {
+	p := start(t, options{})
+	p.tab("cleanup")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "50")
+	p.Clear("id:large-file-min-field")
+	p.Type("id:large-file-min-field", "5")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times: %+v", n, p.svc.Updates())
+	}
+	p.Focus("id:dev-artifact-min-age-field")
+	p.Advance(debounce)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 0 {
+		t.Fatalf("saved %d times on blur", n)
+	}
+	if got := p.field("large-file-min"); got != "5" {
+		t.Errorf("large files shows %q", got)
+	}
+}
+
 func TestInvalidTextIsNotSavedOnBlur(t *testing.T) {
 	p := start(t, options{})
 	p.tab("history")

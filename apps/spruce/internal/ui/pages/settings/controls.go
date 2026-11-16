@@ -129,7 +129,7 @@ func (c sliderSetting) Render(cx *core.Scope) core.Node {
 			ValueText: func(v float64) string { return c.Format(int(math.Round(v))) }}}}
 }
 
-// numberSetting is a whole number typed into a field. Text that is not a whole number in range shows the allowed range and is not saved; a valid number is saved once the user stops typing, or when the field loses the focus.
+// numberSetting is a whole number typed into a field. Text that is not a whole number in range shows the allowed range and is not saved, and drops the save a number typed before it was waiting for; a valid number is saved once the user stops typing, or when the field loses the focus.
 type numberSetting struct {
 	Field              Field[int]
 	Label, Description string
@@ -176,6 +176,8 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 				text.Set(&raw)
 				if n, ok := ParseWhole(raw); ok && InRange(n, c.Range) {
 					s.change(n)
+				} else {
+					s.drop()
 				}
 			},
 			OnBlur: func() {
