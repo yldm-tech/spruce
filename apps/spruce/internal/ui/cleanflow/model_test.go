@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"spruce/apps/spruce/internal/engine/advice"
 	"spruce/apps/spruce/internal/engine/cleanup"
 )
 
@@ -315,5 +316,77 @@ func TestCleanSub(t *testing.T) {
 		if got := CleanSub(cats, c.sel); got != c.want {
 			t.Errorf("CleanSub(%v) = %q, want %q", c.sel, got, c.want)
 		}
+	}
+}
+
+// A category the user did not change follows each newer check; one changed on a card keeps what is still there and counts what the check adds; a change in a drill-down view covers every category of its source, also one a newer check adds.
+func TestChoice(t *testing.T) {
+	src := func(c cleanup.Category, source string) cleanup.Category {
+		c.ID, c.Source = source+":"+c.ID, source
+		return c
+	}
+	caches := src(category("caches", true, item("a", 1), item("b", 2)), "system-junk")
+	logs := src(category("logs", true, item("c", 3)), "system-junk")
+	disk := src(category("dmg", true, item("e", 5)), "installers")
+	ch := Choice{Sel: NothingSelected}.Reconcile([]cleanup.Category{caches, logs, disk})
+	if !reflect.DeepEqual(ch.Sel, DefaultSelection([]cleanup.Category{caches, logs, disk})) {
+		t.Fatalf("defaults %v", ch.Sel)
+	}
+	// A card over caches unchecks a.
+	card := []advice.ItemRef{{CategoryID: caches.ID, ItemID: "a"}, {CategoryID: caches.ID, ItemID: "b"}}
+	ch = ch.Change(WithinRefs(ch.Sel, card, Selection{caches.ID: {"b": {}}}), []cleanup.Category{caches}, "")
+	if ch.Sel.Has(caches.ID, "a") || !ch.Sel.Has(caches.ID, "b") || !ch.Sel.Has(logs.ID, "c") || !ch.Sel.Has(disk.ID, "e") {
+		t.Fatalf("card change %v", ch.Sel)
+	}
+	// A newer check adds n to caches and d to logs: the changed caches leaves n unchecked, the untouched logs checks d.
+	caches2 := src(category("caches", true, item("a", 1), item("b", 2), item("n", 4)), "system-junk")
+	logs2 := src(category("logs", true, item("c", 3), item("d", 1)), "system-junk")
+	newer := []cleanup.Category{caches2, logs2, disk}
+	ch = ch.Reconcile(newer)
+	if ch.Sel.Has(caches2.ID, "a") || ch.Sel.Has(caches2.ID, "n") || !ch.Sel.Has(caches2.ID, "b") || !ch.Sel.Has(logs2.ID, "d") {
+		t.Errorf("reconciled %v", ch.Sel)
+	}
+	refs := []advice.ItemRef{{CategoryID: caches2.ID, ItemID: "a"}, {CategoryID: caches2.ID, ItemID: "b"}, {CategoryID: caches2.ID, ItemID: "n"}, {CategoryID: logs2.ID, ItemID: "d"}}
+	if got := ch.Added(newer, refs); got != 1 {
+		t.Errorf("added %d, want 1 (n)", got)
+	}
+	// 全不选 in 系统垃圾 changes the whole source: a category a newer check adds there starts unchecked, other sources keep their defaults.
+	ch = ch.Change(WithinGroup(ch.Sel, newer[:2], NothingSelected), newer[:2], "system-junk")
+	tmp := src(category("tmp", true, item("t", 1)), "system-junk")
+	disk2 := src(category("dmg", true, item("e", 5), item("f", 6)), "installers")
+	ch = ch.Reconcile([]cleanup.Category{caches2, logs2, tmp, disk2})
+	if ch.Sel.Count(tmp.ID) != 0 || ch.Sel.Count(caches2.ID) != 0 || !ch.Sel.Has(disk2.ID, "f") {
+		t.Errorf("after the drill-down view's change %v", ch.Sel)
+	}
+	// Categories that went are forgotten.
+	ch = ch.Reconcile([]cleanup.Category{disk2})
+	if _, ok := ch.Touched[caches2.ID]; ok || len(ch.Sel) != 1 {
+		t.Errorf("gone categories kept %+v", ch)
+	}
+}
+
+// A Shift-press takes the rows from the one pressed before to the one pressed, whichever comes first, and leaves held items unchecked; with nothing pressed before it is the row alone.
+func TestRange(t *testing.T) {
+	held := item("c", 3)
+	held.Hold = "x"
+	c := category("caches", false, item("a", 1), item("b", 2), held, item("d", 4), item("e", 5))
+	if got := Between(c.Items, "d", "a"); !slices.Equal(got, []string{"a", "b", "c", "d"}) {
+		t.Errorf("up %v", got)
+	}
+	if got := Between(c.Items, "b", "e"); !slices.Equal(got, []string{"b", "c", "d", "e"}) {
+		t.Errorf("down %v", got)
+	}
+	if got := Between(c.Items, "gone", "b"); !slices.Equal(got, []string{"b"}) {
+		t.Errorf("no anchor %v", got)
+	}
+	if got := Between(c.Items, "a", "gone"); got != nil {
+		t.Errorf("no target %v", got)
+	}
+	sel := SetItems(NothingSelected, c, Between(c.Items, "a", "d"), true)
+	if !reflect.DeepEqual(sel, Selection{"caches": {"a": {}, "b": {}, "d": {}}}) {
+		t.Errorf("checked %v", sel)
+	}
+	if sel = SetItems(sel, c, Between(c.Items, "d", "b"), false); !reflect.DeepEqual(sel, Selection{"caches": {"a": {}}}) {
+		t.Errorf("unchecked %v", sel)
 	}
 }

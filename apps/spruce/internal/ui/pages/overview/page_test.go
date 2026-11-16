@@ -19,6 +19,7 @@ import (
 	"spruce/apps/spruce/internal/engine/growth"
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/overview"
@@ -130,12 +131,19 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 		for _, f := range before {
 			f(p.nav)
 		}
-		overview.DepsKey.Provide(cx, overview.Deps{Files: p.files, Home: home})
+		cleanflow.Provide(cx)
+		overview.Provide(cx, overview.Deps{Files: p.files, Home: home})
 		return core.Dynamic(func(*core.Scope) core.Node {
-			if p.nav.Current() != nav.Overview {
-				return core.Group{}
+			switch p.nav.Current() {
+			case nav.Overview:
+				return core.Func(overview.Page)
+			case nav.SystemJunk:
+				// 系统垃圾 as the app shows it, to check what it shares with the cards.
+				return core.Func(func(*core.Scope) core.Node {
+					return cleanflow.DrillPage{Route: nav.SystemJunk, Toast: overview.CleanToast, ListLabel: "可以清理的系统垃圾", SizeLabel: "已选大小", Reveal: p.files.Reveal}
+				})
 			}
-			return core.Func(overview.Page)
+			return core.Group{}
 		})
 	}, nsgotest.Size(1052, 1400), func(a *nsgotest.App) { a.Clock.SetWallTime(now) })
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
@@ -720,6 +728,27 @@ func TestTrashCardPartlyFailed(t *testing.T) {
 	p.ticking(func() bool { return p.Exists("id:rec-incomplete-downloads") })
 }
 
+// How many items a card's clean could not handle stays while 概览 shows the check it cleaned, also after leaving 概览, and goes with a newer check.
+func TestFailedCountGoesWithANewerCheck(t *testing.T) {
+	p := open(t, ready())
+	p.ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{RunID: "r2", Undoable: true, Result: cleanup.CleanResult{Trashed: 200 * mb, Failed: []cleanup.Failure{{ItemID: "x", Reason: "没有权限"}}}}, nil
+	}
+	p.Press("id:rec-incomplete-downloads-act")
+	p.ticking(func() bool { return p.toast() != nil })
+	p.waitText("id:rec-incomplete-downloads-failed", "1 项未能处理")
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitForGone("id:rec-incomplete-downloads", wait)
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.waitText("id:rec-incomplete-downloads-failed", "1 项未能处理")
+
+	newer := ready()
+	newer.Result.CheckedAt = now
+	p.set(newer)
+	p.WaitFor("id:rec-incomplete-downloads", wait)
+	p.WaitForGone("id:rec-incomplete-downloads-failed", wait)
+}
+
 // Deleting for good always asks, naming what and how much; 取消 does nothing.
 func TestDeleteCard(t *testing.T) {
 	p := open(t, ready())
@@ -1095,4 +1124,151 @@ func TestTimesFollowTheClock(t *testing.T) {
 	p.waitText("id:checked-at", "上次检查：5分钟前")
 	p.Advance(time.Minute)
 	p.waitText("id:checked-at", "上次检查：6分钟前")
+}
+
+// Leaving 概览 keeps what the user did on it: a card's unchecked item stays unchecked and its card open, with 再显示 still showing every card.
+func TestCardsComeBackAsLeft(t *testing.T) {
+	p := open(t, ready())
+	safari := "id:item-" + cleanup.ItemID(home+"/Library/Caches/com.apple.Safari")
+	p.Press("id:recs-more")
+	p.Press("id:rec-app-caches-expand")
+	p.Press(safari)
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+
+	p.nav.Go(nav.DevJunk)
+	p.WaitForGone("id:overview-page", wait)
+	p.nav.Go(nav.Overview)
+	p.WaitFor("id:rec-app-caches", wait)
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+	if !p.Find("id:rec-app-caches-expand").Props.Expanded {
+		t.Error("the card closed")
+	}
+	if p.Find(safari).Props.Checked {
+		t.Error("the unchecked item came back checked")
+	}
+	p.WaitFor("id:rec-logs", wait)
+	p.Press("id:rec-app-caches-act")
+	p.WaitFor("id:rec-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	if got := p.cleans()[0].Req.ItemIDs; !slices.Equal(got, []string{cleanup.ItemID(home + "/Library/Caches/com.spotify.client")}) {
+		t.Errorf("cleaned %v", got)
+	}
+}
+
+// A card and its drill-down view check the same items: 在系统垃圾中查看全部 shows what the card unchecked as unchecked, and what changes there shows on the card.
+func TestCardAndDrillShareTheSelection(t *testing.T) {
+	p := open(t, ready())
+	safari, spotify := "id:item-"+cleanup.ItemID(home+"/Library/Caches/com.apple.Safari"), "id:item-"+cleanup.ItemID(home+"/Library/Caches/com.spotify.client")
+	p.Press("id:rec-app-caches-expand")
+	p.Press(safari)
+	p.Press("id:rec-app-caches-more")
+	p.WaitFor("id:category-list", wait)
+	p.WaitFor(safari, wait)
+	if p.Find(safari).Props.Checked || !p.Find(spotify).Props.Checked {
+		t.Error("the drill-down view does not show the card's selection")
+	}
+	if !p.Find("id:check-system-junk:app-caches").Props.Indeterminate {
+		t.Error("应用缓存 is not checked in part")
+	}
+	p.Press(spotify)
+	p.Press("id:back")
+	p.WaitFor("id:rec-app-caches", wait)
+	p.WaitFor("id:rec-app-caches >> text:已选 0/2 项 · 0 B", wait)
+	if !p.disabled("id:rec-app-caches-act") {
+		t.Error("the card acts on items unchecked in its drill-down view")
+	}
+}
+
+// A check over a result shows how far it is under the conclusion, and the header's one button stops it instead of waiting: it keeps the focus as it turns into 停止检查, takes no press in the moment after (the second press of a double press on 重新检查), and the result stays. The menu's 重新检查 (⌘R) checks again as the header does, and waits while a check runs. Here the result is a scheduled check's, which the controller lets the cards act on again once the user's check stops (a stopped check leaves only its own instance unable to clean, app.Overview.actionableLocked).
+func TestStopACheckOverAResult(t *testing.T) {
+	scheduled := func() app.OverviewState {
+		st := ready()
+		st.Result.Mode = app.CheckBackground
+		return st
+	}
+	p := open(t, scheduled())
+	p.waitText("id:recheck", "重新检查")
+	if !p.nav.CanRefresh() {
+		t.Fatal("⌘R cannot check again")
+	}
+	button := p.Find("id:recheck").ID
+	p.Post(func() { p.nav.Commands().Refresh() })
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+
+	st := scheduled()
+	// The controller locks the result while the check runs.
+	st.Phase, st.Progress = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 47, Total: 100}
+	st.Result.Actionable = false
+	p.set(st)
+	p.waitText("id:checked-at", "上次检查：5分钟前 · 正在更新… 47%")
+	p.waitText("id:recheck", "停止检查")
+	if p.Find("id:recheck").ID != button {
+		t.Error("停止检查 replaced the header's button, which loses the focus")
+	}
+	if p.nav.CanRefresh() {
+		t.Error("⌘R checks again while a check runs")
+	}
+	p.waitText("id:rec-app-caches-act", "正在核对…")
+	p.Press("id:recheck")
+	p.Settle()
+	if _, stops, _, _, _ := p.ov.Calls(); stops != 0 {
+		t.Fatal("a press right after 停止检查 showed stopped the check")
+	}
+	p.Advance(time.Second) // past the moment 停止检查 waits before it takes a press
+	p.Settle()
+	p.Press("id:recheck")
+	p.WaitUntil(wait, func() bool { _, stops, _, _, _ := p.ov.Calls(); return stops == 1 })
+
+	p.set(scheduled())
+	p.waitText("id:recheck", "重新检查")
+	p.waitText("id:conclusion-value", "5.8 GB")
+	p.waitText("id:rec-app-caches-act", "删除…")
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("the cards cannot act once the check stopped")
+	}
+}
+
+// Stopping the check that opening 概览 started over a cached result leaves the cached result, which the controller never lets the cards act on: they say so, and 重新检查 is offered again.
+func TestStopACheckOverACachedResult(t *testing.T) {
+	cached := func() app.OverviewState {
+		st := ready()
+		st.Result.FromCache, st.Result.Actionable = true, false
+		return st
+	}
+	p := open(t, cached())
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	st := cached()
+	st.Phase, st.Progress = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 10, Total: 100}
+	p.set(st)
+	p.waitText("id:recheck", "停止检查")
+	p.waitText("id:rec-app-caches-act", "正在核对…")
+	p.Advance(time.Second) // past the moment 停止检查 waits before it takes a press
+	p.Settle()
+	p.Press("id:recheck")
+	p.WaitUntil(wait, func() bool { _, stops, _, _, _ := p.ov.Calls(); return stops == 1 })
+
+	p.set(cached())
+	p.waitText("id:recheck", "重新检查")
+	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
+	if !p.disabled("id:rec-app-caches-act") {
+		t.Error("a card acts on a cached result")
+	}
+	if !p.nav.CanRefresh() {
+		t.Error("⌘R cannot check again after the check stopped")
+	}
+}
+
+// A press anywhere on a card's head opens its items, and on an item's row checks it.
+func TestCardHeadAndRowsTakePresses(t *testing.T) {
+	p := open(t, ready())
+	p.Press("id:rec-app-caches-head")
+	p.WaitFor("id:rec-app-caches-items", wait)
+	if !p.Find("id:rec-app-caches-expand").Props.Expanded {
+		t.Error("the chevron does not say the card is open")
+	}
+	p.Press("id:row-" + cleanup.ItemID(home+"/Library/Caches/com.apple.Safari"))
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+	p.Press("id:rec-app-caches-head")
+	p.WaitForGone("id:rec-app-caches-items", wait)
 }

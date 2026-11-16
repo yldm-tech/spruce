@@ -129,8 +129,8 @@ func ConclusionSub(recs []advice.Recommendation) string {
 	return s
 }
 
-// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
-func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
+// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it, with how far it is (progress) once it knows. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
+func CheckedAtText(at time.Time, stale, checking bool, progress cleanup.Progress, now time.Time) string {
 	if now.Before(at) {
 		now = at
 	}
@@ -140,6 +140,9 @@ func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
 	}
 	if checking {
 		s += " · 正在更新…"
+		if v, ok := OverallFraction(progress); ok {
+			s += " " + strconv.Itoa(int(v*100+0.5)) + "%"
+		}
 	}
 	return s
 }
@@ -304,12 +307,10 @@ func CleanToast(a advice.Action, out app.OverviewOutcome, canUndo bool) store.To
 	return t
 }
 
-// Pick is a card's selection: Sel holds the checked items by category. Once the user changed it (Touched), a newer result keeps what is still there and leaves new items unchecked, counting them in Added; Base is the card's items when the user last changed it.
+// Pick is a card's selection, its part of the app's Choice (cleanflow.Kept), which the drill-down views share: Sel holds the checked items of the card by category, and Added counts the card's items a newer check added since the user last changed them, which start unchecked.
 type Pick struct {
-	Sel     cleanflow.Selection
-	Touched bool
-	Base    map[advice.ItemRef]bool
-	Added   int
+	Sel   cleanflow.Selection
+	Added int
 }
 
 // refSet is the set of a card's items.
@@ -333,30 +334,23 @@ func DefaultPick(r advice.Recommendation) Pick {
 	return Pick{Sel: sel}
 }
 
-// Reconcile is p after the card became r (a newer result): an untouched card takes r's default; a touched one keeps the checked items r still has and counts r's items it did not have when the user last changed it.
-func (p Pick) Reconcile(r advice.Recommendation) Pick {
-	if !p.Touched {
-		return DefaultPick(r)
-	}
+// CardPick is the card r's part of ch over scan: what ch checks among r's items, and how many of them a newer check added to what the user changed.
+func CardPick(r advice.Recommendation, ch cleanflow.Choice, scan cleanup.ScanResult) Pick {
 	sel := cleanflow.Selection{}
-	added := 0
 	for _, ref := range r.Items {
-		if p.Sel.Has(ref.CategoryID, ref.ItemID) {
+		if ch.Sel.Has(ref.CategoryID, ref.ItemID) {
 			if sel[ref.CategoryID] == nil {
 				sel[ref.CategoryID] = map[string]struct{}{}
 			}
 			sel[ref.CategoryID][ref.ItemID] = struct{}{}
 		}
-		if !p.Base[ref] {
-			added++
-		}
 	}
-	return Pick{Sel: sel, Touched: true, Base: p.Base, Added: added}
+	return Pick{Sel: sel, Added: ch.Added(cardCategories(scan, r), r.Items)}
 }
 
-// Change is p after the user checked sel on the card r.
-func (p Pick) Change(r advice.Recommendation, sel cleanflow.Selection) Pick {
-	return Pick{Sel: sel, Touched: true, Base: refSet(r)}
+// ChangeCard is ch once the user checked sel on the card r over scan: r's items take sel's checks, every other check stays, and r's categories count as changed from r's items as they are now.
+func ChangeCard(ch cleanflow.Choice, r advice.Recommendation, scan cleanup.ScanResult, sel cleanflow.Selection) cleanflow.Choice {
+	return ch.Change(cleanflow.WithinRefs(ch.Sel, r.Items, sel), cardCategories(scan, r), "")
 }
 
 // Refs are the checked items, in the card's order.

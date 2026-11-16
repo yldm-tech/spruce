@@ -14,6 +14,7 @@ import (
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/devjunk"
@@ -110,7 +111,8 @@ func startSized(t *testing.T, st app.OverviewState, roots []string, size nsgotes
 		for _, f := range before {
 			f(p.nav)
 		}
-		devjunk.DepsKey.Provide(cx, devjunk.Deps{Files: p.files})
+		cleanflow.Provide(cx)
+		devjunk.Provide(cx, devjunk.Deps{Files: p.files})
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if p.nav.Current() != nav.DevJunk {
 				return core.Group{}
@@ -419,4 +421,102 @@ func TestHeldProjectTooltip(t *testing.T) {
 	if p.Exists("text:" + tip) {
 		t.Error("the held project's tooltip stays on another row")
 	}
+}
+
+// A filter leaves out what it hides: the projects checked out of view are neither counted nor cleaned, and the confirmation names the projects it cleans.
+func TestFilterCleansOnlyWhatItShows(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press(p.project(tool) + "-check")
+	if got := p.stat("已选择"); got != "2 个项目" {
+		t.Fatalf("已选择 %q", got)
+	}
+	// Only blog has uncommitted changes, and it is held.
+	p.Press("id:projects-filter-dirty")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 1 })
+	if got := p.stat("已选择"); got != "0 个项目" {
+		t.Errorf("已选择 %q under 有未提交的改动", got)
+	}
+	if got := p.stat("已选大小"); got != "0 B" {
+		t.Errorf("已选大小 %q under 有未提交的改动", got)
+	}
+	if !p.disabled("id:clean") {
+		t.Fatal("清理 acts on projects the filter hides")
+	}
+	// Idle: shop is shown, tool is not.
+	p.Press("id:projects-filter-idle")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 3 })
+	if got := p.stat("已选择"); got != "1 个项目" {
+		t.Errorf("已选择 %q under 闲置", got)
+	}
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:confirm-projects").Text; got != "项目：shop" {
+		t.Errorf("projects %q", got)
+	}
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := []string{id(shop + "/node_modules"), id(shop + "/.next")}
+	if got := p.cleans()[0].Req.ItemIDs; !reflect.DeepEqual(got, want) {
+		t.Errorf("cleaned %v, want %v", got, want)
+	}
+}
+
+// Leaving the view keeps its tab, its filter, what is checked and the projects open; a link that asks for a tab opens on it with every project shown.
+func TestComesBackAsLeft(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press("id:projects-filter-idle")
+	p.Press(p.project(shop) + "-expand")
+	p.WaitFor(p.project(shop)+"-items", wait)
+	p.Press("id:item-" + id(shop+"/.next"))
+	away := func() {
+		p.nav.Go(nav.Overview)
+		p.WaitForGone("id:drill-dev-junk", wait)
+		p.nav.Go(nav.DevJunk)
+		p.WaitFor("id:drill-dev-junk", wait)
+	}
+	away()
+	if !p.Find("id:projects-filter-idle").Props.Pressed {
+		t.Error("the filter went back to 全部")
+	}
+	if p.Exists(p.project(tool)) {
+		t.Error("a project the filter hides shows")
+	}
+	p.WaitFor(p.project(shop)+"-items", wait)
+	if p.checked("id:item-"+id(shop+"/.next")) || !p.checked("id:item-"+id(shop+"/node_modules")) {
+		t.Error("what was checked changed")
+	}
+	p.Press("id:tab-tools")
+	p.WaitFor("id:list-tools", wait)
+	away()
+	p.WaitFor("id:list-tools", wait)
+
+	p.nav.Go(nav.Overview)
+	p.WaitForGone("id:drill-dev-junk", wait)
+	p.nav.GoDevTab(nav.DevProjects)
+	p.WaitFor("id:projects", wait)
+	if !p.Find("id:projects-filter-all").Props.Pressed {
+		t.Error("a link opened 项目 under a filter")
+	}
+}
+
+// A press on a project's head opens its build output, whose chevron comes last; the head's menu checks the project.
+func TestProjectHeadTakesPresses(t *testing.T) {
+	// Context menus show in the desktop idiom; nsgotest starts in the phone's.
+	p := startSized(t, ready(), roots, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}), func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	tool := p.project("/Users/me/Workspace/tool")
+	p.Press(tool + "-head")
+	p.WaitFor(tool+"-items", wait)
+	kids := p.Find(tool + "-head").Children
+	if last := kids[len(kids)-1]; last.Props.TestID != "project-"+id("/Users/me/Workspace/tool")+"-expand" {
+		t.Errorf("the head ends with %q, not the chevron", last.Props.TestID)
+	}
+	p.RightClick(tool + "-head")
+	p.ChoosePopup("勾选")
+	if !p.checked(tool + "-check") {
+		t.Error("勾选 left the project unchecked")
+	}
+	p.Press(tool + "-head")
+	p.WaitForGone(tool+"-items", wait)
 }

@@ -13,6 +13,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/systemjunk"
@@ -79,7 +80,8 @@ func start(t *testing.T, st app.OverviewState) *page {
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
 		nav.Key.Provide(cx, nav.NewNavigator(cx, nav.SystemJunk))
-		systemjunk.DepsKey.Provide(cx, systemjunk.Deps{Files: p.files})
+		cleanflow.Provide(cx)
+		systemjunk.Provide(cx, systemjunk.Deps{Files: p.files})
 		return systemjunk.Page(cx)
 	}, nsgotest.Size(1052, 1000))
 	p.WaitUntil(wait, func() bool {

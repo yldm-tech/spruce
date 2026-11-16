@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/scancache"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
@@ -30,6 +31,9 @@ const shownCards = 5
 
 // leaveTime is how long a card that was acted on takes to go.
 const leaveTime = 200 * time.Millisecond
+
+// stopArmed is how long the header's 停止检查 waits after it shows before it takes a press, about a double click's interval: the second press of a double press on 重新检查 does not stop the check the first one started.
+const stopArmed = 500 * time.Millisecond
 
 // view is which body the page shows.
 type view uint8
@@ -76,6 +80,9 @@ type page struct {
 	ov     *store.Overview
 	nav    *nav.Navigator
 	deps   Deps
+	// kept and choice are what the page keeps in the app's scope: its own, and what is checked, which the drill-down views share.
+	kept   *kept
+	choice *cleanflow.Kept
 	ref    *core.Ref
 	// active is the card whose action runs, or emptyTrash, "" for none: one thing at a time.
 	active *core.Signal[string]
@@ -106,6 +113,14 @@ func (p *page) state() app.OverviewState { return p.ov.State() }
 func (p *page) result() *app.OverviewResult { return p.state().Result }
 
 func (p *page) checking() bool { return p.state().Phase == app.OverviewChecking }
+
+// progress is the running check's, zero when none runs or it has not reported yet.
+func (p *page) progress() cleanup.Progress {
+	if pr := p.state().Progress; pr != nil {
+		return *pr
+	}
+	return cleanup.Progress{}
+}
 
 // cleaning reports whether a clean runs: one of this page, one the store started (a drill-down view, 撤销) or one the controller runs.
 func (p *page) cleaning() bool {
@@ -300,8 +315,9 @@ func unanswered(st app.OverviewState) bool { return !st.Loaded }
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
-	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
-		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
+	k := keptKey.Use(cx)
+	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), kept: k, choice: cleanflow.UseKept(cx),
+		ref: new(core.Ref), active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: k.more, focus: core.NewSignal(cx, ""),
 		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, cx.WallTime()),
 		reduce: cx.Env().ReduceMotion}
 	seen, _ := seenAuto.Load(p.ov)
@@ -318,6 +334,8 @@ func Page(cx *core.Scope) core.Node {
 	}
 	cx.AfterFunc(time.Minute, tick)
 
+	// The menu's 重新检查 (⌘R) checks again as the header's does.
+	nav.UseCommands(cx, nav.Commands{Refresh: p.checkNow, Busy: func() bool { return p.checking() || p.cleaning() }})
 	// Opening 概览 checks again when what it shows may be outdated; a check opened this way is the foreground's, not held back by power or load. It decides once, on the controller's state: the store answers it after the page opens at launch.
 	decided := false
 	cx.Effect(func() {
@@ -406,12 +424,7 @@ func Page(cx *core.Scope) core.Node {
 		case viewProgress:
 			return core.Func(func(*core.Scope) core.Node {
 				return core.Group{
-					checkProgress(func() cleanup.Progress {
-						if pr := p.state().Progress; pr != nil {
-							return *pr
-						}
-						return cleanup.Progress{}
-					}, p.ov.StopCheck),
+					checkProgress(p.progress, p.ov.StopCheck),
 					checkRefused(p), diskRow(cx, p), statusCards{},
 				}
 			})
@@ -460,14 +473,33 @@ func Page(cx *core.Scope) core.Node {
 	}
 }
 
-// recheckButton is the header's 重新检查: 正在检查… while a check runs, disabled while a clean does.
+// recheckButton is the header's 重新检查: 正在检查… while the first check runs, 停止检查 while one runs over a result (which stays), disabled while a clean runs. It stays one button throughout, so the keyboard focus stays on it, and as 停止检查 it takes presses only stopArmed after it shows.
 func recheckButton(cx *core.Scope, p *page) core.Node {
 	cleaning := core.NewMemo(cx, p.cleaning)
+	over := core.NewMemo(cx, func() bool { return p.checking() && p.result() != nil })
+	armed := core.NewSignal(cx, false)
+	cx.Effect(func() {
+		armed.Set(false)
+		if over.Get() {
+			cx.AfterFunc(stopArmed, func() { armed.Set(true) })
+		}
+	})
+	press := func() {
+		switch {
+		case !over.GetUntracked():
+			p.checkNow()
+		case armed.GetUntracked():
+			p.ov.StopCheck()
+		}
+	}
 	return core.Dynamic(func(*core.Scope) core.Node {
-		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: p.checkNow, Busy: p.checking,
-			Disabled: cleaning.Get,
+		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: press, Disabled: cleaning.Get,
+			Busy: func() bool { return p.checking() && !over.Get() },
 			TextFunc: func() string {
-				if p.checking() {
+				switch {
+				case over.Get():
+					return "停止检查"
+				case p.checking():
 					return "正在检查…"
 				}
 				return "重新检查"
@@ -615,7 +647,7 @@ func checkedAt(cx *core.Scope, p *page) core.Node {
 				if r == nil {
 					return ""
 				}
-				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.now.Get())
+				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.progress(), p.now.Get())
 			}},
 			core.Show{When: func() bool { return p.state().Waiting != "" && !p.checking() }, Then: func(*core.Scope) core.Node {
 				return core.Text{TestID: "check-waiting", StyleFunc: style, ContentFunc: func() string { return "· " + p.state().Waiting }}

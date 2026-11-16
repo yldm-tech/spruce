@@ -13,7 +13,7 @@ import (
 	"spruce/apps/spruce/internal/ui/nav"
 )
 
-// DrillPage is a drill-down view that lists its source as one CategoryList (系统垃圾, 安装包): the header with its link back, the status of the check, the source's notices, the list with 清理 and the checked total, the confirmation, the cleaning overlay and, after a clean, the toast.
+// DrillPage is a drill-down view that lists its source as one CategoryList (系统垃圾, 安装包): the header with its link back, the status of the check, the source's notices, the list, 清理 and the checked total pinned under it, the confirmation, the cleaning overlay and, after a clean, the toast.
 type DrillPage struct {
 	Route nav.Route
 	Toast Toaster
@@ -60,25 +60,30 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 				})
 			}
 			return core.Func(func(*core.Scope) core.Node {
-				totals := func() Totals { return SelectedTotals(d.Categories(), d.Selection.Get()) }
 				return core.Group{
 					kit.Notice{Text: p.Notice},
 					CategoryList{Categories: d.Categories, Selection: d.Selection.Get, OnChange: d.Change, Label: p.ListLabel, Reveal: p.Reveal,
-						Disabled: d.Cleaning, Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "category-list"},
-					DrillBar(d, func() kit.Stat { return kit.Stat{Label: "已选择", Value: strconv.Itoa(totals().Count) + " 项"} },
-						func() kit.Stat { return kit.Stat{Label: p.SizeLabel, Value: format.Bytes(totals().Bytes)} },
-						func() int { return totals().Count }, func() {
-							cats := d.cats.GetUntracked()
-							d.RequestClean(cats, CleanPlanDialog, CleanSub(cats, d.Selection.GetUntracked()), cleanRef)
-						}, cleanRef),
+						Disabled: d.Cleaning, Open: d.Open, OnOpen: d.SetOpen, Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "category-list"},
 				}
 			})
 		})
 	}}
+	// 清理 and the totals stay pinned under the page while it lists something.
+	listed := func() bool { return has() && !empty.Get() }
+	footer := core.Show{When: listed, Then: func(*core.Scope) core.Node {
+		totals := func() Totals { return SelectedTotals(d.Categories(), d.Selection.Get()) }
+		return DrillBar(d, func() kit.Stat { return kit.Stat{Label: "已选择", Value: strconv.Itoa(totals().Count) + " 项"} },
+			func() kit.Stat { return kit.Stat{Label: p.SizeLabel, Value: format.Bytes(totals().Bytes)} },
+			func() int { return totals().Count }, func() {
+				cats := d.cats.GetUntracked()
+				d.RequestClean(cats, CleanPlanDialog, CleanSub(cats, d.Selection.GetUntracked()), cleanRef)
+			}, cleanRef)
+	}}
 	return core.Group{
-		kit.Page{TestID: "drill-" + string(p.Route), Ref: d.Page, ScrollKey: p.Route, Header: kit.PageHeader{Route: p.Route}, Children: []core.Node{
-			DrillStatus(d), DrillNotices(d, DeniedText), body,
-		}},
+		kit.Page{TestID: "drill-" + string(p.Route), Ref: d.Page, ScrollKey: p.Route, Header: kit.PageHeader{Route: p.Route, Actions: []core.Node{DrillRecheck(d)}},
+			Footer: footer, Children: []core.Node{
+				DrillStatus(d), DrillNotices(d, DeniedText), body,
+			}},
 		DrillLayers(d),
 	}
 }
@@ -91,60 +96,9 @@ func DeniedText(denied int64) string {
 	return "有 " + strconv.FormatInt(denied, 10) + " 个位置没有读取权限，结果可能不完整"
 }
 
-// toastClearance is what the shell's toast takes at the bottom of the page area while it shows: 24 points below it, at least 44 for itself and 12 to the action bar, less the page's own bottom padding (24); as 空间透视's action bar does.
-const toastClearance = 24 + 44 + 12 - 24
-
-// DrillBar is a drill-down view's action bar: the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait). While the shell's toast shows, the bar rises above it, so the toast never covers 清理 or that line; a bar in view when the toast comes stays in view (keepBarInView).
+// DrillBar is a drill-down view's action bar, which the view pins under its page (kit.Page's Footer, which rises above the shell's toast): the two figures beside 清理, which is disabled while count is 0 or CanClean says no, and over it why 清理 waits while the Trash is checked and the toast offers 撤销 (Drill.TrashWait).
 func DrillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref *core.Ref) core.Node {
-	return core.Func(func(cx *core.Scope) core.Node {
-		raised := func() bool { return d.stores.Toasts.Current() != nil }
-		bar := new(core.Ref)
-		keepBarInView(cx, d.Page, bar, raised)
-		return drillBar(d, start, end, count, clean, ref, bar, raised)
-	})
-}
-
-// keepBarInView scrolls page until bar ends inside it, once laid out, when raised turns true while bar shows in it. Rising grows the page under a long list, so on a page scrolled to the bottom (as after pressing 清理) the bar would otherwise slide under the window's edge with the toast over where it was. It measures again after each scroll, a few times at most, and does not animate: the content can still grow as it lays out (a long list's rows), and an animated scroll aims at the end as it was when it started.
-func keepBarInView(cx *core.Scope, page, bar *core.Ref, raised func() bool) {
-	was := false
-	cx.Effect(func() {
-		on := raised()
-		if on == was {
-			return
-		}
-		was = on
-		if !on {
-			return
-		}
-		view, ok := page.Bounds()
-		b, ok2 := bar.Bounds()
-		if !ok || !ok2 || b.Origin.Y >= view.Origin.Y+view.Size.Height {
-			return
-		}
-		var settle func(tries int)
-		settle = func(tries int) {
-			bar.Measure(func(_, b core.Bounds, ok bool) {
-				view, ok2 := page.Bounds()
-				if !ok || !ok2 || tries == 0 || b.Origin.Y+b.Size.Height <= view.Origin.Y+view.Size.Height+0.5 {
-					return
-				}
-				page.ScrollToEnd(false)
-				settle(tries - 1)
-			})
-		}
-		settle(3)
-	})
-}
-
-// drillBar is DrillBar's view, with bar on it and the bottom padding while raised.
-func drillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func(), ref, bar *core.Ref, raised func() bool) core.Node {
-	return core.View{TestID: "drill-action-bar", Ref: bar, StyleFunc: func() core.Style {
-		var bottom core.Points
-		if raised() {
-			bottom = toastClearance
-		}
-		return core.Style{AutoMargin: core.SideTop, FlexShrink: 0, Padding: core.Edges{Bottom: bottom}}
-	}, Children: []core.Node{
+	return core.View{TestID: "drill-action-bar", Children: []core.Node{
 		core.Show{When: d.TrashWait, Then: func(*core.Scope) core.Node {
 			return core.Text{Content: "请等撤销提示消失后再清空" + format.TrashName(), TestID: "drill-trash-wait", Style: core.Style{FontFamily: kit.FontSans,
 				FontSize: kit.FontBody, LineHeightMultiple: 1.5, Color: kit.ColorTextMuted, TextAlign: core.TextAlignCenter}}
@@ -152,6 +106,26 @@ func drillBar(d *Drill, start, end func() kit.Stat, count func() int, clean func
 		kit.ActionBar{Start: start, End: end,
 			Button: kit.ActionButton{Label: "清理", OnPress: clean, Ref: ref, TestID: "clean", Disabled: func() bool { return !d.CanClean(count()) }}},
 	}}
+}
+
+// DrillRecheck is a drill-down view's 重新检查 in its header, as 概览's: 正在检查… while a check runs, disabled while a clean does.
+func DrillRecheck(d *Drill) core.Node {
+	return core.Func(func(cx *core.Scope) core.Node {
+		busy := core.NewMemo(cx, d.Busy)
+		return core.Dynamic(func(*core.Scope) core.Node {
+			b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: d.CheckNow, Busy: d.Checking, Disabled: busy.Get,
+				TextFunc: func() string {
+					if d.Checking() {
+						return "正在检查…"
+					}
+					return "重新检查"
+				}}
+			if busy.Get() {
+				b.Label, b.Tooltip = "正在清理，完成后再检查", "正在清理，完成后再检查"
+			}
+			return core.Func(func(*core.Scope) core.Node { return b })
+		})
+	})
 }
 
 // DrillFailed is the view of a source that failed and found nothing, under its notice (DrillNotices): no result yet, with 重新检查 unless the status row above already offers it.
@@ -176,7 +150,7 @@ func StaleText(checkErr, err string, hasResult bool) string {
 	return "重新检查后才能清理"
 }
 
-// DrillStatus is the row under the header: 正在检查… while a check runs, else, while the result may not be cleaned, why and 重新检查.
+// DrillStatus is the row under the header: why the header's 重新检查 was refused, 正在检查… while a check runs, else, while the result may not be cleaned, why and 重新检查.
 func DrillStatus(d *Drill) core.Node {
 	stale := func() bool { return !d.Checking() && !d.Actionable() }
 	line := func(text func() string, testID string) core.Text {
@@ -188,6 +162,13 @@ func DrillStatus(d *Drill) core.Node {
 			Children: children}
 	}
 	return core.Group{
+		// A 重新检查 from the header refused on a result that may be cleaned; on one that may not, the row below says it.
+		kit.ErrorLine{TestID: "recheck-error", Text: func() string {
+			if stale() {
+				return ""
+			}
+			return d.CheckErr.Get()
+		}},
 		core.Show{When: d.Checking, Then: func(*core.Scope) core.Node {
 			r := row(kit.Spinner{Size: 14, Label: "正在检查"}, line(func() string { return "正在检查…" }, ""))
 			r.TestID = "drill-checking"

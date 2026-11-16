@@ -254,6 +254,61 @@ func SetProjects(sel cleanflow.Selection, projects []engdev.Project, categories 
 	return sel
 }
 
+// ArtifactsOf is categories with only the build output of projects, in scan order, leaving out categories with none: what the 项目 tab shows under its filter, so its totals and its clean never reach a project the filter hides.
+func ArtifactsOf(projects []engdev.Project, categories []cleanup.Category) []cleanup.Category {
+	refs := map[string]map[string]bool{}
+	for _, p := range projects {
+		for _, ref := range p.Items {
+			if refs[ref.CategoryID] == nil {
+				refs[ref.CategoryID] = map[string]bool{}
+			}
+			refs[ref.CategoryID][ref.ItemID] = true
+		}
+	}
+	var out []cleanup.Category
+	for _, c := range categories {
+		ids := refs[c.ID]
+		if len(ids) == 0 {
+			continue
+		}
+		cat := c
+		cat.Items, cat.Size = nil, 0
+		for _, it := range c.Items {
+			if ids[it.ID] {
+				cat.Items = append(cat.Items, it)
+				cat.Size += it.Size
+			}
+		}
+		if len(cat.Items) > 0 {
+			out = append(out, cat)
+		}
+	}
+	return out
+}
+
+// shownNames is how many projects the confirmation names before 等.
+const shownNames = 5
+
+// ProjectNames names the projects with any build output checked, for the confirmation: 项目：shop、blog, past shownNames 项目：a、b、c、d、e 等 7 个; "" for none.
+func ProjectNames(projects []engdev.Project, sel cleanflow.Selection) string {
+	var names []string
+	for _, p := range projects {
+		for _, ref := range p.Items {
+			if sel.Has(ref.CategoryID, ref.ItemID) {
+				names = append(names, filepath.Base(p.Path))
+				break
+			}
+		}
+	}
+	switch {
+	case len(names) == 0:
+		return ""
+	case len(names) > shownNames:
+		return "项目：" + strings.Join(names[:shownNames], "、") + " 等 " + strconv.Itoa(len(names)) + " 个"
+	}
+	return "项目：" + strings.Join(names, "、")
+}
+
 // SelectedProjects counts the projects with any build output checked.
 func SelectedProjects(projects []engdev.Project, sel cleanflow.Selection) int {
 	n := 0

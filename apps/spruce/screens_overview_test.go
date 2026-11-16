@@ -117,8 +117,10 @@ func TestScreensOverview(t *testing.T) {
 	cached := overviewState(res)
 	cached.Phase, cached.Result.FromCache, cached.Result.Actionable = app.OverviewChecking, true, false
 	cached.Result.CheckedAt = time.Now().Add(-3 * time.Hour)
+	cached.Progress = &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 62, Total: 100}
 	ov.Set(cached)
 	a.WaitFor("id:rec-app-caches-act >> text:正在核对…", wait)
+	a.WaitFor("id:recheck >> text:停止检查", wait)
 	a.Screenshot("overview-cached-updating")
 
 	// C: ready, and a card expanded.
@@ -127,7 +129,7 @@ func TestScreensOverview(t *testing.T) {
 	a.WaitFor("id:rec-app-caches-act >> text:删除…", wait)
 	a.WaitFor("id:growth-row-0", wait)
 	a.Screenshot("overview-ready")
-	a.Press("id:rec-app-caches-expand")
+	a.Press("id:rec-app-caches-head")
 	a.WaitFor("id:rec-app-caches-items", wait)
 	a.Scroll("id:overview-page", 240)
 	a.Screenshot("overview-expanded")

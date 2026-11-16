@@ -13,6 +13,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/installers"
@@ -78,7 +79,8 @@ func start(t *testing.T, st app.OverviewState, folders []string) *page {
 		p.stores = storefake.Provide(cx, fakes.Deps())
 		p.nav = nav.NewNavigator(cx, nav.Installers)
 		nav.Key.Provide(cx, p.nav)
-		installers.DepsKey.Provide(cx, installers.Deps{Files: &cleanflowfake.Files{}})
+		cleanflow.Provide(cx)
+		installers.Provide(cx, installers.Deps{Files: &cleanflowfake.Files{}})
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if p.nav.Current() != nav.Installers {
 				return core.Group{}
