@@ -1,14 +1,19 @@
 package shell
 
 import (
+	"errors"
 	"slices"
 	"testing"
+	"time"
 
+	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
+	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/rules"
 	"spruce/apps/spruce/internal/ui/format"
+	"spruce/apps/spruce/internal/ui/store/storefake"
 )
 
 const (
@@ -82,15 +87,18 @@ func TestTrayMenuActions(t *testing.T) {
 
 func TestTrayTooltip(t *testing.T) {
 	for _, c := range []struct {
-		d    *app.DiskState
-		want string
+		d        *app.DiskState
+		checking bool
+		want     string
 	}{
-		{nil, "Spruce"},
-		{&app.DiskState{Free: 120 * gb}, "Spruce · 可用 " + format.Bytes(120*gb)},
-		{&app.DiskState{Free: 8 * gb, Low: true}, "Spruce · 空间不足，只剩 " + format.Bytes(8*gb)},
+		{nil, false, "Spruce"},
+		{&app.DiskState{Free: 120 * gb}, false, "Spruce · 可用 " + format.Bytes(120*gb)},
+		{&app.DiskState{Free: 8 * gb, Low: true}, false, "Spruce · 空间不足，只剩 " + format.Bytes(8*gb)},
+		{&app.DiskState{Free: 8 * gb, Low: true}, true, "Spruce · 正在检查…"},
+		{nil, true, "Spruce · 正在检查…"},
 	} {
-		if got := trayTooltip(c.d); got != c.want {
-			t.Errorf("trayTooltip(%+v) = %q, want %q", c.d, got, c.want)
+		if got := trayTooltip(c.d, c.checking); got != c.want {
+			t.Errorf("trayTooltip(%+v, %v) = %q, want %q", c.d, c.checking, got, c.want)
 		}
 	}
 }
@@ -122,5 +130,114 @@ func TestNoticeText(t *testing.T) {
 		if title != c.title || body != c.body {
 			t.Errorf("%s:\n got %q / %q\nwant %q / %q", c.name, title, body, c.title, c.body)
 		}
+	}
+}
+
+func TestCheckNoticeText(t *testing.T) {
+	for _, c := range []struct {
+		failed      string
+		headline    int64
+		title, body string
+	}{
+		{"", 18 * gb, "检查完成", "可以放心释放 " + format.Bytes(18*gb) + "，点按查看。"},
+		{"", 0, "检查完成", "没有需要清理的内容。"},
+		{"正在清理，完成后再检查", 0, "检查没有完成", "正在清理，完成后再检查"},
+	} {
+		if title, body := CheckNoticeText(c.failed, c.headline); title != c.title || body != c.body {
+			t.Errorf("CheckNoticeText(%q, %d) = %q / %q, want %q / %q", c.failed, c.headline, title, body, c.title, c.body)
+		}
+	}
+}
+
+// startTrayCheck runs trayCheck over a fake controller in state st, with the window away or not, and returns its 立即检查.
+func startTrayCheck(t *testing.T, st app.OverviewState, away *bool) (*nsgotest.App, *storefake.Overview, func()) {
+	t.Helper()
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(st)
+	fakes.Overview = ov
+	var check func()
+	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		stores := storefake.Provide(cx, fakes.Deps())
+		check = trayCheck(cx, stores.Overview, func() bool { return *away })
+		return core.Text{Content: "Spruce"}
+	})
+	a.NotificationPermission = core.NotificationsGranted
+	return a, ov, check
+}
+
+func TestTrayCheckTellsHowItEndedWhileTheWindowIsAway(t *testing.T) {
+	a, ov, check := startTrayCheck(t, app.OverviewState{Phase: app.OverviewIdle}, new(true))
+	a.Post(check)
+	a.WaitUntil(5*time.Second, func() bool { checks, _, _, _, _ := ov.Calls(); return checks == 1 })
+	ov.Set(app.OverviewState{Phase: app.OverviewChecking})
+	a.Settle()
+	if len(a.Notifications) != 0 {
+		t.Fatalf("a notification while the check runs: %v", a.Notifications)
+	}
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{CheckedAt: time.Now(), Headline: 18 * gb}})
+	a.WaitUntil(5*time.Second, func() bool { return len(a.Notifications) == 1 })
+	if n := a.Notifications[0]; n.ID != noticeCheck || n.Title != "检查完成" || n.Body != "可以放心释放 "+format.Bytes(18*gb)+"，点按查看。" {
+		t.Errorf("notification %+v", n)
+	}
+
+	// A later state of the same result says nothing again.
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{CheckedAt: time.Now(), Headline: 18 * gb}})
+	a.Settle()
+	if len(a.Notifications) != 1 {
+		t.Errorf("%d notifications after the check ended once", len(a.Notifications))
+	}
+}
+
+// The window coming back while the check runs shows how it went, so no notification follows.
+func TestTrayCheckSaysNothingOnceTheWindowIsBack(t *testing.T) {
+	away := true
+	a, ov, check := startTrayCheck(t, app.OverviewState{Phase: app.OverviewIdle}, &away)
+	a.Post(check)
+	a.WaitUntil(5*time.Second, func() bool { checks, _, _, _, _ := ov.Calls(); return checks == 1 })
+	ov.Set(app.OverviewState{Phase: app.OverviewChecking})
+	a.Settle()
+	a.Post(func() { away = false })
+	a.Settle()
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{CheckedAt: time.Now(), Headline: 18 * gb}})
+	a.Settle()
+	a.Advance(time.Second)
+	if len(a.Notifications) != 0 {
+		t.Errorf("notifications with the window back: %v", a.Notifications)
+	}
+}
+
+func TestTrayCheckSaysWhyItDidNotFinish(t *testing.T) {
+	a, ov, check := startTrayCheck(t, app.OverviewState{Phase: app.OverviewIdle}, new(true))
+	a.Post(check)
+	a.WaitUntil(5*time.Second, func() bool { checks, _, _, _, _ := ov.Calls(); return checks == 1 })
+	ov.Set(app.OverviewState{Phase: app.OverviewChecking})
+	a.Settle()
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Error: "无法读取磁盘"})
+	a.WaitUntil(5*time.Second, func() bool { return len(a.Notifications) == 1 })
+	if n := a.Notifications[0]; n.Title != "检查没有完成" || n.Body != "无法读取磁盘" {
+		t.Errorf("notification %+v", n)
+	}
+
+	// Refused at once (a clean runs): it says so without waiting.
+	b, ov2, check2 := startTrayCheck(t, app.OverviewState{Phase: app.OverviewIdle}, new(true))
+	ov2.CheckErr = errors.New("正在清理，完成后再检查")
+	b.Post(check2)
+	b.WaitUntil(5*time.Second, func() bool { return len(b.Notifications) == 1 })
+	if n := b.Notifications[0]; n.Title != "检查没有完成" || n.Body != "正在清理，完成后再检查" {
+		t.Errorf("refusal notification %+v", n)
+	}
+}
+
+func TestTrayCheckWithTheWindowInSightSaysNothing(t *testing.T) {
+	a, ov, check := startTrayCheck(t, app.OverviewState{Phase: app.OverviewIdle}, new(false))
+	a.Post(check)
+	a.WaitUntil(5*time.Second, func() bool { checks, _, _, _, _ := ov.Calls(); return checks == 1 })
+	ov.Set(app.OverviewState{Phase: app.OverviewChecking})
+	a.Settle()
+	ov.Set(app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{CheckedAt: time.Now()}})
+	a.Settle()
+	a.Advance(time.Second)
+	if len(a.Notifications) != 0 {
+		t.Errorf("notifications with the window in sight: %v", a.Notifications)
 	}
 }

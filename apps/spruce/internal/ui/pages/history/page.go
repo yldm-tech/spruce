@@ -50,7 +50,7 @@ func Page(cx *core.Scope) core.Node {
 	}}
 
 	return core.Group{
-		kit.Page{Children: []core.Node{header, loadErr, empty, content}},
+		kit.Page{Header: header, Children: []core.Node{loadErr, empty, content}},
 		shared.ClearHistoryDialog{Open: clearing.Get, Count: func() int { return len(s.Runs.Get()) }, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef},
 	}
 }

@@ -76,8 +76,8 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 		})
 	}}
 	return core.Group{
-		kit.Page{TestID: "drill-" + string(p.Route), Ref: d.Page, Children: []core.Node{
-			kit.PageHeader{Route: p.Route}, DrillStatus(d), DrillNotices(d, DeniedText), body,
+		kit.Page{TestID: "drill-" + string(p.Route), Ref: d.Page, ScrollKey: p.Route, Header: kit.PageHeader{Route: p.Route}, Children: []core.Node{
+			DrillStatus(d), DrillNotices(d, DeniedText), body,
 		}},
 		DrillLayers(d),
 	}

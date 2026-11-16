@@ -9,6 +9,7 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/schedule"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/history"
@@ -199,4 +200,140 @@ func TestNotificationsNeedThePermissionAndOpenWhatTheyAreAbout(t *testing.T) {
 	a.WaitUntil(wait, func() bool { return len(a.Notifications) == 1 && a.Notifications[0].ID == "auto-summary:2026-W46" })
 	a.PressNotification("auto-summary:2026-W46")
 	a.WaitFor("role:header 操作历史", wait)
+}
+
+func TestEscapeLeavesADrillDownView(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), nav.SystemJunk)
+	a.WaitFor("id:back", wait)
+	a.Key("escape")
+	a.WaitFor("role:header 概览", wait)
+	// On a sidebar page Escape does nothing.
+	a.Key("escape")
+	a.Find("role:header 概览")
+}
+
+func TestMenuGoesToPages(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), "")
+	a.ChooseMenu("前往", "操作历史")
+	a.WaitFor("role:header 操作历史", wait)
+	if !a.Find("id:nav-history").Props.Selected {
+		t.Error("the sidebar does not light 操作历史")
+	}
+	a.ChooseMenu("Spruce", "设置…")
+	a.WaitFor("role:header 设置", wait)
+}
+
+// While a clean runs, 退出 Spruce asks first and keeps Spruce up on 继续清理; the question holds the sidebar and the menu's pages like any dialog.
+func TestQuitDuringACleanAsks(t *testing.T) {
+	activity := schedule.NewActivity(nil)
+	_, end, err := activity.BeginClean(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := shell.Deps{Stores: storefake.New(t.TempDir()).Deps(), Start: nav.History, Activity: activity,
+		History: history.Deps{Catalog: historyfake.Catalog(maintenancefake.MacCatalog())}}
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
+	a.WaitFor("id:sidebar", wait)
+
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Find("id:quit-confirm >> text:正在清理")
+	if a.Quits != 0 {
+		t.Fatal("quit while a clean runs without asking")
+	}
+	if a.Enabled("id:nav-overview") {
+		t.Error("the sidebar is reachable under the question")
+	}
+	for _, m := range a.Menu {
+		if m.Label == "前往" && !m.Items[0].Disabled {
+			t.Error("前往 is enabled under the question")
+		}
+	}
+	a.Press("id:confirm-cancel")
+	a.WaitForGone("id:quit-confirm", wait)
+	if a.Quits != 0 {
+		t.Error("继续清理 quit")
+	}
+
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Press("id:confirm-ok")
+	if a.Quits != 1 {
+		t.Errorf("停止并退出 quit %d times", a.Quits)
+	}
+
+	// With nothing running it quits at once.
+	end()
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	if a.Quits != 2 {
+		t.Errorf("退出 with nothing running: %d quits", a.Quits)
+	}
+
+	// A run that ends before the question is answered leaves nothing to ask about: Spruce quits, as asked.
+	_, end, err = activity.BeginClean(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Advance(2 * time.Second)
+	if a.Quits != 2 {
+		t.Fatalf("quit while the clean still runs: %d quits", a.Quits)
+	}
+	end()
+	a.Advance(time.Second)
+	a.WaitForGone("id:quit-confirm", wait)
+	if a.Quits != 3 {
+		t.Errorf("the question outlived its run: %d quits", a.Quits)
+	}
+}
+
+// 设置 opens on 通用 again, so where another tab was scrolled to means nothing there: it opens at the top until the tab it was on is kept as well.
+func TestSettingsComesBackAtTheTop(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), nav.Settings)
+	a.Resize(960, 420)
+	a.WaitFor("id:tab-auto", wait)
+	a.Press("id:tab-auto")
+	a.WaitFor("id:settings-tab-auto", wait)
+	page := func() *nsgotest.View { return a.Find("id:settings-page") }
+	end := page().Content.Height - page().Frame.Size.Height
+	if end < 40 {
+		t.Fatalf("自动清理 does not scroll at 960x420 (%v)", end)
+	}
+	a.Scroll("id:settings-page", end)
+	a.Advance(200 * time.Millisecond)
+	a.Press("id:nav-history")
+	a.WaitFor("role:header 操作历史", wait)
+	a.ChooseMenu("前往", "设置")
+	a.WaitFor("id:settings-tab-general", wait)
+	a.Advance(time.Second)
+	if y := page().Offset.Y; y != 0 {
+		t.Errorf("通用 at %v, scrolled to where 自动清理 was left", y)
+	}
+}
+
+// Going to another page and back lands 概览 where it was left.
+func TestOverviewComesBackWhereItWasLeft(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), "")
+	a.Resize(960, 420)
+	a.WaitFor("id:check-start", wait)
+	page := func() *nsgotest.View { return a.Find("id:overview-page") }
+	end := page().Content.Height - page().Frame.Size.Height
+	if end < 40 {
+		t.Fatalf("概览 does not scroll at 960x420 (%v)", end)
+	}
+	a.Scroll("id:overview-page", end)
+	a.Advance(200 * time.Millisecond)
+	a.Press("id:nav-history")
+	a.WaitFor("role:header 操作历史", wait)
+	a.Press("id:nav-overview")
+	a.WaitFor("id:check-start", wait)
+	a.Advance(time.Second)
+	if y := page().Offset.Y; y != end {
+		t.Errorf("概览 at %v after going back, want %v", y, end)
+	}
+	// The header stayed in view all along.
+	if h := a.Find("role:header 概览"); h.Frame.Size.Height == 0 {
+		t.Error("the header is gone")
+	}
 }

@@ -112,8 +112,7 @@ func Page(cx *core.Scope) core.Node {
 	clear := shared.ClearHistoryDialog{Open: clearing.Get, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef}
 
 	return core.Group{
-		kit.Page{TestID: "settings-page", Children: []core.Node{
-			kit.PageHeader{Route: nav.Settings},
+		kit.Page{TestID: "settings-page", Header: kit.PageHeader{Route: nav.Settings}, Children: []core.Node{
 			kit.Tabs[nav.SettingsTab]{Label: "设置分类", Options: tabs, Value: tab.Get, OnChange: tab.Set},
 			content,
 		}},

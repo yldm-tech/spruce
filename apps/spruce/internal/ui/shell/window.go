@@ -2,6 +2,7 @@ package shell
 
 import (
 	"strings"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
@@ -82,6 +83,48 @@ type windows struct {
 	hidden bool
 	// blocked reports, without subscribing, whether an overlay holds the sidebar (store.Block): a clean, an uninstall, a deletion or a maintenance run under its overlay, or a dialog. The menu bar and the notifications stay reachable meanwhile, and changing the page then would end the page's work, so they only bring the window forward. Nil is never blocked.
 	blocked func() bool
+	// busy reports, without subscribing, whether a clean, an uninstall, a deletion or a maintenance run is active, which quitting would stop after its current item; nil is never busy. Quitting or closing the window (when that ends the app) then asks first: asking is set while the window asks (Root's quitConfirm), whose 停止并退出 calls end.
+	busy   func() bool
+	asking *core.Signal[bool]
+	end    func()
+}
+
+// away reports whether the main window is out of sight: hidden in the menu bar, or not open.
+func (w *windows) away() bool { return w.hidden || w.host.Main() == nil }
+
+// active reports whether a run is active now (busy).
+func (w *windows) active() bool { return w.busy != nil && w.busy() }
+
+// quit ends Spruce for 退出 Spruce in the menu bar and the menu bar icon's menu; while a run is active it shows the window asking first instead.
+func (w *windows) quit() {
+	if !w.active() {
+		w.end()
+		return
+	}
+	w.show("")
+	w.asking.Set(true)
+}
+
+// quitPoll is how often a question before quitting looks whether its run has ended (followRun): schedule.Activity tells no one.
+const quitPoll = 500 * time.Millisecond
+
+// followRun quits for a question before quitting that is still up when its run ends: there is nothing left to ask about, and the user asked to quit. It looks every quitPoll while the question is up, in cx.
+func (w *windows) followRun(cx *core.Scope) {
+	cx.Effect(func() {
+		if !w.asking.Get() {
+			return
+		}
+		var look func()
+		look = func() {
+			if w.active() {
+				cx.AfterFunc(quitPoll, look)
+				return
+			}
+			w.asking.Set(false)
+			w.end()
+		}
+		cx.AfterFunc(quitPoll, look)
+	})
 }
 
 // held reports whether an overlay holds the sidebar now.
@@ -106,9 +149,13 @@ func (w *windows) show(route nav.Route) {
 	}
 }
 
-// closing handles the user closing the main window: with keepInTray the window hides and the Dock icon goes, keeping the page and whatever runs on it (the page area mounts the page again as the route changes, which would end its work), except 健康监测, whose sampling runs only while it shows; otherwise the window closes, which ends the app.
+// closing handles the user closing the main window: with keepInTray the window hides and the Dock icon goes, keeping the page and whatever runs on it (the page area mounts the page again as the route changes, which would end its work), except 健康监测, whose sampling runs only while it shows; otherwise the window closes, which ends the app, unless a run is active: then it stays and asks first, as quit does.
 func (w *windows) closing(cancel func()) {
 	if !w.keepInTray() {
+		if w.active() {
+			cancel()
+			w.asking.Set(true)
+		}
 		return
 	}
 	cancel()
@@ -122,19 +169,22 @@ func (w *windows) closing(cancel func()) {
 	}
 }
 
-// Notification IDs the controller posts (app.Notice.ID): low-disk alone, auto-summary followed by the ISO week.
+// Notification IDs: the controller's (app.Notice.ID), low-disk alone and auto-summary followed by the ISO week, and the shell's at the end of a check the menu bar icon started (trayCheck).
 const (
 	noticeLowDisk     = "low-disk"
 	noticeAutoSummary = "auto-summary:"
+	noticeCheck       = "check-done"
 )
 
-// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else, and also while an overlay holds the sidebar.
+// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 概览 for the end of a check; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else, and also while an overlay holds the sidebar.
 func (w *windows) pressed(id string, hasRecommendations bool) {
 	switch {
 	case id == noticeLowDisk && hasRecommendations:
 		w.show(nav.Overview)
 	case id == noticeLowDisk:
 		w.show(nav.Space)
+	case id == noticeCheck:
+		w.show(nav.Overview)
 	case strings.HasPrefix(id, noticeAutoSummary):
 		w.show("")
 		if !w.held() {

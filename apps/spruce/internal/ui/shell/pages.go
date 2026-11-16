@@ -3,6 +3,7 @@ package shell
 import (
 	"github.com/nsgo-dev/nsgo/core"
 
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/devjunk"
 	"spruce/apps/spruce/internal/ui/pages/health"
@@ -30,16 +31,17 @@ var pages = map[nav.Route]func(cx *core.Scope) core.Node{
 	nav.Settings:    settings.Page,
 }
 
-// providePages gives each page its Deps, in cx, the app's own scope (空间透视 also its controller, which outlives the page).
+// providePages gives each page its Deps and makes what it keeps beyond one showing (each package's Provide), in cx, the app's own scope.
 func providePages(cx *core.Scope, d Deps) {
-	overview.DepsKey.Provide(cx, d.Overview)
-	systemjunk.DepsKey.Provide(cx, d.SystemJunk)
-	devjunk.DepsKey.Provide(cx, d.DevJunk)
-	installers.DepsKey.Provide(cx, d.Installers)
-	uninstall.DepsKey.Provide(cx, d.Uninstall)
+	cleanflow.Provide(cx)
+	overview.Provide(cx, d.Overview)
+	systemjunk.Provide(cx, d.SystemJunk)
+	devjunk.Provide(cx, d.DevJunk)
+	installers.Provide(cx, d.Installers)
+	uninstall.Provide(cx, d.Uninstall)
 	space.Provide(cx, d.Space)
-	maintenance.DepsKey.Provide(cx, d.Maintenance)
-	health.DepsKey.Provide(cx, d.Health)
-	history.DepsKey.Provide(cx, d.History)
-	settings.DepsKey.Provide(cx, d.Settings)
+	maintenance.Provide(cx, d.Maintenance)
+	health.Provide(cx, d.Health)
+	history.Provide(cx, d.History)
+	settings.Provide(cx, d.Settings)
 }
