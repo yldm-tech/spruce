@@ -103,7 +103,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		async.Do(cx, cardCtx, func(ctx context.Context) (struct{}, error) { return struct{}{}, p.deps.Files.Reveal(ctx, path) },
 			func(_ struct{}, err error) {
 				if err != nil {
-					p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
+					p.stores.Toasts.ShowLater(store.Toast{Text: err.Error(), Duration: toastShort})
 				}
 			})
 	}

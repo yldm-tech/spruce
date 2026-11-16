@@ -249,9 +249,21 @@ func TestCategoryListReveal(t *testing.T) {
 	if got := *p.stores.Toasts.Current(); got.Text != "这个项目已经不存在了" || got.Duration != 6*time.Second || got.UndoRun != "" {
 		t.Errorf("toast %+v", got)
 	}
-	if p.Exists("id:reveal-error") {
-		t.Error("the error is also shown at the top of the list")
+
+	// While the toast offers 撤销, the failure waits for it to go rather than take 撤销 away.
+	p.undoToast()
+	p.WaitUntil(wait, func() bool { t := p.stores.Toasts.Current(); return t != nil && t.UndoRun == "run-1" })
+	p.Press("role:button 在访达中显示 x.log")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 2 })
+	p.Settle()
+	if got := p.stores.Toasts.Current(); got == nil || got.UndoRun != "run-1" {
+		t.Errorf("the failure took 撤销 away: %+v", got)
 	}
+	p.Post(p.stores.Toasts.Dismiss)
+	p.WaitUntil(wait, func() bool {
+		t := p.stores.Toasts.Current()
+		return t != nil && t.Text == "这个项目已经不存在了"
+	})
 }
 
 // The design's largest case: 3,000 items in one category scroll inside the card and mount only the rows near view.

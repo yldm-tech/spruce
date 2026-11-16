@@ -82,7 +82,7 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 	return core.View{Role: core.RoleRegion, Label: l.Label, TestID: l.TestID, Style: core.Style{Gap: 12}, Children: []core.Node{toolbar, cards}}
 }
 
-// Revealer is reveal for the rows of a list made in cx, which tells why it failed as a short toast: the toolbar is often far from the row pressed, and the toast shows wherever the page is scrolled. nil reveal shows nothing.
+// Revealer is reveal for the rows of a list made in cx, which tells why it failed as a short toast: the toolbar is often far from the row pressed, and the toast shows wherever the page is scrolled. A toast with 撤销 stays, and the failure shows once it goes (Toasts.ShowLater). nil reveal shows nothing.
 func Revealer(cx *core.Scope, reveal func(ctx context.Context, path string) error) func(path string) {
 	ctx, toasts := cx.Context(), store.Use(cx).Toasts
 	return func(path string) {
@@ -91,7 +91,7 @@ func Revealer(cx *core.Scope, reveal func(ctx context.Context, path string) erro
 		}
 		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, reveal(ctx, path) }, func(_ struct{}, err error) {
 			if err != nil {
-				toasts.Show(store.Toast{Text: err.Error(), Duration: errorToast})
+				toasts.ShowLater(store.Toast{Text: err.Error(), Duration: errorToast})
 			}
 		})
 	}

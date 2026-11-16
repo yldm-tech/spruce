@@ -224,7 +224,7 @@ func growthCard(cx *core.Scope, p *page) core.Node {
 		async.Do(cx, ctx, func(ctx context.Context) (struct{}, error) { return struct{}{}, p.deps.Files.Reveal(ctx, path) },
 			func(_ struct{}, err error) {
 				if err != nil {
-					p.toast(store.Toast{Text: err.Error(), Duration: toastShort})
+					p.stores.Toasts.ShowLater(store.Toast{Text: err.Error(), Duration: toastShort})
 				}
 			})
 	}

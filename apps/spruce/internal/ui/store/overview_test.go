@@ -247,4 +247,29 @@ func TestToasts(t *testing.T) {
 	if st.Toasts.Current() != nil {
 		t.Error("not dismissed")
 	}
+
+	// A passing message waits while the toast offers 撤销 and shows once it goes; without 撤销 it shows at once, and a newer Show drops one that waits.
+	failed := Toast{Text: "这个项目已经不存在了", Duration: 6 * time.Second}
+	st.Toasts.ShowLater(failed)
+	if got := st.Toasts.Current(); got == nil || *got != failed {
+		t.Errorf("without 撤销 %+v", got)
+	}
+	undo := Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "r1", Duration: 10 * time.Second}
+	st.Toasts.Show(undo)
+	st.Toasts.ShowLater(failed)
+	if got := st.Toasts.Current(); got == nil || *got != undo {
+		t.Errorf("the message took 撤销 away: %+v", got)
+	}
+	st.Toasts.Dismiss()
+	if got := st.Toasts.Current(); got == nil || *got != failed {
+		t.Errorf("after 撤销 went %+v", got)
+	}
+	st.Toasts.Show(undo)
+	st.Toasts.ShowLater(failed)
+	put := Toast{Text: "已放回原处 1 项", Duration: 6 * time.Second}
+	st.Toasts.Show(put)
+	st.Toasts.Dismiss()
+	if got := st.Toasts.Current(); got != nil {
+		t.Errorf("a message that waited came after a newer toast: %+v", got)
+	}
 }
