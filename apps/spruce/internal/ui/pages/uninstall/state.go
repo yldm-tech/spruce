@@ -175,8 +175,9 @@ func NewState(cx *core.Scope, d Deps, stores *store.Stores) *State {
 	return s
 }
 
-// Visit is called as the page shows: it reads the apps the first time, and again in the background when the list is older than staleAfter; otherwise the page shows the list it had, as it was.
+// Visit is called as the page shows: it reads the apps the first time, and again in the background when the list is older than staleAfter; otherwise the page shows the list it had, as it was. A picked app that ran may have been quit meanwhile, so it is looked up again (Active).
 func (s *State) Visit() {
+	s.Active()
 	if s.Fetching.GetUntracked() {
 		return
 	}

@@ -603,6 +603,24 @@ func TestComingBackToSpruceChecksARunningAppAgain(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return p.Enabled("id:uninstall") })
 }
 
+func TestComingBackToThePageChecksARunningAppAgain(t *testing.T) {
+	svc := macService()
+	plan := fooPlan()
+	plan.AppID, plan.Running = "run", true
+	svc.Plan = plan
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Runner")
+	p.WaitFor("id:running", wait)
+	// The user goes to another page, quits Runner meanwhile and comes back.
+	p.show(false)
+	plan.Running = false
+	svc.SetPlan(plan, nil)
+	p.show(true)
+	p.WaitForGone("id:running", wait)
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:uninstall") })
+}
+
 func TestCheckingAgainKeepsTheLeftoversTheUserChanged(t *testing.T) {
 	svc := macService()
 	p := start(t, svc, uninstall.PlatformMac)
