@@ -66,7 +66,13 @@ func buttonStyle(v ButtonVariant, large bool) core.Style {
 	if large && (v == ButtonGhost || v == ButtonLight || v == ButtonDanger) {
 		st.MinHeight, st.Padding, st.CornerRadius, st.FontSize = core.Pt(46), core.Symmetric(0, 28), 23, FontCardTitle
 	}
-	return st
+	if v == ButtonLink {
+		// A link dims while held instead of shrinking: it sits in running text.
+		st.Transition = pressTransition
+		st.Active = &core.Style{Opacity: core.Alpha(0.6)}
+		return st
+	}
+	return Pressable(st, 0.97)
 }
 
 func is(fn func() bool) bool { return fn != nil && fn() }
@@ -116,10 +122,10 @@ type IconButton struct {
 // Render implements core.Node.
 func (b IconButton) Render(*core.Scope) core.Node {
 	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Tooltip: Tooltip(b.Label), Disabled: b.Disabled,
-		Style: core.Style{Width: core.Pt(30), Height: core.Pt(30), FlexShrink: 0, CornerRadius: 15, AlignItems: core.AlignCenter,
+		Style: Pressable(core.Style{Width: core.Pt(30), Height: core.Pt(30), FlexShrink: 0, CornerRadius: 15, AlignItems: core.AlignCenter,
 			JustifyContent: core.JustifyCenter, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
 			Hover:    &core.Style{Background: SurfaceButtonGhost, Color: ColorText},
-			Disabled: &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault}},
+			Disabled: &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault}}, 0.9),
 		OnPress: func(core.PressEvent) {
 			if b.OnPress != nil && !is(b.Disabled) {
 				b.OnPress()
@@ -162,7 +168,6 @@ func (b RunButton) Render(*core.Scope) core.Node {
 			shadow(dy, blur, ShadowAccent),
 		},
 		FontFamily: FontFace(Bold), FontSize: FontRunButton, FontWeight: FaceWeight(Bold), Color: RunButtonText, Cursor: core.CursorPointer,
-		Transition:   core.Transition{Duration: 150_000_000, Easing: core.Ease, Properties: core.TransitionOpacity},
 		FocusVisible: focusRing(3, 4),
 		Disabled:     &core.Style{Opacity: core.Alpha(0.4), Filters: []core.Filter{core.Saturate(0.4)}, Cursor: core.CursorNotAllowed},
 	}
@@ -171,6 +176,9 @@ func (b RunButton) Render(*core.Scope) core.Node {
 		children = append(children, Glyph{Name: b.Glyph, Size: 40, StrokeWidth: 2.2, Color: core.CurrentColor})
 	}
 	children = append(children, core.Text{Content: b.Text})
+	// The round button swells a little under the pointer and gives under a press.
+	st.Hover = &core.Style{Transform: core.Transform{Scale: 1.03}}
+	st = Pressable(st, 0.95)
 	return core.View{Role: core.RoleButton, Label: b.Label, TestID: b.TestID, Ref: b.Ref, Disabled: b.Disabled, Style: st,
 		OnPress: func(core.PressEvent) {
 			if b.OnPress != nil && !is(b.Disabled) {
