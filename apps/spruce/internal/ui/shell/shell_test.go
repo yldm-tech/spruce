@@ -269,3 +269,29 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 		t.Errorf("退出 with nothing running: %d quits", a.Quits)
 	}
 }
+
+// Going to another page and back lands 概览 where it was left.
+func TestOverviewComesBackWhereItWasLeft(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), "")
+	a.Resize(960, 420)
+	a.WaitFor("id:check-start", wait)
+	page := func() *nsgotest.View { return a.Find("id:overview-page") }
+	end := page().Content.Height - page().Frame.Size.Height
+	if end < 40 {
+		t.Fatalf("概览 does not scroll at 960x420 (%v)", end)
+	}
+	a.Scroll("id:overview-page", end)
+	a.Advance(200 * time.Millisecond)
+	a.Press("id:nav-history")
+	a.WaitFor("role:header 操作历史", wait)
+	a.Press("id:nav-overview")
+	a.WaitFor("id:check-start", wait)
+	a.Advance(time.Second)
+	if y := page().Offset.Y; y != end {
+		t.Errorf("概览 at %v after going back, want %v", y, end)
+	}
+	// The header stayed in view all along.
+	if h := a.Find("role:header 概览"); h.Frame.Size.Height == 0 {
+		t.Error("the header is gone")
+	}
+}
