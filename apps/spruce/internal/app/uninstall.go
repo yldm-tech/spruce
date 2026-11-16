@@ -136,6 +136,10 @@ type UninstallOutcome struct {
 	// BundleFailure explains why the app stayed; its leftovers are then left alone too.
 	BundleFailure string              `json:"bundleFailure,omitempty"`
 	Result        cleanup.CleanResult `json:"result"`
+	// RunID is the history run that records the removal, "" when it did nothing and nothing was recorded.
+	RunID string `json:"runId,omitempty"`
+	// Undoable is set when the ledger kept at least one move, so 撤销 can put the run back (macOS).
+	Undoable bool `json:"undoable"`
 }
 
 // UninstallerOutcome is what running a Windows program's uninstaller achieved.
@@ -275,6 +279,7 @@ func (u *Uninstall) Remove(ctx context.Context, req UninstallRequest, progress f
 			Details:   u.removeDetails(res),
 			Undo:      info,
 		})
+		out.RunID, out.Undoable = runID, info != nil
 	}
 	return out, nil
 }

@@ -151,6 +151,9 @@ func TestUninstallRemoveRecordsHistory(t *testing.T) {
 		t.Fatalf("history = %+v", store.appended)
 	}
 	run := store.appended[0]
+	if out.RunID != run.ID || out.Undoable {
+		t.Errorf("outcome run %q undoable %v, recorded %q without a ledger", out.RunID, out.Undoable, run.ID)
+	}
 	if run.Kind != history.KindUninstall || !run.StartedAt.Equal(started) || !run.EndedAt.Equal(started.Add(time.Second)) {
 		t.Errorf("run = %+v", run)
 	}
@@ -183,7 +186,7 @@ func TestUninstallRemoveRecordsHistory(t *testing.T) {
 
 	// A removal that did nothing is not recorded.
 	eng.result = uninstall.Result{App: "Foo"}
-	if out, err := u.Remove(t.Context(), UninstallRequest{AppID: "a"}, nil); err != nil || out.Result.Failed == nil {
+	if out, err := u.Remove(t.Context(), UninstallRequest{AppID: "a"}, nil); err != nil || out.Result.Failed == nil || out.RunID != "" {
 		t.Fatalf("empty outcome = %+v, %v", out, err)
 	}
 	if len(store.appended) != 2 {

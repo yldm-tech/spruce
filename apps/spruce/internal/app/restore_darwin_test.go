@@ -348,11 +348,15 @@ func TestUninstallMovesComeBackIntoTheirCategoryRoot(t *testing.T) {
 	store := &fakeStore{}
 	u := NewUninstall(eng, store, home, slog.New(slog.DiscardHandler), schedule.NewActivity(nil))
 	SetUninstallLedger(u, l)
-	if _, err := u.Remove(t.Context(), UninstallRequest{AppID: "a", LeftoverIDs: []string{"c"}}, nil); err != nil {
+	removed, err := u.Remove(t.Context(), UninstallRequest{AppID: "a", LeftoverIDs: []string{"c"}}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(store.appended) != 1 || store.appended[0].Undo == nil || store.appended[0].Undo.Items != 2 {
 		t.Fatalf("history %+v", store.appended)
+	}
+	if removed.RunID != store.appended[0].ID || !removed.Undoable {
+		t.Errorf("outcome run %q undoable %v", removed.RunID, removed.Undoable)
 	}
 	runID := store.appended[0].ID
 	r := NewRestore(l, trash.SystemRestorer(), store, schedule.NewActivity(nil), home, slog.New(slog.DiscardHandler))
