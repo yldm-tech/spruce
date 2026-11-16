@@ -69,12 +69,13 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		})
 	})
 
-	// The card's clean is the store's (store.Overview.Running), not the page's: it outlives 概览, so a page opened while it runs shows it as busy, with its progress and 停止.
-	busy := func() bool { o, ok := p.ov.Running(); return ok && o.Recommendation == id }
+	// The card's clean is the store's (store.Overview.Running), not the page's: it outlives 概览, so a page opened while it runs shows it as busy, with its progress and 停止. A 全部清理 that cleans the card shows it busy too, its progress and 停止 under the figure.
+	own := func() bool { o, ok := p.ov.Running(); return ok && o.Recommendation == id }
+	busy := func() bool { return own() || p.cleaningAll(id) }
 	// Past progressAfter a running action shows its progress, at once when the card comes back to a clean that has run since; the timer goes with the effect when the action ends.
-	showProgress.Set(core.Untracked(cx, busy))
+	showProgress.Set(core.Untracked(cx, own))
 	cx.Effect(func() {
-		if !busy() {
+		if !own() {
 			return
 		}
 		cx.AfterFunc(progressAfter, func() { showProgress.Set(true) })
@@ -218,9 +219,9 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		}}
 	}}
 	actions := core.Dynamic(func(*core.Scope) core.Node {
-		if busy() && showProgress.Get() {
+		if own() && showProgress.Get() {
 			return core.Func(func(*core.Scope) core.Node {
-				return progressRow(id, action.Get, bytes.Get, p.ov.CleanProgress, p.ov.StopClean)
+				return progressRow("rec-"+id, action.Get, bytes.Get, p.ov.CleanProgress, p.ov.StopClean)
 			})
 		}
 		return core.Func(func(*core.Scope) core.Node {
@@ -314,18 +315,18 @@ func confirmDialog(c Confirm) kit.ConfirmDialog {
 	return d
 }
 
-// progressRow is a card's action while it runs past progressAfter: the bar, how far it is (CleanProgressText of the action a and the total bytes it cleans) and 停止.
-func progressRow(id string, a func() advice.Action, total func() int64, progress func() cleanup.Progress, stop func()) core.Node {
+// progressRow is a card's action while it runs past progressAfter, and 全部清理's while it runs: the bar, how far it is (CleanProgressText of the action a and the total bytes it cleans) and 停止; its parts' TestIDs start with prefix.
+func progressRow(prefix string, a func() advice.Action, total func() int64, progress func() cleanup.Progress, stop func()) core.Node {
 	text := kit.Tabular(kit.TextFunc(func() string { return CleanProgressText(a(), progress(), total()) }, kit.FontBody, kit.Regular, kit.ColorTextSecondary))
-	text.TestID = "rec-" + id + "-progress-text"
+	text.TestID = prefix + "-progress-text"
 	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(80)}, Children: []core.Node{
 			// The row shows only while the clean runs, so the bar's light always sweeps: one long item or a command stands still until it ends.
-			kit.Meter{Height: 4, Label: "清理进度", TestID: "rec-" + id + "-progress", Active: func() bool { return true },
+			kit.Meter{Height: 4, Label: "清理进度", TestID: prefix + "-progress", Active: func() bool { return true },
 				Value: func() float64 { return CleanProgressFraction(progress(), total()) }},
 		}},
 		text,
-		kit.Button{Text: "停止", Variant: kit.ButtonLink, TestID: "rec-" + id + "-stop", OnPress: stop},
+		kit.Button{Text: "停止", Variant: kit.ButtonLink, TestID: prefix + "-stop", OnPress: stop},
 	}}
 }
 

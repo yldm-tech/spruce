@@ -1005,6 +1005,37 @@ func TestOverviewCleanFromADrillDownView(t *testing.T) {
 	}
 }
 
+// TestOverviewCleanAll: 概览's 全部清理 cleans the items of several sources in one clean, recorded as 清理建议 with its own first line.
+func TestOverviewCleanAll(t *testing.T) {
+	f := newOvFixture(t, ovOptions{})
+	o := f.start()
+	if err := o.CheckNow(); err != nil {
+		t.Fatal(err)
+	}
+	f.step()
+	var req cleanup.CleanRequest
+	for _, c := range o.State().Result.Scan.Categories {
+		req.CategoryIDs = append(req.CategoryIDs, c.ID)
+		for _, it := range c.Items {
+			req.ItemIDs = append(req.ItemIDs, it.ID)
+		}
+	}
+	if len(req.CategoryIDs) != 2 {
+		t.Fatalf("categories %v, want one per source", req.CategoryIDs)
+	}
+	out, err := o.Clean(t.Context(), req, CleanOrigin{All: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Result.Removed != 2 {
+		t.Errorf("removed %d, want both sources' items", out.Result.Removed)
+	}
+	runs := f.runs()
+	if len(runs) != 1 || runs[0].Kind != history.KindSmartScan || len(runs[0].Details) == 0 || !strings.HasPrefix(runs[0].Details[0], "全部清理：已清理 2 项，释放 ") {
+		t.Errorf("history %+v", runs)
+	}
+}
+
 // TestCleanWithDetailOf: the first Details line can be made from what the clean did.
 func TestCleanWithDetailOf(t *testing.T) {
 	c, store := newGatedCleanup(t, schedule.NewActivity(nil))

@@ -860,8 +860,11 @@ func (o *Overview) Clean(ctx context.Context, req cleanup.CleanRequest, origin C
 	return out, nil
 }
 
-// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：已清理 {n} 项，释放 {size}」 first, counted from what the clean did; a drill-down view's with its source's kind.
+// cleanOptions are how a clean for origin is recorded: a card's as 清理建议 with 「{Title}：已清理 {n} 项，释放 {size}」 first, counted from what the clean did, and 全部清理's the same with 全部清理 as its title; a drill-down view's with its source's kind.
 func (o *Overview) cleanOptions(r OverviewResult, origin CleanOrigin) CleanOptions {
+	if origin.All {
+		return CleanOptions{Kind: history.KindSmartScan, DetailOf: o.cardDetail("全部清理")}
+	}
 	if origin.Source != "" {
 		if kind, ok := cleanerKinds[CleanerID(origin.Source)]; ok && origin.Recommendation == "" {
 			return CleanOptions{Kind: kind}
@@ -873,14 +876,19 @@ func (o *Overview) cleanOptions(r OverviewResult, origin CleanOrigin) CleanOptio
 	opts := CleanOptions{Kind: history.KindSmartScan}
 	for _, rec := range r.Recommendations {
 		if rec.ID == origin.Recommendation {
-			title, windows := rec.Title, o.cfg.GOOS == "windows"
-			opts.DetailOf = func(res cleanup.CleanResult) string {
-				return fmt.Sprintf("%s：已清理 %d 项，释放 %s", title, res.Removed, format.BytesIn(res.Freed+res.Trashed, windows))
-			}
+			opts.DetailOf = o.cardDetail(rec.Title)
 			break
 		}
 	}
 	return opts
+}
+
+// cardDetail is the first Details line of a clean of 概览 titled title: 「{title}：已清理 {n} 项，释放 {size}」, counted from what the clean did.
+func (o *Overview) cardDetail(title string) func(cleanup.CleanResult) string {
+	windows := o.cfg.GOOS == "windows"
+	return func(res cleanup.CleanResult) string {
+		return fmt.Sprintf("%s：已清理 %d 项，释放 %s", title, res.Removed, format.BytesIn(res.Freed+res.Trashed, windows))
+	}
 }
 
 // dropLocked takes what a clean of cleaner handled out of the current result, when it is that instance's, as the instance itself forgets it: the items, and a command category whose command ran as a whole. The cards are derived again. o.mu is held.

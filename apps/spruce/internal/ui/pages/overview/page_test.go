@@ -734,6 +734,80 @@ func TestCardCleanSeenAfterComingBack(t *testing.T) {
 	}
 }
 
+// 全部清理 under the figure cleans every card's checked items but the command's in one clean, after one question with the plan; the cards it cleans show it as theirs, and what failed stays with its card.
+func TestCleanAll(t *testing.T) {
+	p := open(t, ready())
+	p.waitText("id:clean-all", "全部清理 4.5 GB…")
+	p.Press("id:clean-all")
+	p.WaitFor("id:all-confirm", wait)
+	p.WaitFor("id:all-confirm >> id:plan-permanent", wait)
+	p.WaitFor("id:all-confirm >> id:plan-trash", wait)
+	if p.Exists("id:all-confirm >> id:plan-commands") {
+		t.Error("全部清理 runs a command")
+	}
+	p.Press("id:confirm-cancel")
+	p.WaitForGone("id:all-confirm", wait)
+	if len(p.cleans()) != 0 {
+		t.Fatal("取消 cleaned")
+	}
+
+	logs := cleanup.ItemID(home + "/Library/Logs/a.log")
+	p.ov.CleanRelease = make(chan struct{})
+	p.ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{RunID: "r9", Undoable: true, Result: cleanup.CleanResult{Freed: 3200 * mb, Trashed: 1300 * mb, Removed: 6,
+			Failed: []cleanup.Failure{{CategoryID: "system-junk:logs", ItemID: logs, Reason: "没有权限"}}}}, nil
+	}
+	p.Press("id:clean-all")
+	p.WaitFor("id:all-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	c := p.cleans()[0]
+	if !c.Origin.All || c.Origin.Recommendation != "" || c.Origin.Source != "" {
+		t.Errorf("origin %+v", c.Origin)
+	}
+	if slices.Contains(c.Req.CategoryIDs, "dev-junk:tool-npm") || len(c.Req.ItemIDs) != 7 {
+		t.Errorf("request %+v", c.Req)
+	}
+	p.WaitFor("id:clean-all-progress", wait)
+	p.WaitFor("id:clean-all-stop", wait)
+	p.waitText("id:rec-app-caches-act", "正在删除…")
+	if !p.Find("id:rec-app-caches-act").Props.Busy {
+		t.Error("a card 全部清理 cleans is not busy")
+	}
+	if l := p.Find("id:rec-tool-npm-act").Props.Label; l != "正在清理另一项，完成后再试" || !p.disabled("id:rec-tool-npm-act") {
+		t.Errorf("the command card while 全部清理 runs: %q", l)
+	}
+	close(p.ov.CleanRelease)
+	p.ticking(func() bool { return p.toast() != nil })
+	if got := p.toast(); got.Text != "已释放 3.2 GB，移到废纸篓 1.3 GB，1 项未能处理" || got.UndoRun != "r9" || got.ViewRun != "r9" {
+		t.Errorf("toast %+v", got)
+	}
+	p.WaitForGone("id:clean-all-progress", wait)
+	p.Press("id:recs-more")
+	p.waitText("id:rec-logs-failed", "1 项未能处理")
+	if p.Exists("id:rec-app-caches-failed") {
+		t.Error("a failure counted on a card it is not of")
+	}
+}
+
+// 全部清理 shows only when it does more than one card's button, and only on a result that may be cleaned.
+func TestCleanAllOnlyWhenItHelps(t *testing.T) {
+	st := ready()
+	st.Result.Stale, st.Result.Actionable = true, false
+	p := open(t, st)
+	p.WaitFor("id:rec-app-caches", wait)
+	if p.Exists("id:clean-all") {
+		t.Error("全部清理 on a result that may not be cleaned")
+	}
+	one := ready()
+	one.Result.Recommendations = one.Result.Recommendations[:1]
+	p.set(one)
+	p.waitText("id:rec-app-caches-act", "删除…")
+	if p.Exists("id:clean-all") {
+		t.Error("全部清理 beside a single card")
+	}
+}
+
 // One big item reports nothing until it ends: the card's progress says how much it handles rather than 0/1.
 func TestCardProgressOfOneItem(t *testing.T) {
 	p := open(t, ready())

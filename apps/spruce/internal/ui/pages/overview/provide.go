@@ -10,11 +10,12 @@ import (
 	"spruce/apps/spruce/internal/ui/store"
 )
 
-// kept is what 概览 keeps in the app's scope from one visit to the next, besides what is checked (cleanflow.Kept): the cards open, what each card's last clean could not handle, and whether every card shows.
+// kept is what 概览 keeps in the app's scope from one visit to the next, besides what is checked (cleanflow.Kept): the cards open, what each card's last clean could not handle, whether every card shows, and the cards a running 全部清理 cleans.
 type kept struct {
 	open   *core.Signal[map[string]bool]
 	failed *core.Signal[map[string]failure]
 	more   *core.Signal[bool]
+	all    *core.Signal[[]string]
 }
 
 // failure is what a card's last clean could not handle: how many items, and the history run that tells why.
@@ -30,7 +31,7 @@ var keptKey = core.NewKey[*kept]("spruce.overview.kept", nil)
 func Provide(cx *core.Scope, d Deps) {
 	DepsKey.Provide(cx, d)
 	k := &kept{open: core.NewSignalFunc(cx, map[string]bool{}, nil), failed: core.NewSignalFunc(cx, map[string]failure{}, nil),
-		more: core.NewSignal(cx, false)}
+		more: core.NewSignal(cx, false), all: core.NewSignalFunc[[]string](cx, nil, nil)}
 	// What a card's last clean could not handle is told of the check it cleaned: a newer check lists those items again or finds them gone, so the counts go with it.
 	stores := store.Use(cx)
 	ov := stores.Overview

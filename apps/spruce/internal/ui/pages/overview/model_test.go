@@ -514,3 +514,45 @@ func TestCleanProgress(t *testing.T) {
 		}
 	}
 }
+
+// 全部清理 takes every card's checked items, merged by category in the cards' order, but leaves out a command's, which runs from its own card.
+func TestAllOf(t *testing.T) {
+	cat := func(id, command string, items ...string) cleanup.Category {
+		c := cleanup.Category{ID: id, Source: "system-junk", Selected: true, Command: command}
+		for _, it := range items {
+			c.Items = append(c.Items, cleanup.Item{ID: it, Size: 10, Selected: true})
+		}
+		return c
+	}
+	scan := cleanup.ScanResult{Categories: []cleanup.Category{cat("a", "", "1", "2", "3"), cat("b", "", "4"), cat("tool", "tool clean", "5")}}
+	recs := []advice.Recommendation{
+		{ID: "one", Categories: []string{"a"}, Items: []advice.ItemRef{ref("a", "1"), ref("a", "2")}},
+		{ID: "two", Categories: []string{"b", "a"}, Items: []advice.ItemRef{ref("b", "4"), ref("a", "3")}},
+		{ID: "cmd", Action: advice.ActionCommand, Categories: []string{"tool"}, Items: []advice.ItemRef{ref("tool", "5")}},
+		{ID: "none", Categories: []string{"b"}, Items: []advice.ItemRef{ref("b", "4")}},
+	}
+	ch := cleanflow.Choice{Sel: cleanflow.NothingSelected}.Reconcile(scan.Categories)
+	// The card two leaves 4 unchecked, which the card none (over the same item) then shares.
+	ch = ChangeCard(ch, recs[1], scan, cleanflow.SetItem(CardPick(recs[1], ch, scan).Sel, scan.Categories[1], "4", false))
+	all := AllOf(recs, ch, scan)
+	if !slices.Equal(all.Cards, []string{"one", "two"}) {
+		t.Errorf("cards %v", all.Cards)
+	}
+	ids := make([]string, len(all.Categories))
+	for i, c := range all.Categories {
+		ids[i] = c.ID
+		if c.ID == "a" && len(c.Items) != 3 {
+			t.Errorf("category a merged %+v", c.Items)
+		}
+	}
+	if !slices.Equal(ids, []string{"a"}) {
+		t.Errorf("categories %v", ids)
+	}
+	if got := cleanflow.Refs(all.Categories, all.Sel); !slices.Equal(got, []advice.ItemRef{ref("a", "1"), ref("a", "2"), ref("a", "3")}) {
+		t.Errorf("refs %v", got)
+	}
+	failed := []cleanup.Failure{{CategoryID: "a", ItemID: "3"}, {CategoryID: "a", ItemID: "1"}, {CategoryID: "a", ItemID: "2"}, {CategoryID: "x", ItemID: "9"}}
+	if got := FailedByCard(recs, all.Cards, failed); !reflect.DeepEqual(got, map[string]int{"one": 2, "two": 1}) {
+		t.Errorf("failed by card %v", got)
+	}
+}

@@ -450,6 +450,66 @@ func cardCategories(scan cleanup.ScanResult, r advice.Recommendation) []cleanup.
 	return out
 }
 
+// CleanAll is what 全部清理 cleans: the checked items of every card in one selection over the cards' categories, each once, merged in the cards' order. A tool's command is left out: it runs a program, which its own card asks about. Cards are the cards with something in it.
+type CleanAll struct {
+	Categories []cleanup.Category
+	Sel        cleanflow.Selection
+	Cards      []string
+}
+
+// AllOf is 全部清理 over the cards recs, with what ch checks among their items in scan.
+func AllOf(recs []advice.Recommendation, ch cleanflow.Choice, scan cleanup.ScanResult) CleanAll {
+	all := CleanAll{Sel: cleanflow.Selection{}}
+	at := map[string]int{}
+	for _, r := range recs {
+		pick := CardPick(r, ch, scan)
+		in := false
+		for _, c := range cardCategories(scan, r) {
+			ids := pick.Sel[c.ID]
+			if c.Command != "" || len(ids) == 0 {
+				continue
+			}
+			in = true
+			items := c.Items
+			i, ok := at[c.ID]
+			if !ok {
+				i, at[c.ID] = len(all.Categories), len(all.Categories)
+				c.Items, c.Size = nil, 0
+				all.Categories = append(all.Categories, c)
+				all.Sel[c.ID] = map[string]struct{}{}
+			}
+			merged := &all.Categories[i]
+			for _, it := range items {
+				if _, checked := ids[it.ID]; checked && !slices.ContainsFunc(merged.Items, func(m cleanup.Item) bool { return m.ID == it.ID }) {
+					merged.Items = append(merged.Items, it)
+					merged.Size += it.Size
+					all.Sel[c.ID][it.ID] = struct{}{}
+				}
+			}
+		}
+		if in {
+			all.Cards = append(all.Cards, r.ID)
+		}
+	}
+	return all
+}
+
+// FailedByCard counts the failures of a 全部清理 of cards by the card whose item failed, leaving out cards with none.
+func FailedByCard(recs []advice.Recommendation, cards []string, failed []cleanup.Failure) map[string]int {
+	out := map[string]int{}
+	for _, r := range recs {
+		if !slices.Contains(cards, r.ID) {
+			continue
+		}
+		for _, f := range failed {
+			if slices.Contains(r.Items, advice.ItemRef{CategoryID: f.CategoryID, ItemID: f.ItemID}) {
+				out[r.ID]++
+			}
+		}
+	}
+	return out
+}
+
 // Review is what starts unchecked in a check (the Trash aside): how many items, their size, and the sources they come from, in Sources order.
 type Review struct {
 	Count   int
