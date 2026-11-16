@@ -6,4 +6,6 @@ appearance: dark
 build:
   output: build
   targets: [macos_arm64, macos_x64, windows_x64, windows_arm64]
+# The repository whose GitHub releases the install scripts (install.sh, install.ps1) download from.
+release: { github: yldm-tech/spruce }
 # Releases are signed in CI, not here: .github/workflows/package.yml passes the Developer ID identity to nsgo build -sign and the App Store Connect API key in NSGO_NOTARY_KEY*, so local builds stay signed ad hoc and need no secrets. The Windows executables and installers are not signed yet (nsgo has no Authenticode step).

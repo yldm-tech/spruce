@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # changelog-test.sh
 #
-# Checks changelog.sh on a repository of its own, made in a temporary folder: the section add writes from the commits since the previous version tag (pull requests by their titles, scopes that are not the app left out, reverts settled), that it puts a section above those of older versions and keeps one already there, the line it writes for a version with nothing to list, and that notes prints a section the way the release reads it.
+# Checks changelog.sh on a repository of its own, made in a temporary folder: the section add writes from the commits since the previous version tag (pull requests by their titles, scopes that are not the app left out, reverts settled), that it puts a section above those of older versions and keeps one already there, the line it writes for a version with nothing to list, that notes prints a section the way the release reads it, and that next-version.sh releases nothing for the scopes changelog.sh leaves out.
 set -euo pipefail
 
-script=$(cd "$(dirname "$0")" && pwd)/changelog.sh
+scripts=$(cd "$(dirname "$0")" && pwd)
+script=$scripts/changelog.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
@@ -69,15 +70,16 @@ commit "revert: feat(films): add a sort menu"
 commit "revert: feat(films): add a filter"
 commit "not a conventional commit"
 commit "fix: stop on the last frame"
-commit "feat(deps): redesign the landing page"
+commit "feat(site): redesign the landing page"
+commit "feat(site)!: move the landing page to its own domain"
 commit "fix(deps): bump a library"
 commit "fix(deps): keep the window across reloads"
 branch side "fix: from a merged branch"
 merge side "Merge branch side"
 branch volume "feat(player): add volume control" "fix(player): address review findings" "feat(media)!: drop the old cache"
 merge volume "Merge pull request #2 from example/volume" "feat(player): add volume control and shortcuts"
-branch icon "feat(deps): rework the page" "feat(brand): replace the app icon"
-merge icon "Merge pull request #3 from example/icon" "feat(deps): rework the page and the app icon"
+branch icon "feat(site): rework the page" "feat(brand): replace the app icon"
+merge icon "Merge pull request #3 from example/icon" "feat(site): rework the page and the app icon"
 
 "$script" add v0.2.0
 want=$(
@@ -150,5 +152,33 @@ fi
 if "$script" add 1.2 2>/dev/null; then
   fail "add accepted 1.2 as a version"
 fi
+
+# next-version.sh, on a repository of its own: the scopes changelog.sh leaves out of the notes release nothing, breaking or not, while a change to the app still does.
+expect "the same skipped scopes" "$(grep '^skip_scopes=' "$scripts/changelog.sh")" "$(grep '^skip_scopes=' "$scripts/next-version.sh")"
+mkdir "$work/next"
+cd "$work/next"
+git init -q
+git config user.name test
+git config user.email test@example.com
+git config commit.gpgsign false
+git config tag.gpgsign false
+commit "feat: first"
+git tag -a v0.1.0 -m v0.1.0
+commit "feat(site): redesign the landing page"
+commit "feat(site)!: move the landing page to its own domain"
+commit "fix(site): fix a link" "BREAKING CHANGE: the old address is gone"
+commit "fix(deps): bump a library"
+branch landing "feat(site): add a download section" "docs: explain the site"
+merge landing "Merge pull request #4 from example/landing" "feat(site): add a download section"
+expect "website and dependencies only" "" "$("$scripts/next-version.sh" HEAD)"
+commit "fix(cleanup): keep the selection"
+expect "a fix to the app" "v0.1.1" "$("$scripts/next-version.sh" HEAD)"
+commit "feat(deps)!: drop an old library"
+expect "a breaking dependency bump" "v0.1.1" "$("$scripts/next-version.sh" HEAD)"
+commit "feat: add a filter"
+expect "a feature of the app" "v0.2.0" "$("$scripts/next-version.sh" HEAD)"
+commit "feat(space)!: rework the treemap"
+expect "a breaking change to the app" "v0.2.0" "$("$scripts/next-version.sh" HEAD)"
+expect "a forced bump" "v1.0.0" "$("$scripts/next-version.sh" HEAD major)"
 
 echo "changelog-test: ok"

@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-unformatted=$(gofmt -l $(git ls-files '*.go'))
+unformatted=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
 if [ -n "$unformatted" ]; then
   echo "check: gofmt would change:" >&2
   echo "$unformatted" >&2
