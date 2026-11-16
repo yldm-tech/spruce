@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -38,9 +39,6 @@ func App(d Deps) func(app *core.Scope) {
 		for _, work := range d.Background {
 			go work(ctx)
 		}
-		if runtime.GOOS == "darwin" {
-			desktop.SetApplicationMenu(app, applicationMenu())
-		}
 
 		// The root view keeps the window's frame here, so the app's own OnQuit, which outlives the window, writes it.
 		var frame core.WindowFrame
@@ -59,12 +57,19 @@ func App(d Deps) func(app *core.Scope) {
 		if host == nil {
 			host = &desktopHost{app: app, set: set}
 		}
+		// busy reports a clean, an uninstall, a deletion or a maintenance run of this process, which quitting stops after its current item.
+		busy := func() bool {
+			return core.Untracked(app, stores.Overview.State).Phase == spruceapp.OverviewCleaning || d.Activity != nil && d.Activity.Cleaning()
+		}
 		keepInTray := func() bool {
 			return runtime.GOOS == "darwin" && core.Untracked(app, stores.Settings.Loaded) && core.Untracked(app, stores.Settings.Value).General.KeepInTray
 		}
+		asking := core.NewSignal(app, false)
 		w := &windows{host: host, nav: navigator, keepInTray: keepInTray, view: func(cx *core.Scope) core.Node {
-			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f })
-		}, blocked: func() bool { return core.Untracked(app, stores.Block.Blocked) }}
+			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f }, asking, app.Quit)
+		}, blocked: func() bool { return core.Untracked(app, stores.Block.Blocked) }, busy: busy, asking: asking, end: app.Quit}
+		// The menu bar on macOS; on Windows, where the window has no menu bar, its shortcuts alone.
+		app.Effect(func() { desktop.SetApplicationMenu(app, applicationMenu(navigator, stores.Block.Blocked(), w.quit)) })
 
 		// Closing the window ends the app unless it is to stay in the menu bar.
 		app.Effect(func() {
@@ -133,13 +138,13 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 	tray := desktop.NewTray(app, desktop.TrayOptions{Icon: d.TrayIcon, Template: true, Tooltip: trayTooltip(nil), Menu: func() []desktop.MenuItem {
 		st := core.Untracked(app, stores.Overview.State)
 		s := TrayState{Disk: st.Disk, Checking: st.Phase == spruceapp.OverviewChecking, HasResult: st.Result != nil,
-			Cleaning: st.Phase == spruceapp.OverviewCleaning || d.Activity != nil && d.Activity.Cleaning(),
+			Cleaning: w.active(),
 			RulesOn:  len(rules.Enabled(core.Untracked(app, stores.Settings.Value).Automation)),
 			Open:     func() { w.show("") },
 			Overview: func() { w.show(nav.Overview) },
 			Check:    func() { stores.Overview.CheckNow(nil) },
 			Auto:     w.automation,
-			Quit:     app.Quit,
+			Quit:     w.quit,
 		}
 		if st.Result != nil {
 			s.Headline = st.Result.Headline
@@ -168,19 +173,32 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 	})
 }
 
-// applicationMenu is the macOS menu bar: the app menu, 编辑 and 窗口, with the platform's items and shortcuts (Cmd+Q, Cmd+H, Cmd+W, Cmd+M, ...).
-func applicationMenu() []desktop.MenuItem {
+// applicationMenu is the application menu: the app menu with 设置… and 退出 Spruce, which asks first while a run is active (quit); 编辑; 显示 with what the page shown registered (nav.UseCommands), 重新检查 and 查找; 前往 with the sidebar's pages on Cmd+1 to Cmd+7 and 返回 from a drill-down view; and 窗口. Everything that changes the page is disabled while an overlay holds the sidebar (blocked), as the sidebar is. Reading it subscribes to the page shown and its commands.
+func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.MenuItem {
 	sep := desktop.MenuItem{Separator: true}
+	cmds := n.Commands()
+	refreshOff := blocked || cmds.Refresh == nil || cmds.Busy != nil && cmds.Busy()
+	goTo := make([]desktop.MenuItem, 0, len(nav.Pages)+2)
+	for i, r := range nav.Pages {
+		goTo = append(goTo, desktop.MenuItem{Label: r.Meta().Title, Shortcut: "mod+" + strconv.Itoa(i+1), Disabled: blocked, OnSelect: func() { n.Go(r) }})
+	}
+	goTo = append(goTo, sep, desktop.MenuItem{Label: "返回", Shortcut: "mod+[", Disabled: blocked || n.Current().Meta().Parent == "", OnSelect: n.Back})
 	return []desktop.MenuItem{
 		{Label: "Spruce", Items: []desktop.MenuItem{
 			{Role: desktop.MenuAbout}, sep,
+			{Label: "设置…", Shortcut: "mod+,", Disabled: blocked, OnSelect: func() { n.Go(nav.Settings) }}, sep,
 			{Role: desktop.MenuHide}, {Role: desktop.MenuHideOthers}, {Role: desktop.MenuShowAll}, sep,
-			{Role: desktop.MenuQuit},
+			{Label: "退出 Spruce", Shortcut: "mod+q", OnSelect: quit},
 		}},
 		{Label: "编辑", Items: []desktop.MenuItem{
 			{Role: desktop.MenuUndo}, {Role: desktop.MenuRedo}, sep,
 			{Role: desktop.MenuCut}, {Role: desktop.MenuCopy}, {Role: desktop.MenuPaste}, {Role: desktop.MenuSelectAll},
 		}},
+		{Label: "显示", Items: []desktop.MenuItem{
+			{Label: "重新检查", Shortcut: "mod+r", When: core.MenuNotEditing, Disabled: refreshOff, OnSelect: cmds.Refresh},
+			{Label: "查找", Shortcut: "mod+f", Disabled: blocked || cmds.Find == nil, OnSelect: cmds.Find},
+		}},
+		{Label: "前往", Items: goTo},
 		{Label: "窗口", Items: []desktop.MenuItem{
 			{Role: desktop.MenuMinimize}, {Role: desktop.MenuZoom}, {Role: desktop.MenuToggleFullScreen}, sep,
 			{Role: desktop.MenuClose},

@@ -82,6 +82,23 @@ type windows struct {
 	hidden bool
 	// blocked reports, without subscribing, whether an overlay holds the sidebar (store.Block): a clean, an uninstall, a deletion or a maintenance run under its overlay, or a dialog. The menu bar and the notifications stay reachable meanwhile, and changing the page then would end the page's work, so they only bring the window forward. Nil is never blocked.
 	blocked func() bool
+	// busy reports, without subscribing, whether a clean, an uninstall, a deletion or a maintenance run is active, which quitting would stop after its current item; nil is never busy. Quitting or closing the window (when that ends the app) then asks first: asking is set while the window asks (Root's quitConfirm), whose 停止并退出 calls end.
+	busy   func() bool
+	asking *core.Signal[bool]
+	end    func()
+}
+
+// active reports whether a run is active now (busy).
+func (w *windows) active() bool { return w.busy != nil && w.busy() }
+
+// quit ends Spruce for 退出 Spruce in the menu bar and the menu bar icon's menu; while a run is active it shows the window asking first instead.
+func (w *windows) quit() {
+	if !w.active() {
+		w.end()
+		return
+	}
+	w.show("")
+	w.asking.Set(true)
 }
 
 // held reports whether an overlay holds the sidebar now.
@@ -106,9 +123,13 @@ func (w *windows) show(route nav.Route) {
 	}
 }
 
-// closing handles the user closing the main window: with keepInTray the window hides and the Dock icon goes, keeping the page and whatever runs on it (the page area mounts the page again as the route changes, which would end its work), except 健康监测, whose sampling runs only while it shows; otherwise the window closes, which ends the app.
+// closing handles the user closing the main window: with keepInTray the window hides and the Dock icon goes, keeping the page and whatever runs on it (the page area mounts the page again as the route changes, which would end its work), except 健康监测, whose sampling runs only while it shows; otherwise the window closes, which ends the app, unless a run is active: then it stays and asks first, as quit does.
 func (w *windows) closing(cancel func()) {
 	if !w.keepInTray() {
+		if w.active() {
+			cancel()
+			w.asking.Set(true)
+		}
 		return
 	}
 	cancel()

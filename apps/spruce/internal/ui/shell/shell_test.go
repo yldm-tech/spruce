@@ -9,6 +9,7 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/schedule"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/history"
@@ -199,4 +200,72 @@ func TestNotificationsNeedThePermissionAndOpenWhatTheyAreAbout(t *testing.T) {
 	a.WaitUntil(wait, func() bool { return len(a.Notifications) == 1 && a.Notifications[0].ID == "auto-summary:2026-W46" })
 	a.PressNotification("auto-summary:2026-W46")
 	a.WaitFor("role:header 操作历史", wait)
+}
+
+func TestEscapeLeavesADrillDownView(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), nav.SystemJunk)
+	a.WaitFor("id:back", wait)
+	a.Key("escape")
+	a.WaitFor("role:header 概览", wait)
+	// On a sidebar page Escape does nothing.
+	a.Key("escape")
+	a.Find("role:header 概览")
+}
+
+func TestMenuGoesToPages(t *testing.T) {
+	a, _ := startShell(t, storefake.New(t.TempDir()), "")
+	a.ChooseMenu("前往", "操作历史")
+	a.WaitFor("role:header 操作历史", wait)
+	if !a.Find("id:nav-history").Props.Selected {
+		t.Error("the sidebar does not light 操作历史")
+	}
+	a.ChooseMenu("Spruce", "设置…")
+	a.WaitFor("role:header 设置", wait)
+}
+
+// While a clean runs, 退出 Spruce asks first and keeps Spruce up on 继续清理; the question holds the sidebar and the menu's pages like any dialog.
+func TestQuitDuringACleanAsks(t *testing.T) {
+	activity := schedule.NewActivity(nil)
+	_, end, err := activity.BeginClean(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := shell.Deps{Stores: storefake.New(t.TempDir()).Deps(), Start: nav.History, Activity: activity,
+		History: history.Deps{Catalog: historyfake.Catalog(maintenancefake.MacCatalog())}}
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820))
+	a.WaitFor("id:sidebar", wait)
+
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Find("id:quit-confirm >> text:正在清理")
+	if a.Quits != 0 {
+		t.Fatal("quit while a clean runs without asking")
+	}
+	if a.Enabled("id:nav-overview") {
+		t.Error("the sidebar is reachable under the question")
+	}
+	for _, m := range a.Menu {
+		if m.Label == "前往" && !m.Items[0].Disabled {
+			t.Error("前往 is enabled under the question")
+		}
+	}
+	a.Press("id:confirm-cancel")
+	a.WaitForGone("id:quit-confirm", wait)
+	if a.Quits != 0 {
+		t.Error("继续清理 quit")
+	}
+
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Press("id:confirm-ok")
+	if a.Quits != 1 {
+		t.Errorf("停止并退出 quit %d times", a.Quits)
+	}
+
+	// With nothing running it quits at once.
+	end()
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	if a.Quits != 2 {
+		t.Errorf("退出 with nothing running: %d quits", a.Quits)
+	}
 }

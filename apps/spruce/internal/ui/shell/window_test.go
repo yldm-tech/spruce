@@ -73,7 +73,8 @@ func newWindows(t *testing.T, start nav.Route, keep bool) (*windows, *fakeHost) 
 	t.Cleanup(root.Dispose)
 	h := &fakeHost{}
 	w := &windows{host: h, nav: nav.NewNavigator(root, start), keepInTray: func() bool { return keep },
-		view: func(*core.Scope) core.Node { return core.View{} }}
+		view: func(*core.Scope) core.Node { return core.View{} }, asking: core.NewSignal(root, false),
+		end: func() { h.calls = append(h.calls, "quit") }}
 	return w, h
 }
 
@@ -210,5 +211,59 @@ func TestExternalEntriesKeepTheBlockedPage(t *testing.T) {
 	w.automation()
 	if got := w.nav.Current(); got != nav.Settings {
 		t.Errorf("unblocked: page %q, want settings", got)
+	}
+}
+
+// While a clean runs, closing the window when that ends the app, or 退出 Spruce, keeps Spruce up and asks first; with nothing running both go ahead.
+func TestQuittingDuringARunAsksFirst(t *testing.T) {
+	w, h := newWindows(t, nav.Overview, false)
+	running := true
+	w.busy = func() bool { return running }
+	w.show("")
+	h.take()
+	if h.close() {
+		t.Fatal("the window closed while a clean runs")
+	}
+	if !w.asking.Get() {
+		t.Error("closing during a clean did not ask")
+	}
+	if got := h.take(); slices.Contains(got, "quit") {
+		t.Errorf("closing during a clean quit: %v", got)
+	}
+
+	w.asking.Set(false)
+	w.quit()
+	if got := h.take(); slices.Contains(got, "quit") || !slices.Contains(got, "focus") {
+		t.Errorf("退出 during a clean did %v, want the window shown and no quit", got)
+	}
+	if !w.asking.Get() {
+		t.Error("退出 during a clean did not ask")
+	}
+
+	w.asking.Set(false)
+	running = false
+	w.quit()
+	if got := h.take(); !slices.Equal(got, []string{"quit"}) {
+		t.Errorf("退出 with nothing running did %v, want quit", got)
+	}
+	if !h.close() || w.asking.Get() {
+		t.Error("closing with nothing running did not close, or asked")
+	}
+}
+
+// Kept in the menu bar, closing only hides the window, so a running clean goes on without a question.
+func TestClosingIntoTheMenuBarDuringARunDoesNotAsk(t *testing.T) {
+	w, h := newWindows(t, nav.Overview, true)
+	w.busy = func() bool { return true }
+	w.show("")
+	h.take()
+	if h.close() {
+		t.Fatal("the window closed with keepInTray on")
+	}
+	if w.asking.Get() {
+		t.Error("hiding the window asked about the clean")
+	}
+	if got, want := h.take(), []string{"hide", "no-dock"}; !slices.Equal(got, want) {
+		t.Errorf("closing %v, want %v", got, want)
 	}
 }
