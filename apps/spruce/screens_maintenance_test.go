@@ -37,12 +37,26 @@ func screensApp(t *testing.T, fakes *storefake.Services, d shell.Deps, page stri
 	return a
 }
 
-// TestScreensMaintenance shows the 维护 page idle, with the CPU alert, running and done, for comparison with the design.
+// TestScreensMaintenance shows the 维护 page idle, with the CPU alert, running and done, then a second run stopping and stopped with the tasks it left, for comparison with the design.
 func TestScreensMaintenance(t *testing.T) {
-	release := make(chan struct{})
+	release, stopped := make(chan struct{}), make(chan struct{})
+	runs := 0
 	svc := &maintenancefake.Service{Tasks: maintenancefake.MacCatalog(),
 		OnRun: func(ctx context.Context, ids []string, progress func(app.ProgressEvent)) (app.RunSummary, error) {
+			runs++
 			progress(app.ProgressEvent{Kind: app.ProgressStarted, TaskID: "dns", Done: 0, Total: len(ids)})
+			if runs > 1 {
+				<-ctx.Done()
+				<-stopped
+				sum := maintenancefake.Summary(
+					maintenancefake.Result("dns", taskresult.Skipped, "已停止，无法确认是否执行"),
+					maintenancefake.Result("quicklook", taskresult.Skipped, "维护已中断，未执行"),
+					maintenancefake.Result("icons", taskresult.Skipped, "维护已中断，未执行"),
+					maintenancefake.Result("launchservices", taskresult.Skipped, "维护已中断，未执行"),
+				)
+				sum.Interrupted = true
+				return sum, nil
+			}
 			select {
 			case <-release:
 			case <-ctx.Done():
@@ -72,6 +86,17 @@ func TestScreensMaintenance(t *testing.T) {
 	close(release)
 	a.WaitFor("id:done", 10*time.Second)
 	a.Screenshot("maintenance-done")
+	a.Press("id:done-close")
+	a.WaitForGone("id:done", 10*time.Second)
+
+	a.Press("id:run")
+	a.WaitFor("id:run-overlay >> text:刷新 DNS 缓存 · 已完成 0/4", 10*time.Second)
+	a.Press("id:run-overlay >> id:overlay-cancel")
+	a.WaitFor("id:run-overlay >> text:正在停止…", 10*time.Second)
+	a.Screenshot("maintenance-stopping")
+	close(stopped)
+	a.WaitFor("id:done >> id:rerun", 10*time.Second)
+	a.Screenshot("maintenance-stopped")
 	a.Press("id:done-close")
 	a.WaitForGone("id:done", 10*time.Second)
 }
