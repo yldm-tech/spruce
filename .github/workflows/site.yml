@@ -1,6 +1,6 @@
 name: Site
 
-# Builds the landing page, spruce.yldm.ai, with apps/site (TanStack Start prerendered to static files, built with Vite+) and deploys it to GitHub Pages. It runs on GitHub-hosted runners, named as literal labels, so that no setting can send it to another machine.
+# Builds the landing page, spruce.yldm.ai, with apps/site (TanStack Start prerendered to static files, built with Vite+) and deploys it to GitHub Pages. It runs on GitHub-hosted runners, named as literal labels rather than from a variable.
 #
 # Actions are pinned to commit SHAs with the tag in a trailing comment. A tag is a moving pointer its owner can repoint, and the deploy job runs with write scopes.
 on:
