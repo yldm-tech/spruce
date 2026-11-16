@@ -200,7 +200,7 @@ func macLeftovers(cx *core.Scope, s *State, current func() app.UninstallApp) cor
 				},
 				Checked:  s.Checked.Get,
 				OnToggle: s.Toggle,
-				OnSet:    func(set map[string]bool) { s.Checked.Set(set) },
+				OnSet:    s.SetChecked,
 				OnReveal: s.Reveal,
 				Windows:  false,
 			}

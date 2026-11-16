@@ -1,6 +1,7 @@
 package uninstall_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
+	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/uninstall"
 	"spruce/apps/spruce/internal/ui/pages/uninstall/uninstallfake"
 	"spruce/apps/spruce/internal/ui/store"
@@ -50,21 +52,67 @@ func macService() *uninstallfake.Service {
 
 type page struct {
 	*nsgotest.App
-	svc    *uninstallfake.Service
-	files  *uninstallfake.Files
-	stores *store.Stores
+	svc      *uninstallfake.Service
+	files    *uninstallfake.Files
+	stores   *store.Stores
+	overview *storefake.Overview
+	nav      *nav.Navigator
+	// shown is whether the page shows: the tests that leave it and come back set it.
+	shown *core.Signal[bool]
+	root  *core.Scope
 }
 
 func start(t *testing.T, svc *uninstallfake.Service, platform uninstall.Platform, opts ...nsgotest.Option) *page {
 	t.Helper()
+	return startWith(t, svc, svc, platform, opts...)
+}
+
+// startWith starts the page over service, which may wrap svc to answer some calls itself.
+func startWith(t *testing.T, service uninstall.Service, svc *uninstallfake.Service, platform uninstall.Platform, opts ...nsgotest.Option) *page {
+	t.Helper()
 	p := &page{svc: svc, files: &uninstallfake.Files{}}
 	fakes := storefake.New(t.TempDir())
+	p.overview = storefake.NewOverview(app.OverviewState{})
+	fakes.Overview = p.overview
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
-		uninstall.DepsKey.Provide(cx, uninstall.Deps{Uninstall: svc, Files: p.files, Platform: platform})
-		return uninstall.Page(cx)
-	}, append([]nsgotest.Option{nsgotest.Size(1052, 820)}, opts...)...)
+		p.nav = nav.NewNavigator(cx, nav.Uninstall)
+		nav.Key.Provide(cx, p.nav)
+		uninstall.Provide(cx, uninstall.Deps{Uninstall: service, Files: p.files, Platform: platform})
+		p.shown, p.root = core.NewSignal(cx, true), cx
+		return core.Show{When: p.shown.Get, Then: uninstall.Page}
+	}, append([]nsgotest.Option{nsgotest.Size(1052, 820), desktop(platform)}, opts...)...)
 	return p
+}
+
+// show shows the page or takes it away, as the sidebar does.
+func (p *page) show(on bool) {
+	p.Post(func() { p.shown.Set(on) })
+	if on {
+		p.waitList()
+	} else {
+		p.WaitForGone("id:uninstall-page", wait)
+	}
+}
+
+// toast is the toast's text and its 撤销 run, "" for none.
+func (p *page) toast() (text, undo string) {
+	t := p.stores.Toasts.Current()
+	if t == nil {
+		return "", ""
+	}
+	return t.Text, t.UndoRun
+}
+
+func (p *page) appsCalls() int { n, _, _, _ := p.svc.Calls(); return n }
+
+// desktop is the environment of a desktop of platform, where a press on a row picks it and Tab moves the focus.
+func desktop(platform uninstall.Platform) nsgotest.Option {
+	os := core.OSMacOS
+	if platform == uninstall.PlatformWindows {
+		os = core.OSWindows
+	}
+	return nsgotest.Environment(core.Environment{OS: os, Idiom: core.IdiomDesktop})
 }
 
 // settle waits until cond holds, moving the manual clock so the batched details and the throttled progress come through.
@@ -84,10 +132,12 @@ func (p *page) waitTicking(selector string) {
 
 func (p *page) waitList() { p.WaitFor("id:app-list", wait) }
 
-// rows are the names of the list's rows, in order.
+// rows are the names of the list's rows, top to bottom: the list's cells, each in a slot it moves, keep their place in the tree.
 func (p *page) rows() []string {
+	views := p.Query("id:app-list >> role:option")
+	slices.SortStableFunc(views, func(a, b *nsgotest.View) int { return cmp.Compare(a.Parent.Frame.Origin.Y, b.Parent.Frame.Origin.Y) })
 	var out []string
-	for _, v := range p.Query("id:app-list >> role:option") {
+	for _, v := range views {
 		out = append(out, v.Props.Label)
 	}
 	return out
@@ -158,8 +208,7 @@ func TestListShowsTheStreamedDetailsSearchesAndSorts(t *testing.T) {
 }
 
 func TestArrowKeysMoveTheSelection(t *testing.T) {
-	// Tab moves the focus on macOS.
-	p := start(t, macService(), uninstall.PlatformMac, nsgotest.Environment(core.Environment{OS: core.OSMacOS}))
+	p := start(t, macService(), uninstall.PlatformMac)
 	p.waitList()
 	// Tab goes from the search field over the three orders to the list.
 	p.Focus("id:search")
@@ -190,18 +239,96 @@ func TestArrowKeysMoveTheSelection(t *testing.T) {
 	}
 }
 
-func TestArrowKeysWaitForTheListsFocus(t *testing.T) {
+func TestArrowKeysWaitForTheListOrTheSearch(t *testing.T) {
 	p := start(t, macService(), uninstall.PlatformMac)
 	p.waitList()
 	p.Key("down")
 	if got := p.selected(); got != "" {
 		t.Fatalf("selected %q without the list's focus", got)
 	}
-	// On macOS the search field leaves ↑ and ↓ to the caret.
+	// The search field takes ↑ and ↓ on macOS too: a search is followed by the arrows.
 	p.Focus("id:search")
 	p.Key("down")
-	if got := p.selected(); got != "" {
-		t.Fatalf("selected %q from the search field on macOS", got)
+	p.Key("down")
+	if got := p.selected(); got != "Foo" {
+		t.Fatalf("selected %q from the search field", got)
+	}
+	p.Key("up")
+	if got := p.selected(); got != "Bar" {
+		t.Fatalf("selected %q", got)
+	}
+}
+
+func TestSearchFieldReturnPicksTheFirstMatchAndEscapeClears(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	p.Type("id:search", "run")
+	p.WaitUntil(wait, func() bool { return len(p.rows()) == 1 })
+	p.Submit("id:search")
+	if got := p.selected(); got != "Runner" {
+		t.Fatalf("selected %q after Return", got)
+	}
+	// Return leaves the field, as a single-line field does; ⌘⌫ then goes on to 卸载.
+	p.Focus("id:search")
+	p.Key("escape")
+	p.WaitUntil(wait, func() bool { return len(p.rows()) == 3 })
+	if got := p.Find("id:search").Text; got != "" {
+		t.Errorf("search %q after Escape", got)
+	}
+}
+
+func TestFindFocusesTheSearchAndRefreshReadsTheListAgain(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	c := p.nav.Commands()
+	if c.Find == nil || c.Refresh == nil {
+		t.Fatal("the page registered no 查找 or 重新检查")
+	}
+	p.Post(c.Find)
+	p.WaitUntil(wait, func() bool { return p.Find("id:search").Focused })
+	before := p.appsCalls()
+	p.Post(c.Refresh)
+	p.WaitUntil(wait, func() bool { return p.appsCalls() == before+1 })
+}
+
+func TestTheListTakesTheKeysAfterAPress(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Bar")
+	// Typing a name goes to it.
+	p.Key("r")
+	if got := p.selected(); got != "Runner" {
+		t.Fatalf("selected %q after typing", got)
+	}
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	// Return asks to uninstall the picked app, as ⌘⌫ does.
+	p.Key("enter")
+	p.WaitFor("id:confirm", wait)
+	p.Find("id:confirm >> text:卸载「Foo」")
+	p.Press("id:confirm-cancel")
+	p.WaitForGone("id:confirm", wait)
+	p.Key("mod+backspace")
+	p.WaitFor("id:confirm", wait)
+	// Under the confirmation the arrows do not move the selection.
+	p.Key("down")
+	if got := p.selected(); got != "Foo" {
+		t.Errorf("selected %q under the confirmation", got)
+	}
+}
+
+func TestASearchThatHidesThePickedAppPicksTheFirstMatch(t *testing.T) {
+	p := start(t, macService(), uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Bar")
+	p.Type("id:search", "foo")
+	p.WaitUntil(wait, func() bool { return p.selected() == "Foo" })
+	p.WaitFor("id:detail >> role:header Foo", wait)
+	p.Clear("id:search")
+	p.Type("id:search", "zzz")
+	p.WaitFor("text:选择一个应用", wait)
+	if p.Enabled("id:uninstall") {
+		t.Error("卸载 is on for an app the search hides")
 	}
 }
 
@@ -294,28 +421,40 @@ func TestUninstallsTheAppWithTheCheckedLeftovers(t *testing.T) {
 	p.waitTicking("id:removing >> text:已处理 1/2 · 已释放 100 MB")
 
 	gen := p.stores.Trash.Generation()
-	apps, _, _, _ := svc.Calls()
-	finish <- app.UninstallOutcome{App: "Foo", BundleRemoved: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 120_000_000, Removed: 2,
-		Categories: []cleanup.CategoryOutcome{
-			{CategoryID: "app", Title: "app", Removed: 1, Trashed: 100_000_000},
-			{CategoryID: "support", Title: "support", Removed: 1, Trashed: 20_000_000},
-		}})}
-	p.waitTicking("id:done")
-	p.Find("id:done >> text:已卸载「Foo」")
-	want := []string{"「Foo」已移到废纸篓", "相关文件：1 项已移到废纸篓", "移到废纸篓的项目在清空废纸篓后才会释放空间"}
-	if got := p.doneLines(); !slices.Equal(got, want) {
-		t.Errorf("lines %q", got)
+	apps := p.appsCalls()
+	svc.SetList(slices.DeleteFunc(macApps(), func(a app.UninstallApp) bool { return a.ID == "foo" }), nil)
+	finish <- app.UninstallOutcome{App: "Foo", BundleRemoved: true, RunID: "run-1", Undoable: true,
+		Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 120_000_000, Removed: 2,
+			Categories: []cleanup.CategoryOutcome{
+				{CategoryID: "app", Title: "app", Removed: 1, Trashed: 100_000_000},
+				{CategoryID: "support", Title: "support", Removed: 1, Trashed: 20_000_000},
+			}})}
+	// A whole uninstall ends in the toast, with 撤销, not in a card to close.
+	p.WaitForGone("id:removing", wait)
+	if p.Exists("id:done") {
+		t.Error("a done card for a whole uninstall")
+	}
+	if text, undo := p.toast(); text != "已卸载「Foo」，120 MB 已移到废纸篓" || undo != "run-1" {
+		t.Errorf("toast %q undo %q", text, undo)
 	}
 	if p.stores.Trash.Generation() == gen {
 		t.Error("the Trash's generation did not move")
 	}
-	p.Press("id:done-close")
-	p.WaitForGone("id:done", wait)
-	p.WaitUntil(wait, func() bool { n, _, _, _ := svc.Calls(); return n == apps+1 })
-	p.WaitFor("text:选择一个应用", wait)
+	// The list is read again and the selection lands on the row now where Foo was.
+	p.WaitUntil(wait, func() bool { return p.appsCalls() == apps+1 })
+	p.WaitUntil(wait, func() bool { return slices.Equal(p.rows(), []string{"Bar", "Runner"}) })
+	if got := p.selected(); got != "Runner" {
+		t.Errorf("selected %q after the uninstall", got)
+	}
 	if p.stores.Block.Blocked() {
 		t.Error("the shell is still blocked")
 	}
+
+	// 撤销 brings Foo back: the list is read again.
+	svc.SetList(macApps(), nil)
+	p.overview.OnUndo = func(context.Context, string) (app.RestoreOutcome, error) { return app.RestoreOutcome{Restored: 2}, nil }
+	p.Post(func() { p.stores.Overview.Undo(p.root, "run-1", nil, nil) })
+	p.WaitUntil(wait, func() bool { return slices.Contains(p.rows(), "Foo") })
 }
 
 func TestStopEndsTheRemoval(t *testing.T) {
@@ -374,6 +513,127 @@ func TestRefusesARunningAppUntilItQuits(t *testing.T) {
 	if p.Exists("text:请先退出「Runner」再卸载") {
 		t.Error("the prompt stays")
 	}
+	// The list's badge goes with it.
+	p.WaitForGone("id:app-list >> text:运行中", wait)
+}
+
+func TestComingBackToSpruceChecksARunningAppAgain(t *testing.T) {
+	svc := macService()
+	plan := fooPlan()
+	plan.AppID, plan.Running = "run", true
+	svc.Plan = plan
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Runner")
+	p.WaitFor("id:running", wait)
+	// The user quits Runner in another app and comes back.
+	plan.Running = false
+	svc.SetPlan(plan, nil)
+	p.SetEnvironment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop, Lifecycle: core.LifecycleInactive})
+	p.SetEnvironment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop, Lifecycle: core.LifecycleActive})
+	p.WaitForGone("id:running", wait)
+	p.WaitForGone("id:app-list >> text:运行中", wait)
+	p.WaitUntil(wait, func() bool { return p.Enabled("id:uninstall") })
+}
+
+func TestCheckingAgainKeepsTheLeftoversTheUserChanged(t *testing.T) {
+	svc := macService()
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	p.Press("role:checkbox 缓存：cache")
+	// The app wrote a new file meanwhile.
+	plan := fooPlan()
+	plan.Leftovers = append(plan.Leftovers, uninstallfake.Leftover("logs", app.UninstallKindLogs, 3000, true))
+	svc.SetPlan(plan, nil)
+	p.Press("id:refresh")
+	p.WaitFor("id:leftover-logs", wait)
+	for id, on := range map[string]bool{"sup": true, "cache": false, "agent": false, "logs": false} {
+		if got := p.Find("id:leftover-" + id).Props.Checked; got != on {
+			t.Errorf("%s checked %v", id, got)
+		}
+	}
+}
+
+func TestTheOrderHoldsWhileSizesStreamIn(t *testing.T) {
+	svc := macService()
+	sent := make(chan struct{})
+	release := make(chan struct{})
+	measure := &steppedMeasure{Service: svc, sent: sent, release: release, first: []app.UninstallAppDetails{
+		{ID: "run", Size: uninstallfake.Size(5_000_000_000)},
+		{ID: "bar", Size: uninstallfake.Size(900_000_000)},
+	}}
+	p := startWith(t, measure, svc, uninstall.PlatformMac)
+	p.waitList()
+	<-sent
+	// Runner's size is shown, but no row moves while the measure goes on.
+	p.waitTicking("id:app-list >> text:5 GB")
+	if got := p.rows(); !slices.Equal(got, []string{"Bar", "Foo", "Runner"}) {
+		t.Fatalf("rows moved while measuring: %v", got)
+	}
+	close(release)
+	p.settle(func() bool { return slices.Equal(p.rows(), []string{"Runner", "Bar", "Foo"}) })
+}
+
+// steppedMeasure sends first, then waits for release before ending.
+type steppedMeasure struct {
+	*uninstallfake.Service
+	first         []app.UninstallAppDetails
+	sent, release chan struct{}
+}
+
+func (m *steppedMeasure) Measure(ctx context.Context, details func(app.UninstallAppDetails)) error {
+	for _, d := range m.first {
+		details(d)
+	}
+	close(m.sent)
+	select {
+	case <-m.release:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func TestComingBackKeepsTheListAndWhatWasPicked(t *testing.T) {
+	svc := macService()
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.Press("id:sort-name")
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	p.Press("role:checkbox 缓存：cache")
+	p.Type("id:search", "o")
+	apps, _, _, _ := svc.Calls()
+
+	p.show(false)
+	p.show(true)
+	// Nothing is read again: the list, the order, the search, the app and its checks are as they were.
+	if p.Exists("id:apps-loading") || p.appsCalls() != apps {
+		t.Errorf("the list was read again (%d → %d)", apps, p.appsCalls())
+	}
+	if got := p.selected(); got != "Foo" {
+		t.Errorf("selected %q", got)
+	}
+	if !p.Find("id:sort-name").Props.Pressed {
+		t.Error("the order went back to 大小")
+	}
+	if got := p.Find("id:search").Text; got != "o" {
+		t.Errorf("search %q", got)
+	}
+	p.WaitFor("id:leftovers", wait)
+	if p.Find("id:leftover-cache").Props.Checked {
+		t.Error("cache is checked again")
+	}
+
+	// A list older than a few minutes is read again in the background, the old one shown meanwhile.
+	p.show(false)
+	p.Advance(6 * time.Minute)
+	p.show(true)
+	if p.Exists("id:apps-loading") {
+		t.Error("the list was replaced by the loading state")
+	}
+	p.WaitUntil(wait, func() bool { return p.appsCalls() == apps+1 })
 }
 
 func TestExplainsAnAppThatNeedsAnAdministrator(t *testing.T) {
@@ -392,6 +652,39 @@ func TestExplainsAnAppThatNeedsAnAdministrator(t *testing.T) {
 	p.Find("id:done >> text:没能卸载「Foo」")
 	if got := p.doneLines(); !slices.Equal(got, []string{failure, "它的相关文件也没有改动。"}) {
 		t.Errorf("lines %q", got)
+	}
+	if p.Exists("id:done-undo") {
+		t.Error("撤销 with nothing to put back")
+	}
+	// Foo is still installed: it stays picked, its leftovers looked up again.
+	_, plans, _, _ := svc.Calls()
+	p.Press("id:done-close")
+	p.WaitForGone("id:done", wait)
+	p.WaitUntil(wait, func() bool { _, n, _, _ := svc.Calls(); return n == plans+1 })
+	if got := p.selected(); got != "Foo" {
+		t.Errorf("selected %q after a failed uninstall", got)
+	}
+}
+
+func TestDoneCardOffersUndoForWhatMoved(t *testing.T) {
+	svc := macService()
+	svc.OnRemove = func(context.Context, app.UninstallRequest, func(cleanup.Progress)) (app.UninstallOutcome, error) {
+		return app.UninstallOutcome{App: "Foo", BundleRemoved: true, RunID: "run-2", Undoable: true, Result: uninstallfake.Result(cleanup.CleanResult{
+			Trashed: 100_000_000, Removed: 1, Failed: []cleanup.Failure{{Path: "/Users/me/Library/Caches/cache", Reason: "被占用"}}})}, nil
+	}
+	p := start(t, svc, uninstall.PlatformMac)
+	p.overview.OnUndo = func(context.Context, string) (app.RestoreOutcome, error) { return app.RestoreOutcome{Restored: 1}, nil }
+	p.waitList()
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	p.Press("id:uninstall")
+	p.Press("id:confirm-ok")
+	p.WaitFor("id:done", wait)
+	p.Press("id:done-undo")
+	p.WaitForGone("id:done", wait)
+	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text == "已放回原处 1 项" })
+	if _, _, _, undos, _ := p.overview.Calls(); !slices.Equal(undos, []string{"run-2"}) {
+		t.Errorf("undos %v", undos)
 	}
 }
 
@@ -446,7 +739,7 @@ func TestWindowsRunsTheUninstallerThenOffersWhatItLeft(t *testing.T) {
 	}
 	p := start(t, svc, uninstall.PlatformWindows)
 	p.waitList()
-	p.Find("id:sort-recent >> text:安装时间")
+	p.Find("id:sort-unused >> text:安装时间")
 	p.Find("text:/Microsoft Store 应用/")
 	p.pick("Foo")
 	p.WaitFor("text:卸载方式 >> nth=0", wait)
@@ -472,13 +765,13 @@ func TestWindowsRunsTheUninstallerThenOffersWhatItLeft(t *testing.T) {
 	p.Press("role:checkbox 本地数据（Local）：local")
 	p.Find("id:remove-found >> text:移到回收站（3 KB）")
 	p.Press("id:remove-found")
-	p.WaitFor("id:done", wait)
+	p.WaitForGone("id:leftovers-dialog", wait)
 	if got := svc.Removes(); len(got) != 1 || !slices.Equal(got[0].LeftoverIDs, []string{"roaming"}) {
 		t.Fatalf("removes %+v", got)
 	}
-	p.Find("id:done >> text:已卸载「Foo」")
-	if got := p.doneLines(); len(got) < 2 || got[0] != "卸载程序已移除「Foo」" || got[1] != "相关文件：1 项已移到回收站" {
-		t.Errorf("lines %q", got)
+	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text == "已卸载「Foo」，3 KB 已移到回收站" })
+	if p.Exists("id:done") {
+		t.Error("a done card for a whole uninstall")
 	}
 }
 
@@ -550,45 +843,4 @@ func TestWindowsShowsADeclinedAdministratorPrompt(t *testing.T) {
 	if got := p.doneLines(); !slices.Equal(got, []string{"没有获得管理员授权，卸载程序没有运行"}) {
 		t.Errorf("lines %q", got)
 	}
-}
-
-func TestLeavingThePageStopsTheMeasure(t *testing.T) {
-	stopped := make(chan struct{})
-	svc := macService()
-	svc.OnApps = func(context.Context) ([]app.UninstallApp, error) { return macApps(), nil }
-	measuring := &blockingMeasure{Service: svc, stopped: stopped}
-	show := make(chan bool, 1)
-	fakes := storefake.New(t.TempDir())
-	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
-		storefake.Provide(cx, fakes.Deps())
-		uninstall.DepsKey.Provide(cx, uninstall.Deps{Uninstall: measuring, Files: &uninstallfake.Files{}, Platform: uninstall.PlatformMac})
-		on := core.NewSignal(cx, true)
-		go func() {
-			v := <-show
-			cx.Post(func() { on.Set(v) })
-		}()
-		return core.Show{When: on.Get, Then: uninstall.Page}
-	}, nsgotest.Size(1052, 820))
-	a.WaitFor("id:app-list", wait)
-	show <- false
-	a.WaitUntil(wait, func() bool {
-		select {
-		case <-stopped:
-			return true
-		default:
-			return false
-		}
-	})
-}
-
-// blockingMeasure measures until its context ends.
-type blockingMeasure struct {
-	*uninstallfake.Service
-	stopped chan struct{}
-}
-
-func (b *blockingMeasure) Measure(ctx context.Context, _ func(app.UninstallAppDetails)) error {
-	<-ctx.Done()
-	close(b.stopped)
-	return ctx.Err()
 }

@@ -9,7 +9,6 @@ import (
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
-	"spruce/apps/spruce/internal/ui/store"
 )
 
 // bodyMode is what the page's body shows.
@@ -22,17 +21,27 @@ const (
 	bodyApps
 )
 
-// Page is the 应用卸载 page.
+// Page is the 应用卸载 page, over the State Provide made: it reads the apps on its first showing and shows them as they were on the next ones.
 func Page(cx *core.Scope) core.Node {
-	deps := DepsKey.Use(cx)
-	var onChanged func()
-	if st := store.Use(cx); st != nil {
-		onChanged = st.Trash.Bump
-	}
-	s := NewState(cx, deps, onChanged)
-	actionRef, listRef := new(core.Ref), new(core.Ref)
+	s := stateKey.Use(cx)
+	s.Visit()
+	actionRef, searchRef := new(core.Ref), new(core.Ref)
 	windows := s.Windows()
 	bin := trashName(windows)
+	// ⌘R reads the list again, ⌘F goes to the search field.
+	nav.UseCommands(cx, nav.Commands{Refresh: s.Refresh, Find: searchRef.Focus,
+		Busy: func() bool { return s.Fetching.Get() || s.Step.Get() != StepIdle }})
+	// ⌘⌫ uninstalls the picked app, asking first as 卸载 does.
+	cx.OnKey("mod+backspace", s.Start)
+	// Coming back to Spruce after quitting the picked app clears its 运行中 at once.
+	lifecycle := core.Untracked(cx, cx.Env().Lifecycle)
+	cx.Effect(func() {
+		now := cx.Env().Lifecycle()
+		if now == core.LifecycleActive && lifecycle != core.LifecycleActive {
+			cx.Untrack(s.Active)
+		}
+		lifecycle = now
+	})
 
 	refresh := kit.Button{Variant: kit.ButtonGhost, TestID: "refresh", Disabled: s.Fetching.Get, OnPress: s.Refresh,
 		TextFunc: func() string {
@@ -79,7 +88,7 @@ func Page(cx *core.Scope) core.Node {
 				}
 				return kit.EmptyState{Title: "没有找到可以卸载的应用", Description: desc, Tone: kit.ToneBlue, Glyph: nav.Uninstall.Meta().Glyph, TestID: "apps-empty"}
 			}
-			return columns(cx, s, listRef)
+			return columns(cx, s, searchRef)
 		})
 	})
 
@@ -118,7 +127,7 @@ func Page(cx *core.Scope) core.Node {
 			bar,
 		}},
 		kit.LiveStatus{Text: s.LiveText},
-		flow(cx, s, actionRef, listRef),
+		flow(cx, s, actionRef),
 	}
 }
 
@@ -137,7 +146,7 @@ func (c column) Render(*core.Scope) core.Node {
 const narrowBelow = 1080 - kit.SidebarWidth - 64
 
 // columns is the page's body once the apps are listed: the app list and the picked app side by side, filling the height between the header and the action bar.
-func columns(cx *core.Scope, s *State, listRef *core.Ref) core.Node {
+func columns(cx *core.Scope, s *State, searchRef *core.Ref) core.Node {
 	narrow := core.NewSignal(cx, false)
 	share := func(grow float32, minWide, minNarrow core.Points) func() core.Style {
 		return func() core.Style {
@@ -151,7 +160,7 @@ func columns(cx *core.Scope, s *State, listRef *core.Ref) core.Node {
 		OnLayout: func(b core.Bounds) { narrow.Set(b.Size.Width <= narrowBelow) },
 		Style:    core.Style{Direction: core.Row, Gap: 16, FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(300)},
 		Children: []core.Node{
-			core.View{StyleFunc: share(1, 280, 260), Children: []core.Node{appList(cx, s, listRef, narrow.Get)}},
+			core.View{StyleFunc: share(1, 280, 260), Children: []core.Node{appList(cx, s, searchRef, narrow.Get)}},
 			core.View{StyleFunc: share(1.15, 300, 280), Children: []core.Node{detail(cx, s)}},
 		},
 	}

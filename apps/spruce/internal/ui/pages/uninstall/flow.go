@@ -18,8 +18,8 @@ type flowKey struct {
 	recheck string
 }
 
-// flow is the dialog or overlay of the step the uninstall is at, over the main area. A dialog that goes with its step does not give the focus back itself, so the page does: 卸载 after 取消, the list after the done card.
-func flow(cx *core.Scope, s *State, actionRef, listRef *core.Ref) core.Node {
+// flow is the dialog or overlay of the step the uninstall is at, over the main area. A dialog that goes with its step does not give the focus back itself, so the page gives it to 卸载 after 取消; after the done card the list lands near the app it was about (State.Close), and keeps the keys it had.
+func flow(cx *core.Scope, s *State, actionRef *core.Ref) core.Node {
 	windows := s.Windows()
 	bin := trashName(windows)
 	key := core.NewMemo(cx, func() flowKey {
@@ -33,10 +33,6 @@ func flow(cx *core.Scope, s *State, actionRef, listRef *core.Ref) core.Node {
 		return k
 	})
 	at := func(step Step) func() bool { return func() bool { return s.Step.Get() == step } }
-	closeDone := func() {
-		s.Close()
-		listRef.Focus()
-	}
 	return core.Dynamic(func(cx *core.Scope) core.Node {
 		k := key.Get()
 		return core.Func(func(cx *core.Scope) core.Node {
@@ -92,7 +88,7 @@ func flow(cx *core.Scope, s *State, actionRef, listRef *core.Ref) core.Node {
 				if k.recheck != "" {
 					lines = append(lines, k.recheck)
 				}
-				return kit.DoneDialog{Open: at(StepNotRemoved), Title: "卸载没有完成", Big: "未卸载", Lines: lines, OnClose: closeDone, TestID: "not-removed",
+				return kit.DoneDialog{Open: at(StepNotRemoved), Title: "卸载没有完成", Big: "未卸载", Lines: lines, OnClose: s.Close, TestID: "not-removed",
 					Children: []core.Node{kit.Button{Variant: kit.ButtonGhost, Disabled: s.Checking.Get, OnPress: s.Recheck, TestID: "recheck",
 						TextFunc: func() string {
 							if s.Checking.Get() {
@@ -104,8 +100,12 @@ func flow(cx *core.Scope, s *State, actionRef, listRef *core.Ref) core.Node {
 				return leftoversDialog(s, at(StepLeftovers))
 			case StepDone:
 				sum := s.Summary.GetUntracked()
-				return kit.DoneDialog{Open: at(StepDone), Title: sum.Title, Big: sum.Big, Lines: sum.Lines, Succeeded: sum.Succeeded, OnClose: closeDone,
-					TestID: "done"}
+				var undo []core.Node
+				if s.UndoRun() != "" {
+					undo = []core.Node{kit.Button{Text: "撤销", Variant: kit.ButtonGhost, OnPress: s.Undo, TestID: "done-undo"}}
+				}
+				return kit.DoneDialog{Open: at(StepDone), Title: sum.Title, Big: sum.Big, Lines: sum.Lines, Succeeded: sum.Succeeded, OnClose: s.Close,
+					TestID: "done", Children: undo}
 			}
 			return core.Group{}
 		})
