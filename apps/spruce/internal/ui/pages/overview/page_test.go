@@ -1159,36 +1159,82 @@ func TestCardAndDrillShareTheSelection(t *testing.T) {
 	}
 }
 
-// A check over a result shows how far it is under the conclusion, and the header stops it instead of waiting: the result stays, and the cards can act once the controller is idle again. The menu's 重新检查 (⌘R) checks again as the header does, and waits while a check runs.
+// A check over a result shows how far it is under the conclusion, and the header's one button stops it instead of waiting: it keeps the focus as it turns into 停止检查, takes no press in the moment after (the second press of a double press on 重新检查), and the result stays. The menu's 重新检查 (⌘R) checks again as the header does, and waits while a check runs. Here the result is a scheduled check's, which the controller lets the cards act on again once the user's check stops (a stopped check leaves only its own instance unable to clean, app.Overview.actionableLocked).
 func TestStopACheckOverAResult(t *testing.T) {
-	p := open(t, ready())
+	scheduled := func() app.OverviewState {
+		st := ready()
+		st.Result.Mode = app.CheckBackground
+		return st
+	}
+	p := open(t, scheduled())
 	p.waitText("id:recheck", "重新检查")
 	if !p.nav.CanRefresh() {
 		t.Fatal("⌘R cannot check again")
 	}
+	button := p.Find("id:recheck").ID
 	p.Post(func() { p.nav.Commands().Refresh() })
 	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
 
-	st := ready()
+	st := scheduled()
 	// The controller locks the result while the check runs.
 	st.Phase, st.Progress = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 47, Total: 100}
 	st.Result.Actionable = false
 	p.set(st)
 	p.waitText("id:checked-at", "上次检查：5分钟前 · 正在更新… 47%")
-	p.waitText("id:stop-check", "停止检查")
-	if p.Exists("id:recheck") || p.nav.CanRefresh() {
-		t.Error("重新检查 is offered while a check runs")
+	p.waitText("id:recheck", "停止检查")
+	if p.Find("id:recheck").ID != button {
+		t.Error("停止检查 replaced the header's button, which loses the focus")
+	}
+	if p.nav.CanRefresh() {
+		t.Error("⌘R checks again while a check runs")
 	}
 	p.waitText("id:rec-app-caches-act", "正在核对…")
-	p.Press("id:stop-check")
+	p.Press("id:recheck")
+	p.Settle()
+	if _, stops, _, _, _ := p.ov.Calls(); stops != 0 {
+		t.Fatal("a press right after 停止检查 showed stopped the check")
+	}
+	p.Advance(time.Second) // past the moment 停止检查 waits before it takes a press
+	p.Settle()
+	p.Press("id:recheck")
 	p.WaitUntil(wait, func() bool { _, stops, _, _, _ := p.ov.Calls(); return stops == 1 })
 
-	p.set(ready())
+	p.set(scheduled())
 	p.waitText("id:recheck", "重新检查")
 	p.waitText("id:conclusion-value", "5.8 GB")
 	p.waitText("id:rec-app-caches-act", "删除…")
 	if p.disabled("id:rec-app-caches-act") {
 		t.Error("the cards cannot act once the check stopped")
+	}
+}
+
+// Stopping the check that opening 概览 started over a cached result leaves the cached result, which the controller never lets the cards act on: they say so, and 重新检查 is offered again.
+func TestStopACheckOverACachedResult(t *testing.T) {
+	cached := func() app.OverviewState {
+		st := ready()
+		st.Result.FromCache, st.Result.Actionable = true, false
+		return st
+	}
+	p := open(t, cached())
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+	st := cached()
+	st.Phase, st.Progress = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 10, Total: 100}
+	p.set(st)
+	p.waitText("id:recheck", "停止检查")
+	p.waitText("id:rec-app-caches-act", "正在核对…")
+	p.Advance(time.Second) // past the moment 停止检查 waits before it takes a press
+	p.Settle()
+	p.Press("id:recheck")
+	p.WaitUntil(wait, func() bool { _, stops, _, _, _ := p.ov.Calls(); return stops == 1 })
+
+	p.set(cached())
+	p.waitText("id:recheck", "重新检查")
+	p.waitText("id:rec-app-caches-act", "重新检查后才能清理")
+	if !p.disabled("id:rec-app-caches-act") {
+		t.Error("a card acts on a cached result")
+	}
+	if !p.nav.CanRefresh() {
+		t.Error("⌘R cannot check again after the check stopped")
 	}
 }
 

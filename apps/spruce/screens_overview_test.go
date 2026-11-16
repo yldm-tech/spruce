@@ -119,7 +119,7 @@ func TestScreensOverview(t *testing.T) {
 	cached.Progress = &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 62, Total: 100}
 	ov.Set(cached)
 	a.WaitFor("id:rec-app-caches-act >> text:正在核对…", wait)
-	a.WaitFor("id:stop-check", wait)
+	a.WaitFor("id:recheck >> text:停止检查", wait)
 	a.Screenshot("overview-cached-updating")
 
 	// C: ready, and a card expanded.

@@ -32,6 +32,9 @@ const shownCards = 5
 // leaveTime is how long a card that was acted on takes to go.
 const leaveTime = 200 * time.Millisecond
 
+// stopArmed is how long the header's 停止检查 waits after it shows before it takes a press, about a double click's interval: the second press of a double press on 重新检查 does not stop the check the first one started.
+const stopArmed = 500 * time.Millisecond
+
 // view is which body the page shows.
 type view uint8
 
@@ -470,20 +473,33 @@ func Page(cx *core.Scope) core.Node {
 	}
 }
 
-// recheckButton is the header's 重新检查: 正在检查… while the first check runs, 停止检查 while one runs over a result (which stays), disabled while a clean runs.
+// recheckButton is the header's 重新检查: 正在检查… while the first check runs, 停止检查 while one runs over a result (which stays), disabled while a clean runs. It stays one button throughout, so the keyboard focus stays on it, and as 停止检查 it takes presses only stopArmed after it shows.
 func recheckButton(cx *core.Scope, p *page) core.Node {
 	cleaning := core.NewMemo(cx, p.cleaning)
 	over := core.NewMemo(cx, func() bool { return p.checking() && p.result() != nil })
-	return core.Dynamic(func(*core.Scope) core.Node {
+	armed := core.NewSignal(cx, false)
+	cx.Effect(func() {
+		armed.Set(false)
 		if over.Get() {
-			return core.Func(func(*core.Scope) core.Node {
-				return kit.Button{Variant: kit.ButtonGhost, TestID: "stop-check", Text: "停止检查", OnPress: p.ov.StopCheck}
-			})
+			cx.AfterFunc(stopArmed, func() { armed.Set(true) })
 		}
-		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: p.checkNow, Busy: p.checking,
-			Disabled: cleaning.Get,
+	})
+	press := func() {
+		switch {
+		case !over.GetUntracked():
+			p.checkNow()
+		case armed.GetUntracked():
+			p.ov.StopCheck()
+		}
+	}
+	return core.Dynamic(func(*core.Scope) core.Node {
+		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: press, Disabled: cleaning.Get,
+			Busy: func() bool { return p.checking() && !over.Get() },
 			TextFunc: func() string {
-				if p.checking() {
+				switch {
+				case over.Get():
+					return "停止检查"
+				case p.checking():
 					return "正在检查…"
 				}
 				return "重新检查"
