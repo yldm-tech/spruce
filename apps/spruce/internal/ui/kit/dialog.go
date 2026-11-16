@@ -17,7 +17,7 @@ type Blocker interface {
 // BlockerKey provides the shell's Blocker to dialogs and overlays.
 var BlockerKey = core.NewKey[Blocker]("spruce.blocker", nil)
 
-// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. initial takes the keyboard's focus as it opens and returnFocus as it goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey). sidebarTip, when set, is what the sidebar says under the pointer while the layer keeps it out of reach (an overlay's work).
+// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. As it opens it takes the keyboard from a text field of the page, which would otherwise keep it on macOS and with it Return, Escape and the typing; initial then takes the keyboard's focus, and returnFocus takes it as the layer goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey). sidebarTip, when set, is what the sidebar says under the pointer while the layer keeps it out of reach (an overlay's work).
 type layer struct {
 	open        func() bool
 	onClose     func()
@@ -38,7 +38,7 @@ const layerFade = 200 * time.Millisecond
 
 var popupHidden = core.Style{Opacity: core.Alpha(0), Transform: core.Transform{Scale: 0.96}}
 
-func (l layer) render() core.Node {
+func (l layer) render(cx *core.Scope) core.Node {
 	fill := core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0)}
 	scrim := fill
 	scrim.Left, scrim.Right = core.Pt(SidebarWidth), core.Pt(0)
@@ -90,6 +90,8 @@ func (l layer) render() core.Node {
 		// base.Dialog reports Escape here before it would close; NoCloseOnEscape keeps it open, so onClose decides.
 		OnCancel: l.onClose,
 		OnOpen: func() {
+			// On macOS Ref.Focus cannot move the keyboard to a button (NSGo issue pending: ItemFocus only focuses text fields on macOS), so a search field the user typed in would keep it under the layer.
+			cx.DismissKeyboard()
 			if l.initial != nil {
 				l.initial.Focus()
 			}
@@ -161,7 +163,7 @@ type Dialog struct {
 }
 
 // Render implements core.Node.
-func (d Dialog) Render(*core.Scope) core.Node {
+func (d Dialog) Render(cx *core.Scope) core.Node {
 	var initial *core.Ref
 	var onReturn func()
 	children := []core.Node{title(d.Title)}
@@ -185,7 +187,7 @@ func (d Dialog) Render(*core.Scope) core.Node {
 		children = append(children, core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, Margin: core.Edges{Top: 10}}, Children: row})
 	}
 	return layer{open: d.Open, onClose: d.OnClose, onReturn: onReturn, label: d.Title, initial: initial, returnFocus: d.ReturnFocus, testID: d.TestID,
-		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render()
+		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render(cx)
 }
 
 // ConfirmDialog asks before an action: a title, the message (Lines, one per line, or Message) and 取消 and the confirmation. Return is the confirmation, except that Danger draws it red, focuses 取消 first and leaves Return unbound, for what cannot be undone. Busy disables both buttons, Escape and Return while the action starts; Escape is 取消 otherwise.
@@ -248,7 +250,7 @@ func (c ConfirmDialog) Render(cx *core.Scope) core.Node {
 		}},
 	}
 	return layer{open: c.Open, onClose: onClose, onReturn: onReturn, label: c.Title, initial: initial, returnFocus: c.ReturnFocus, testID: c.TestID,
-		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render()
+		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render(cx)
 }
 
 // DoneDialog is the card at the end of a run or a clean, as the 维护 design draws it: the badge (a check mark when Succeeded, else an exclamation mark), which pops in as the card comes, the title, the big figure, the lines (scrolling when they outgrow the window), Children (a permission prompt) and 完成 (CloseLabel), which has the focus and which Return presses.
@@ -265,7 +267,7 @@ type DoneDialog struct {
 }
 
 // Render implements core.Node.
-func (d DoneDialog) Render(*core.Scope) core.Node {
+func (d DoneDialog) Render(cx *core.Scope) core.Node {
 	label := d.CloseLabel
 	if label == "" {
 		label = "完成"
@@ -291,5 +293,5 @@ func (d DoneDialog) Render(*core.Scope) core.Node {
 	children = append(children, core.View{Style: core.Style{Margin: core.Edges{Top: 10}, FlexShrink: 0},
 		Children: []core.Node{Button{Text: label, Variant: ButtonLight, Ref: closeRef, OnPress: d.OnClose, TestID: "done-close"}}})
 	return layer{open: d.Open, onReturn: d.OnClose, label: d.Title, description: d.Big + "\n" + strings.Join(d.Lines, "\n"), initial: closeRef,
-		returnFocus: d.ReturnFocus, testID: d.TestID, popup: cardStyle(core.Symmetric(40, 52)), children: children}.render()
+		returnFocus: d.ReturnFocus, testID: d.TestID, popup: cardStyle(core.Symmetric(40, 52)), children: children}.render(cx)
 }

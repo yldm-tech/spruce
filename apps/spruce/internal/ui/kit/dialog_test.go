@@ -122,3 +122,24 @@ func TestReturnSkipsADisabledInitialAction(t *testing.T) {
 		t.Errorf("Return pressed a disabled action %d times", removes)
 	}
 }
+
+// A dialog opened while a search field has the keyboard takes it from the field: on macOS Ref.Focus cannot focus the dialog's buttons, so the field would keep the keyboard and with it Return and Escape, and typing would change the page under the dialog. A press does not take the keyboard from a field, so the uninstall flow (type in the search, press an app, press 卸载) opens its dialog so; the dialog here focuses none of its actions, as macOS has every dialog.
+func TestOpeningADialogTakesTheKeyboardFromThePage(t *testing.T) {
+	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		open := core.NewSignal(cx, false)
+		query := core.NewSignal(cx, "")
+		return core.View{Style: core.Style{Width: core.Pt(900), Height: core.Pt(600)}, Children: []core.Node{
+			kit.Field{Value: query.Get, OnChange: query.Set, Label: "搜索应用", TestID: "search"},
+			kit.Button{Text: "卸载", Variant: kit.ButtonDanger, OnPress: func() { open.Set(true) }, TestID: "open"},
+			kit.Dialog{Open: open.Get, Title: "留下的文件", OnClose: func() { open.Set(false) }, Actions: []kit.DialogAction{
+				{Text: "关闭", Variant: kit.ButtonLight, OnPress: func() { open.Set(false) }, TestID: "dialog-close"},
+			}},
+		}}
+	}, nsgotest.Size(900, 600), macDesktop)
+	a.Type("id:search", "Xcode")
+	a.Press("id:open")
+	a.WaitFor("id:dialog-close", 5*time.Second)
+	if a.Find("id:search").Focused {
+		t.Error("the page's field keeps the keyboard under the dialog")
+	}
+}
