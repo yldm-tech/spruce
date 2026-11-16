@@ -19,6 +19,7 @@ import (
 	"spruce/apps/spruce/internal/engine/growth"
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/overview"
@@ -130,12 +131,19 @@ func start(t *testing.T, fakes *storefake.Services, ov *storefake.Overview, befo
 		for _, f := range before {
 			f(p.nav)
 		}
-		overview.DepsKey.Provide(cx, overview.Deps{Files: p.files, Home: home})
+		cleanflow.Provide(cx)
+		overview.Provide(cx, overview.Deps{Files: p.files, Home: home})
 		return core.Dynamic(func(*core.Scope) core.Node {
-			if p.nav.Current() != nav.Overview {
-				return core.Group{}
+			switch p.nav.Current() {
+			case nav.Overview:
+				return core.Func(overview.Page)
+			case nav.SystemJunk:
+				// 系统垃圾 as the app shows it, to check what it shares with the cards.
+				return core.Func(func(*core.Scope) core.Node {
+					return cleanflow.DrillPage{Route: nav.SystemJunk, Toast: overview.CleanToast, ListLabel: "可以清理的系统垃圾", SizeLabel: "已选大小", Reveal: p.files.Reveal}
+				})
 			}
-			return core.Func(overview.Page)
+			return core.Group{}
 		})
 	}, nsgotest.Size(1052, 1400), func(a *nsgotest.App) { a.Clock.SetWallTime(now) })
 	p.WaitUntil(wait, func() bool { return p.stores.Settings.Loaded() })
@@ -1095,4 +1103,58 @@ func TestTimesFollowTheClock(t *testing.T) {
 	p.waitText("id:checked-at", "上次检查：5分钟前")
 	p.Advance(time.Minute)
 	p.waitText("id:checked-at", "上次检查：6分钟前")
+}
+
+// Leaving 概览 keeps what the user did on it: a card's unchecked item stays unchecked and its card open, with 再显示 still showing every card.
+func TestCardsComeBackAsLeft(t *testing.T) {
+	p := open(t, ready())
+	safari := "id:item-" + cleanup.ItemID(home+"/Library/Caches/com.apple.Safari")
+	p.Press("id:recs-more")
+	p.Press("id:rec-app-caches-expand")
+	p.Press(safari)
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+
+	p.nav.Go(nav.DevJunk)
+	p.WaitForGone("id:overview-page", wait)
+	p.nav.Go(nav.Overview)
+	p.WaitFor("id:rec-app-caches", wait)
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+	if !p.Find("id:rec-app-caches-expand").Props.Expanded {
+		t.Error("the card closed")
+	}
+	if p.Find(safari).Props.Checked {
+		t.Error("the unchecked item came back checked")
+	}
+	p.WaitFor("id:rec-logs", wait)
+	p.Press("id:rec-app-caches-act")
+	p.WaitFor("id:rec-confirm", wait)
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	if got := p.cleans()[0].Req.ItemIDs; !slices.Equal(got, []string{cleanup.ItemID(home + "/Library/Caches/com.spotify.client")}) {
+		t.Errorf("cleaned %v", got)
+	}
+}
+
+// A card and its drill-down view check the same items: 在系统垃圾中查看全部 shows what the card unchecked as unchecked, and what changes there shows on the card.
+func TestCardAndDrillShareTheSelection(t *testing.T) {
+	p := open(t, ready())
+	safari, spotify := "id:item-"+cleanup.ItemID(home+"/Library/Caches/com.apple.Safari"), "id:item-"+cleanup.ItemID(home+"/Library/Caches/com.spotify.client")
+	p.Press("id:rec-app-caches-expand")
+	p.Press(safari)
+	p.Press("id:rec-app-caches-more")
+	p.WaitFor("id:category-list", wait)
+	p.WaitFor(safari, wait)
+	if p.Find(safari).Props.Checked || !p.Find(spotify).Props.Checked {
+		t.Error("the drill-down view does not show the card's selection")
+	}
+	if !p.Find("id:check-system-junk:app-caches").Props.Indeterminate {
+		t.Error("应用缓存 is not checked in part")
+	}
+	p.Press(spotify)
+	p.Press("id:back")
+	p.WaitFor("id:rec-app-caches", wait)
+	p.WaitFor("id:rec-app-caches >> text:已选 0/2 项 · 0 B", wait)
+	if !p.disabled("id:rec-app-caches-act") {
+		t.Error("the card acts on items unchecked in its drill-down view")
+	}
 }

@@ -34,7 +34,10 @@ type CategoryList struct {
 	Reveal func(ctx context.Context, path string) error
 	// Disabled disables every checkbox and 全选/全不选, e.g. while a clean runs.
 	Disabled func() bool
-	// Expand is the category that starts expanded (a drill-down view opened on it, nav.Navigator.GoDrill), "" for none; Scroll, when set, receives its card once it is shown, for the page to scroll to it.
+	// Open reports whether a category's items show, by its ID, and OnOpen opens or closes them: the drill-down view keeps them (Drill.Open), so the list opens as it was left.
+	Open   func(id string) bool
+	OnOpen func(id string, open bool)
+	// Expand is the category the view was opened on (nav.Navigator.GoDrill), "" for none; Scroll, when set, receives its card once it is shown, for the page to scroll to it.
 	Expand string
 	Scroll func(card *core.Ref)
 	TestID string
@@ -96,14 +99,18 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 // categoryCard is one category: its head and, once expanded, its items.
 func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string), index int) core.Node {
 	id := core.Untracked(cx, c).ID
-	expand := id == l.Expand && len(core.Untracked(cx, c).Items) > 0
-	open := core.NewSignal(cx, expand)
 	ref := new(core.Ref)
-	if expand && l.Scroll != nil {
+	if id == l.Expand && len(core.Untracked(cx, c).Items) > 0 && l.Scroll != nil {
 		cx.Effect(func() { cx.Untrack(func() { l.Scroll(ref) }) })
 	}
 	state := func() CheckState { return CategoryState(c(), l.Selection()) }
 	empty := func() bool { return len(c().Items) == 0 }
+	open := func() bool { return l.Open(id) && !empty() }
+	toggle := func() {
+		if !core.Untracked(cx, empty) {
+			l.OnOpen(id, !core.Untracked(cx, open))
+		}
+	}
 	// A category whose items are all held (Item.Hold) has nothing to check.
 	none := func() bool { return Selectable(c()) == 0 }
 	title := func() string { return c().Title }
@@ -144,9 +151,9 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 			kit.Tabular(kit.TextFunc(func() string { return format.Bytes(c().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
 			kit.Tabular(kit.TextFunc(count, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
 		}},
-		expandButton(id, title, open, empty),
+		expandButton(id, title, open, toggle, empty),
 	}}
-	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
+	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
 		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{itemList(cx, c, l, disabled, reveal)}}
 	}}
 	// The cards come in one after another as the view shows them.
@@ -155,11 +162,11 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 	}}
 }
 
-// expandButton opens and closes a category's items (.icon-button.category-expand).
-func expandButton(id string, title func() string, open *core.Signal[bool], empty func() bool) core.Node {
-	return core.View{Role: core.RoleButton, TestID: "expand-" + id, Disabled: empty, Expandable: func() bool { return true }, Expanded: open.Get,
+// expandButton opens and closes a category's items (.icon-button.category-expand): open reports whether they show, toggle opens or closes them.
+func expandButton(id string, title func() string, open func() bool, toggle func(), empty func() bool) core.Node {
+	return core.View{Role: core.RoleButton, TestID: "expand-" + id, Disabled: empty, Expandable: func() bool { return true }, Expanded: open,
 		LabelFunc: func() string {
-			if open.Get() {
+			if open() {
 				return "收起" + title()
 			}
 			return "展开" + title()
@@ -169,12 +176,8 @@ func expandButton(id string, title func() string, open *core.Signal[bool], empty
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
 			Hover:        &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText},
 			Disabled:     &core.Style{Opacity: core.Alpha(0.45), Cursor: core.CursorDefault}},
-		OnPress: func(core.PressEvent) {
-			if !empty() {
-				open.Set(!open.GetUntracked())
-			}
-		},
-		Children: []core.Node{kit.Chevron{Open: open.Get}},
+		OnPress:  func(core.PressEvent) { toggle() },
+		Children: []core.Node{kit.Chevron{Open: open}},
 	}
 }
 

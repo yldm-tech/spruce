@@ -18,7 +18,7 @@ import (
 )
 
 // projectsTab is 项目: the filters, the projects largest first with 全选 and 全不选 (which leave held projects alone), and 清理; or why there are none.
-func projectsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
+func projectsTab(cx *core.Scope, d *cleanflow.Drill, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
 	set := store.Use(cx).Settings
 	projects := core.NewMemoFunc(cx, func() []engdev.Project {
 		if r := d.Result(); r != nil {
@@ -32,7 +32,9 @@ func projectsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
 		if none.Get() {
 			return core.Func(func(cx *core.Scope) core.Node { return noProjects(cx, d, set) })
 		}
-		return core.Func(func(cx *core.Scope) core.Node { return projectList(cx, d, set, projects.Get, artifacts.Get, rev) })
+		return core.Func(func(cx *core.Scope) core.Node {
+			return projectList(cx, d, set, filter, projects.Get, artifacts.Get, rev)
+		})
 	})
 }
 
@@ -68,9 +70,8 @@ func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.No
 	})
 }
 
-// projectList is the 项目 tab with projects.
-func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, projects func() []engdev.Project, artifacts func() []cleanup.Category, rev reveal) core.Node {
-	filter := core.NewSignal(cx, FilterAll)
+// projectList is the 项目 tab with projects, under filter.
+func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *core.Signal[ProjectFilter], projects func() []engdev.Project, artifacts func() []cleanup.Category, rev reveal) core.Node {
 	days := func() int { return set.Value().Cleanup.DevArtifactMinAgeDays }
 	now := timeNow()
 	shown := core.NewMemoFunc(cx, func() []engdev.Project { return FilterProjects(projects(), filter.Get(), days(), now) }, nil)
@@ -149,7 +150,8 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, projec
 // projectRow is one project: its checkbox (disabled, with the reason as its tooltip, for a held project), name, path and kinds of build output, Git status, last activity, size, and its build output once expanded.
 func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, index func() int, artifacts func() []cleanup.Category, disabled func() bool, reveal func(string)) core.Node {
 	id := core.Untracked(cx, p).ID
-	open := core.NewSignal(cx, false)
+	key := cleanflow.ProjectKey(id)
+	open := func() bool { return d.Open(key) }
 	name := func() string { return filepath.Base(p().Path) }
 	state := func() cleanflow.CheckState { return ProjectState(p(), artifacts(), d.Selection.Get()) }
 	checkable := func() bool { return Checkable(p(), artifacts()) }
@@ -201,11 +203,11 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 		core.View{Style: core.Style{MinWidth: core.Pt(72), AlignItems: core.AlignEnd, FlexShrink: 0}, Children: []core.Node{
 			kit.Tabular(kit.TextFunc(func() string { return format.Bytes(p().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
 		}},
-		expandButton("project-"+id+"-expand", name, open),
+		expandButton("project-"+id+"-expand", name, open, func() { d.SetOpen(key, !core.Untracked(cx, open)) }),
 		kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + core.Untracked(cx, name), TestID: "project-" + id + "-reveal",
 			OnPress: func() { reveal(core.Untracked(cx, p).Path) }},
 	}}
-	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
+	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
 		list := core.NewMemoFunc(cx, func() []ProjectArtifact { return ProjectItems(p(), artifacts()) }, nil)
 		return core.View{Role: core.RoleGroup, Label: core.Untracked(cx, name) + "的构建产物", TestID: "project-" + id + "-items",
 			Style: core.Style{Padding: core.Symmetric(4, 0), Background: kit.SurfaceList, Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
@@ -230,11 +232,11 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 		Children: []core.Node{head, items}}
 }
 
-// expandButton opens and closes a project's build output (.icon-button.category-expand).
-func expandButton(testID string, title func() string, open *core.Signal[bool]) core.Node {
-	return core.View{Role: core.RoleButton, TestID: testID, Expandable: func() bool { return true }, Expanded: open.Get,
+// expandButton opens and closes a project's build output (.icon-button.category-expand): open reports whether it shows, toggle opens or closes it.
+func expandButton(testID string, title func() string, open func() bool, toggle func()) core.Node {
+	return core.View{Role: core.RoleButton, TestID: testID, Expandable: func() bool { return true }, Expanded: open,
 		LabelFunc: func() string {
-			if open.Get() {
+			if open() {
 				return "收起" + title()
 			}
 			return "展开" + title()
@@ -243,10 +245,10 @@ func expandButton(testID string, title func() string, open *core.Signal[bool]) c
 			JustifyContent: core.JustifyCenter, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
 			Hover:        &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText}},
-		OnPress: func(core.PressEvent) { open.Set(!open.GetUntracked()) },
+		OnPress: func(core.PressEvent) { toggle() },
 		Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
 			glyph := "chevron-down"
-			if open.Get() {
+			if open() {
 				glyph = "chevron-up"
 			}
 			return core.Func(func(*core.Scope) core.Node { return kit.Glyph{Name: glyph, Size: 16, Color: core.CurrentColor} })

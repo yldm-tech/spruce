@@ -64,7 +64,7 @@ func (p DrillPage) Render(cx *core.Scope) core.Node {
 				return core.Group{
 					kit.Notice{Text: p.Notice},
 					CategoryList{Categories: d.Categories, Selection: d.Selection.Get, OnChange: d.Change, Label: p.ListLabel, Reveal: p.Reveal,
-						Disabled: d.Cleaning, Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "category-list"},
+						Disabled: d.Cleaning, Open: d.Open, OnOpen: d.SetOpen, Expand: d.Reveal, Scroll: d.ScrollTo, TestID: "category-list"},
 					DrillBar(d, func() kit.Stat { return kit.Stat{Label: "已选择", Value: strconv.Itoa(totals().Count) + " 项"} },
 						func() kit.Stat { return kit.Stat{Label: p.SizeLabel, Value: format.Bytes(totals().Bytes)} },
 						func() int { return totals().Count }, func() {

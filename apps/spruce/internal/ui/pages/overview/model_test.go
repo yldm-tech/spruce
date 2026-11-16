@@ -241,26 +241,36 @@ func ref(cat, id string) advice.ItemRef { return advice.ItemRef{CategoryID: cat,
 
 // A card the user did not change follows each newer result; a changed one keeps what is still there and counts what the newer one adds.
 func TestPick(t *testing.T) {
-	r := advice.Recommendation{ID: "c", Categories: []string{"a", "b"}, Items: []advice.ItemRef{ref("a", "1"), ref("a", "2"), ref("b", "3")}}
-	p := DefaultPick(r)
-	if got := p.Refs(r); !slices.Equal(got, r.Items) {
-		t.Fatalf("default %v", got)
+	cat := func(id string, items ...string) cleanup.Category {
+		c := cleanup.Category{ID: id, Source: "system-junk", Selected: true}
+		for _, it := range items {
+			c.Items = append(c.Items, cleanup.Item{ID: it, Selected: true})
+		}
+		return c
 	}
+	scan := cleanup.ScanResult{Categories: []cleanup.Category{cat("a", "1", "2"), cat("b", "3")}}
+	r := advice.Recommendation{ID: "c", Categories: []string{"a", "b"}, Items: []advice.ItemRef{ref("a", "1"), ref("a", "2"), ref("b", "3")}}
+	ch := cleanflow.Choice{Sel: cleanflow.NothingSelected}.Reconcile(scan.Categories)
+	if got := CardPick(r, ch, scan); !slices.Equal(got.Refs(r), r.Items) || got.Added != 0 {
+		t.Fatalf("default %+v", got)
+	}
+	newerScan := cleanup.ScanResult{Categories: []cleanup.Category{cat("a", "1"), cat("b", "3", "4")}}
 	newer := r
 	newer.Items = []advice.ItemRef{ref("a", "1"), ref("b", "3"), ref("b", "4")}
-	if got := p.Reconcile(newer); got.Touched || got.Added != 0 || !slices.Equal(got.Refs(newer), newer.Items) {
+	if got := CardPick(newer, ch.Reconcile(newerScan.Categories), newerScan); got.Added != 0 || !slices.Equal(got.Refs(newer), newer.Items) {
 		t.Errorf("untouched %+v", got)
 	}
-	changed := p.Change(r, cleanflow.SetItem(p.Sel, cleanup.Category{ID: "a"}, "1", false))
-	if got := changed.Refs(r); !slices.Equal(got, []advice.ItemRef{ref("a", "2"), ref("b", "3")}) {
+	changed := ChangeCard(ch, r, scan, cleanflow.SetItem(CardPick(r, ch, scan).Sel, cleanup.Category{ID: "a"}, "1", false))
+	if got := CardPick(r, changed, scan).Refs(r); !slices.Equal(got, []advice.ItemRef{ref("a", "2"), ref("b", "3")}) {
 		t.Fatalf("changed %v", got)
 	}
-	got := changed.Reconcile(newer)
-	if !got.Touched || got.Added != 1 || !slices.Equal(got.Refs(newer), []advice.ItemRef{ref("b", "3")}) {
+	changed = changed.Reconcile(newerScan.Categories)
+	got := CardPick(newer, changed, newerScan)
+	if got.Added != 1 || !slices.Equal(got.Refs(newer), []advice.ItemRef{ref("b", "3")}) {
 		t.Errorf("touched %+v %v", got, got.Refs(newer))
 	}
 	// Added counts from the last change, again on the next result.
-	if again := got.Reconcile(newer); again.Added != 1 {
+	if again := CardPick(newer, changed.Reconcile(newerScan.Categories), newerScan); again.Added != 1 {
 		t.Errorf("again %+v", again)
 	}
 	if req := CleanRequest(newer, got); !slices.Equal(req.CategoryIDs, []string{"b"}) || !slices.Equal(req.ItemIDs, []string{"3"}) {

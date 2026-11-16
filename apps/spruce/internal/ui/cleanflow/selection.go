@@ -1,6 +1,9 @@
 package cleanflow
 
 import (
+	"maps"
+	"strings"
+
 	"spruce/apps/spruce/internal/engine/advice"
 	"spruce/apps/spruce/internal/engine/cleanup"
 )
@@ -52,17 +55,22 @@ func (s Selection) clone() Selection {
 func DefaultSelection(categories []cleanup.Category) Selection {
 	sel := Selection{}
 	for _, c := range categories {
-		var picked []string
-		for _, it := range c.Items {
-			if (c.Selected || it.Selected) && it.Hold == "" {
-				picked = append(picked, it.ID)
-			}
-		}
-		if len(picked) > 0 {
+		if picked := defaults(c); len(picked) > 0 {
 			sel[c.ID] = set(picked)
 		}
 	}
 	return sel
+}
+
+// defaults are the IDs of c's items that start checked (DefaultSelection).
+func defaults(c cleanup.Category) []string {
+	var picked []string
+	for _, it := range c.Items {
+		if (c.Selected || it.Selected) && it.Hold == "" {
+			picked = append(picked, it.ID)
+		}
+	}
+	return picked
 }
 
 // CategoryState says whether none, some or all of a category's items that may be checked are checked; a category with none that may be (empty, or every item held) is CheckNone.
@@ -164,6 +172,117 @@ func Reconcile(sel Selection, categories []cleanup.Category) Selection {
 		}
 		if len(kept) > 0 {
 			out[c.ID] = set(kept)
+		}
+	}
+	return out
+}
+
+// Choice is what is checked among the items of a check as the user left it, which 概览's cards and the drill-down views share (Kept): Sel is what is checked; Touched are the categories the user changed, each with the IDs of its items then; Whole are the sources the user changed in a drill-down view, which counts as changing every category of theirs, those a newer check adds too.
+type Choice struct {
+	Sel     Selection
+	Touched map[string]map[string]struct{}
+	Whole   map[string]bool
+}
+
+// sourceOf is the source of a merged category: Category.Source, else the prefix of its ID.
+func sourceOf(c cleanup.Category) string {
+	if c.Source != "" {
+		return c.Source
+	}
+	src, _, _ := strings.Cut(c.ID, ":")
+	return src
+}
+
+// touched reports whether the user changed c.
+func (ch Choice) touched(c cleanup.Category) bool {
+	_, ok := ch.Touched[c.ID]
+	return ok || ch.Whole[sourceOf(c)]
+}
+
+// Reconcile is ch over a newer check of categories: a category the user did not change takes the check's defaults (DefaultSelection); one the user changed keeps the checks of its items still there and not held, and leaves the items it gained unchecked. Categories no longer there are forgotten.
+func (ch Choice) Reconcile(categories []cleanup.Category) Choice {
+	out := Choice{Sel: Selection{}, Touched: map[string]map[string]struct{}{}, Whole: ch.Whole}
+	for _, c := range categories {
+		if !ch.touched(c) {
+			if picked := defaults(c); len(picked) > 0 {
+				out.Sel[c.ID] = set(picked)
+			}
+			continue
+		}
+		if base, ok := ch.Touched[c.ID]; ok {
+			out.Touched[c.ID] = base
+		}
+		maps.Copy(out.Sel, Reconcile(ch.Sel, []cleanup.Category{c}))
+	}
+	return out
+}
+
+// Change is ch once the user checked next, a whole selection, by changing categories (a card's, or a drill-down view's), whose items it records as they are now; whole is the source of the drill-down view the change was made in ("" for a card).
+func (ch Choice) Change(next Selection, categories []cleanup.Category, whole string) Choice {
+	out := Choice{Sel: next, Touched: maps.Clone(ch.Touched), Whole: ch.Whole}
+	if out.Touched == nil {
+		out.Touched = map[string]map[string]struct{}{}
+	}
+	for _, c := range categories {
+		ids := make([]string, len(c.Items))
+		for i, it := range c.Items {
+			ids[i] = it.ID
+		}
+		out.Touched[c.ID] = set(ids)
+	}
+	if whole != "" && !ch.Whole[whole] {
+		out.Whole = maps.Clone(ch.Whole)
+		if out.Whole == nil {
+			out.Whole = map[string]bool{}
+		}
+		out.Whole[whole] = true
+	}
+	return out
+}
+
+// Added counts the items of refs, in categories, that a newer check added to a category the user had changed: Reconcile left them unchecked.
+func (ch Choice) Added(categories []cleanup.Category, refs []advice.ItemRef) int {
+	byID := make(map[string]cleanup.Category, len(categories))
+	for _, c := range categories {
+		byID[c.ID] = c
+	}
+	n := 0
+	for _, ref := range refs {
+		c, ok := byID[ref.CategoryID]
+		if !ok || !ch.touched(c) {
+			continue
+		}
+		if _, had := ch.Touched[c.ID][ref.ItemID]; !had {
+			n++
+		}
+	}
+	return n
+}
+
+// WithinRefs applies next to refs only: each of refs is checked as next has it, and every other check of all stays. A card, which holds part of its categories, changes its own items so.
+func WithinRefs(all Selection, refs []advice.ItemRef, next Selection) Selection {
+	out := all.clone()
+	changed := map[string]map[string]struct{}{}
+	for _, ref := range refs {
+		items, ok := changed[ref.CategoryID]
+		if !ok {
+			items = maps.Clone(all[ref.CategoryID])
+			if items == nil {
+				items = map[string]struct{}{}
+			}
+			changed[ref.CategoryID] = items
+		}
+		if next.Has(ref.CategoryID, ref.ItemID) {
+			items[ref.ItemID] = struct{}{}
+		} else {
+			delete(items, ref.ItemID)
+		}
+	}
+	for id, items := range changed {
+		if len(items) == 0 {
+			delete(out, id)
+		} else {
+			out[id] = items
 		}
 	}
 	return out

@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/history"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/scancache"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
@@ -76,6 +77,9 @@ type page struct {
 	ov     *store.Overview
 	nav    *nav.Navigator
 	deps   Deps
+	// kept and choice are what the page keeps in the app's scope: its own, and what is checked, which the drill-down views share.
+	kept   *kept
+	choice *cleanflow.Kept
 	ref    *core.Ref
 	// active is the card whose action runs, or emptyTrash, "" for none: one thing at a time.
 	active *core.Signal[string]
@@ -300,8 +304,9 @@ func unanswered(st app.OverviewState) bool { return !st.Loaded }
 // Page is 概览.
 func Page(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
-	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), ref: new(core.Ref),
-		active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: core.NewSignal(cx, false), focus: core.NewSignal(cx, ""),
+	k := keptKey.Use(cx)
+	p := &page{cx: cx, ctx: cx.Context(), stores: stores, ov: stores.Overview, nav: nav.Use(cx), deps: DepsKey.Use(cx), kept: k, choice: cleanflow.UseKept(cx),
+		ref: new(core.Ref), active: core.NewSignal(cx, ""), checkErr: core.NewSignal(cx, ""), more: k.more, focus: core.NewSignal(cx, ""),
 		held: core.NewSignalFunc(cx, map[string]heldCard{}, nil), dialog: core.NewSignal[*kit.ConfirmDialog](cx, nil), now: core.NewSignal(cx, cx.WallTime()),
 		reduce: cx.Env().ReduceMotion}
 	seen, _ := seenAuto.Load(p.ov)

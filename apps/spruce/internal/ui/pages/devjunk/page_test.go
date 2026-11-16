@@ -14,6 +14,7 @@ import (
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
+	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/devjunk"
@@ -110,7 +111,8 @@ func startSized(t *testing.T, st app.OverviewState, roots []string, size nsgotes
 		for _, f := range before {
 			f(p.nav)
 		}
-		devjunk.DepsKey.Provide(cx, devjunk.Deps{Files: p.files})
+		cleanflow.Provide(cx)
+		devjunk.Provide(cx, devjunk.Deps{Files: p.files})
 		return core.Dynamic(func(*core.Scope) core.Node {
 			if p.nav.Current() != nav.DevJunk {
 				return core.Group{}
@@ -457,5 +459,44 @@ func TestFilterCleansOnlyWhatItShows(t *testing.T) {
 	want := []string{id(shop + "/node_modules"), id(shop + "/.next")}
 	if got := p.cleans()[0].Req.ItemIDs; !reflect.DeepEqual(got, want) {
 		t.Errorf("cleaned %v, want %v", got, want)
+	}
+}
+
+// Leaving the view keeps its tab, its filter, what is checked and the projects open; a link that asks for a tab opens on it with every project shown.
+func TestComesBackAsLeft(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press("id:projects-filter-idle")
+	p.Press(p.project(shop) + "-expand")
+	p.WaitFor(p.project(shop)+"-items", wait)
+	p.Press("id:item-" + id(shop+"/.next"))
+	away := func() {
+		p.nav.Go(nav.Overview)
+		p.WaitForGone("id:drill-dev-junk", wait)
+		p.nav.Go(nav.DevJunk)
+		p.WaitFor("id:drill-dev-junk", wait)
+	}
+	away()
+	if !p.Find("id:projects-filter-idle").Props.Pressed {
+		t.Error("the filter went back to 全部")
+	}
+	if p.Exists(p.project(tool)) {
+		t.Error("a project the filter hides shows")
+	}
+	p.WaitFor(p.project(shop)+"-items", wait)
+	if p.checked("id:item-"+id(shop+"/.next")) || !p.checked("id:item-"+id(shop+"/node_modules")) {
+		t.Error("what was checked changed")
+	}
+	p.Press("id:tab-tools")
+	p.WaitFor("id:list-tools", wait)
+	away()
+	p.WaitFor("id:list-tools", wait)
+
+	p.nav.Go(nav.Overview)
+	p.WaitForGone("id:drill-dev-junk", wait)
+	p.nav.GoDevTab(nav.DevProjects)
+	p.WaitFor("id:projects", wait)
+	if !p.Find("id:projects-filter-all").Props.Pressed {
+		t.Error("a link opened 项目 under a filter")
 	}
 }

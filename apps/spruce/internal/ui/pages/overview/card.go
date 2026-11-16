@@ -41,26 +41,17 @@ const monoFont = "Menlo, Consolas, monospace"
 // recCard is one recommendation card: what to do, why and what follows, its one button, and its items once expanded.
 func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index func() int) core.Node {
 	id := core.Untracked(cx, rec).ID
-	open := core.NewSignal(cx, false)
-	pick := core.NewSignalFunc(cx, DefaultPick(core.Untracked(cx, rec)), nil)
+	// What is checked, which cards are open and what a clean left are kept in the app's scope, so leaving 概览 loses none of them; what is checked is shared with the drill-down views.
+	choice := p.choice.Choice
+	pick := core.NewMemoFunc(cx, func() Pick { return CardPick(rec(), choice.Get(), p.scan()) }, nil)
+	open := func() bool { return p.kept.isOpen(id) }
 	showProgress := core.NewSignal(cx, false)
-	failed := core.NewSignal(cx, 0)
 	ref := new(core.Ref)
 	// The card's context, taken as it is made: a handler's own ends with it.
 	cardCtx := cx.Context()
 	// A confirmation the card opened closes when the card goes.
 	ask := p.asker(cx)
 
-	// A newer result updates the card in place: what the user checked stays (Pick.Reconcile).
-	first := true
-	cx.Effect(func() {
-		r := rec()
-		if first {
-			first = false
-			return
-		}
-		cx.Untrack(func() { pick.Set(pick.GetUntracked().Reconcile(r)) })
-	})
 	// GoOverviewCard: this card opens and the page scrolls to it.
 	cx.Effect(func() {
 		if p.focus.Get() != id {
@@ -68,7 +59,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		}
 		cx.Untrack(func() {
 			p.focus.Set("")
-			open.Set(true)
+			p.kept.setOpen(id, true)
 			ref.Measure(func(_, b core.Bounds, ok bool) {
 				content, ok2 := p.ref.ContentBounds()
 				if ok && ok2 {
@@ -122,21 +113,24 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 			return
 		}
 		undo := canUndo()
-		stores := p.stores
+		stores, k := p.stores, p.kept
 		p.active.Set(id)
 		p.hold(r, index())
-		failed.Set(0)
+		k.setFailed(id, 0)
 		showProgress.Set(a == advice.ActionDelete || a == advice.ActionCommand)
 		p.ov.Clean(p.cx, req, app.CleanOrigin{Recommendation: r.ID}, nil,
 			func(out app.OverviewOutcome, err error) {
 				p.active.Set("")
 				showProgress.Set(false)
-				if err == nil {
-					failed.Set(len(out.Result.Failed))
-				}
 				p.release(id)
 			},
-			func(out app.OverviewOutcome, err error) { cleaned(stores, a, out, err, undo) })
+			func(out app.OverviewOutcome, err error) {
+				// What could not be handled is kept with the card in the app's scope, also when 概览 went meanwhile.
+				if err == nil {
+					k.setFailed(id, len(out.Result.Failed))
+				}
+				cleaned(stores, a, out, err, undo)
+			})
 	}
 
 	act := func() {
@@ -220,8 +214,8 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		return core.Func(func(*core.Scope) core.Node {
 			return core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, ColumnGap: 12, RowGap: 6}, Children: []core.Node{
 				actButton, autoLink,
-				core.Show{When: func() bool { return failed.Get() > 0 && !busy() }, Then: func(*core.Scope) core.Node {
-					return bodyText(func() string { return strconv.Itoa(failed.Get()) + " 项未能处理" }, kit.ColorWarning, "rec-"+id+"-failed")
+				core.Show{When: func() bool { return p.kept.failedOf(id) > 0 && !busy() }, Then: func(*core.Scope) core.Node {
+					return bodyText(func() string { return strconv.Itoa(p.kept.failedOf(id)) + " 项未能处理" }, kit.ColorWarning, "rec-"+id+"-failed")
 				}},
 			}}
 		})
@@ -257,7 +251,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 				Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontWeight: kit.FaceWeight(kit.Bold), FontSize: kit.FontCardTitle, Color: kit.ColorText}}),
 			kit.Tabular(kit.TextFunc(func() string { return countText(len(rec().Items)) }, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
 		}},
-		expandButton(id, title, open),
+		expandButton(id, title, open, func() { p.kept.setOpen(id, !core.Untracked(cx, open)) }),
 	}}
 	consequence := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, ColumnGap: 8, RowGap: 6, Padding: indent},
 		Children: []core.Node{
@@ -272,7 +266,7 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		head, consequence,
 		core.View{Style: core.Style{Padding: indent}, Children: []core.Node{actions}},
 	}}
-	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
+	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
 		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{cardItems(cx, p, id, rec, pick, reveal, func() bool { return busy() || leaving() })}}
 	}}
 	// Cards come in one after another as the page shows them.
@@ -326,11 +320,11 @@ func progressRow(id string, progress func() cleanup.Progress, stop func()) core.
 	}}
 }
 
-// expandButton opens and closes a card's items (.icon-button.category-expand).
-func expandButton(id string, title func() string, open *core.Signal[bool]) core.Node {
-	return core.View{Role: core.RoleButton, TestID: "rec-" + id + "-expand", Expandable: func() bool { return true }, Expanded: open.Get,
+// expandButton opens and closes a card's items (.icon-button.category-expand): open reports whether they show, toggle opens or closes them.
+func expandButton(id string, title func() string, open func() bool, toggle func()) core.Node {
+	return core.View{Role: core.RoleButton, TestID: "rec-" + id + "-expand", Expandable: func() bool { return true }, Expanded: open,
 		LabelFunc: func() string {
-			if open.Get() {
+			if open() {
 				return "收起" + title()
 			}
 			return "展开" + title()
@@ -339,19 +333,22 @@ func expandButton(id string, title func() string, open *core.Signal[bool]) core.
 			JustifyContent: core.JustifyCenter, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
 			Hover:        &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText}},
-		OnPress:  func(core.PressEvent) { open.Set(!open.GetUntracked()) },
-		Children: []core.Node{kit.Chevron{Open: open.Get}},
+		OnPress:  func(core.PressEvent) { toggle() },
+		Children: []core.Node{kit.Chevron{Open: open}},
 	}
 }
 
 // cardItems is an expanded card: how much is checked with 全选 and 全不选, what a newer check added unchecked, the items by category, and the link to the drill-down view.
-func cardItems(cx *core.Scope, p *page, id string, rec func() advice.Recommendation, pick *core.Signal[Pick], reveal func(string), disabled func() bool) core.Node {
+func cardItems(cx *core.Scope, p *page, id string, rec func() advice.Recommendation, pick *core.Memo[Pick], reveal func(string), disabled func() bool) core.Node {
 	cats := core.NewMemoFunc(cx, func() []cleanup.Category { return cardCategories(p.scan(), rec()) }, nil)
 	summary := func() string {
 		refs := pick.Get().Refs(rec())
 		return "已选 " + strconv.Itoa(len(refs)) + "/" + strconv.Itoa(len(rec().Items)) + " 项 · " + format.Bytes(Sum(p.scan(), refs))
 	}
-	set := func(sel cleanflow.Selection) { pick.Set(pick.GetUntracked().Change(core.Untracked(cx, rec), sel)) }
+	choice := p.choice.Choice
+	set := func(sel cleanflow.Selection) {
+		choice.Set(ChangeCard(choice.GetUntracked(), core.Untracked(cx, rec), core.Untracked(cx, p.scan), sel))
+	}
 	toolbar := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, RowGap: 6, ColumnGap: 12, Padding: core.Symmetric(10, 20)},
 		Children: []core.Node{
 			core.View{Style: core.Style{AutoMargin: core.SideRight}, Children: []core.Node{
@@ -406,7 +403,7 @@ func devTab(r advice.Recommendation) nav.DevTab {
 }
 
 // categoryItems lists one category's items of a card: in place up to scrollItemsAfter, else in a list that scrolls inside the card.
-func categoryItems(c cleanup.Category, pick *core.Signal[Pick], set func(cleanflow.Selection),
+func categoryItems(c cleanup.Category, pick *core.Memo[Pick], set func(cleanflow.Selection),
 	disabled func() bool, reveal func(string)) core.Node {
 	row := func(it cleanup.Item) core.Node {
 		return cleanflow.ItemRow{Item: it, Disabled: disabled, Reveal: reveal,

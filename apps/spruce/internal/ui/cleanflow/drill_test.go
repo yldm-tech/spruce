@@ -107,6 +107,7 @@ func startSized(t *testing.T, st app.OverviewState, size nsgotest.Option, before
 	p := &page{ov: ov, files: &cleanflowfake.Files{}, tb: t}
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
+		cleanflow.Provide(cx)
 		p.nav = nav.NewNavigator(cx, nav.Overview)
 		nav.Key.Provide(cx, p.nav)
 		for _, f := range before {

@@ -19,7 +19,13 @@ import (
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	d := cleanflow.NewDrill(cx, string(nav.DevJunk), overview.CleanToast)
-	tab := core.NewSignal(cx, firstTab(nav.Use(cx), d.Reveal))
+	k := keptKey.Use(cx)
+	// A link that asks for a tab or a category opens on it with every project shown; otherwise the view opens as it was left.
+	if t, asked := firstTab(nav.Use(cx), d.Reveal); asked {
+		k.tab.Set(t)
+		k.filter.Set(FilterAll)
+	}
+	tab := k.tab
 	rev := revealer(deps.Files)
 	tabs := kit.Tabs[nav.DevTab]{Label: "开发者", Value: tab.Get, OnChange: tab.Set, Options: []kit.Option[nav.DevTab]{
 		{Value: nav.DevProjects, Label: "项目", TestID: "tab-projects"},
@@ -32,29 +38,33 @@ func Page(cx *core.Scope) core.Node {
 				if tab.Get() == nav.DevTools {
 					return core.Func(func(cx *core.Scope) core.Node { return toolsTab(cx, d, rev) })
 				}
-				return core.Func(func(cx *core.Scope) core.Node { return projectsTab(cx, d, rev) })
+				return core.Func(func(cx *core.Scope) core.Node { return projectsTab(cx, d, k.filter, rev) })
 			}),
 		}
 	}}
 	return core.Group{
-		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, Header: kit.PageHeader{Route: nav.DevJunk}, Children: []core.Node{
+		kit.Page{TestID: "drill-dev-junk", Ref: d.Page, ScrollKey: nav.DevJunk, Header: kit.PageHeader{Route: nav.DevJunk}, Children: []core.Node{
 			cleanflow.DrillStatus(d), cleanflow.DrillNotices(d, DeniedNotice), body,
 		}},
 		cleanflow.DrillLayers(d),
 	}
 }
 
-// firstTab is the tab the view opens on: the one a link asked for (nav.Navigator.GoDevTab), else 工具缓存 for a tool's category to reveal, else 项目.
-func firstTab(n *nav.Navigator, reveal string) nav.DevTab {
+// firstTab is the tab a link asks the view to open on, and whether one asks: the tab it names (nav.Navigator.GoDevTab), else the tab of the category it reveals, 工具缓存 for a tool's and 项目 for build output.
+func firstTab(n *nav.Navigator, reveal string) (nav.DevTab, bool) {
 	if n != nil {
 		if t := n.TakeDevTab(); t != "" {
-			return t
+			return t, true
 		}
 	}
-	if _, id, ok := strings.Cut(reveal, ":"); ok && !strings.HasPrefix(id, "artifact-") {
-		return nav.DevTools
+	_, id, ok := strings.Cut(reveal, ":")
+	switch {
+	case !ok:
+		return "", false
+	case strings.HasPrefix(id, "artifact-"):
+		return nav.DevProjects, true
 	}
-	return nav.DevProjects
+	return nav.DevTools, true
 }
 
 // toolsTab is 工具缓存: the tools' caches in one CategoryList, whose 全选 and 全不选 act on them only, with 清理.
@@ -78,7 +88,7 @@ func toolsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
 			return core.Group{
 				core.View{TestID: "section-tools", Style: core.Style{Gap: 10, FlexShrink: 0}, Children: []core.Node{
 					heading("工具缓存", "heading-tools"),
-					cleanflow.CategoryList{Categories: tools.Get, Selection: d.Selection.Get, Label: "工具缓存", Reveal: rev, Disabled: d.Cleaning,
+					cleanflow.CategoryList{Categories: tools.Get, Selection: d.Selection.Get, Label: "工具缓存", Reveal: rev, Disabled: d.Cleaning, Open: d.Open, OnOpen: d.SetOpen,
 						OnChange: func(next cleanflow.Selection) {
 							d.Change(cleanflow.WithinGroup(d.Selection.GetUntracked(), tools.GetUntracked(), next))
 						},
