@@ -119,9 +119,12 @@ func Page(cx *core.Scope) core.Node {
 				return kit.Stat{Label: label, Value: format.BytesIn(0, windows)}
 			}
 			if s.Plan.Get() == nil {
-				// Until its leftovers are found the total is not known: the app's own size, when measured, else an ellipsis.
+				// Until its leftovers are found the total is not known: the app's own size, when measured, else an ellipsis, or a dash once the lookup failed.
 				if d := s.DetailsOf(a.ID); d.HasSize {
 					return kit.Stat{Label: label, Value: format.BytesIn(d.Size, windows)}
+				}
+				if s.PlanErr.Get() != "" {
+					return kit.Stat{Label: label, Value: "—"}
 				}
 				return kit.Stat{Label: label, Value: "…"}
 			}

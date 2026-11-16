@@ -850,12 +850,18 @@ func TestDoneCardOffersUndoForWhatMoved(t *testing.T) {
 func TestShowsWhyTheLeftoversCouldNotBeFound(t *testing.T) {
 	svc := macService()
 	svc.PlanErr = errors.New("没能查找相关文件，详情已记录到日志")
+	// No size is measured either.
+	svc.Details = nil
 	p := start(t, svc, uninstall.PlatformMac)
 	p.waitList()
 	p.pick("Bar")
 	p.WaitFor("text:没能查找相关文件，详情已记录到日志", wait)
 	if p.Enabled("id:uninstall") {
 		t.Error("卸载 enabled without the leftovers")
+	}
+	// The total is not known, and no longer looked for.
+	if got := p.stat("将移到废纸篓"); got != "—" {
+		t.Errorf("size %q after the lookup failed", got)
 	}
 	svc.SetPlan(fooPlan(), nil)
 	p.Press("id:plan-retry")
