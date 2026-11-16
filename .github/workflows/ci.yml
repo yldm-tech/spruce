@@ -2,7 +2,7 @@ name: CI
 
 # The checks every pull request and every push to main must pass. A push to main that passes starts the Release workflow, which releases it when its commits call for a new version.
 #
-# Every job runs on a GitHub-hosted runner, named here as a literal label, so that no setting can send a job, or a fork's pull request, to another machine. Pull requests run with the pull_request event only: a fork's code gets a read-only token and no secrets.
+# Every job runs on a GitHub-hosted runner, named as a literal label rather than from a variable. A fork's pull request runs the workflow file of its own branch, so this file cannot keep it off a self-hosted runner: the organization's runner groups must not allow public repositories. Pull requests run with the pull_request event only: a fork's code gets a read-only token and no secrets.
 on:
   pull_request:
   push:
@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # apps/spruce/scripts/check.sh, the acceptance checks of the app: gofmt, vet and build for macOS and Windows on both architectures without cgo, the tests with the race detector, golangci-lint for macOS and Windows, the headless nsgo tests and nsgo check. It runs on macOS, where the app's own tests run.
+  # apps/spruce/scripts/check.sh, the acceptance checks of the app: gofmt, vet and build for macOS and Windows on both architectures without cgo, the third-party notices, the tests with the race detector, golangci-lint for macOS and Windows, the headless nsgo tests and nsgo check. It runs on macOS, where the app's own tests run.
   check:
     name: Check (macOS)
     runs-on: macos-latest
