@@ -420,3 +420,42 @@ func TestHeldProjectTooltip(t *testing.T) {
 		t.Error("the held project's tooltip stays on another row")
 	}
 }
+
+// A filter leaves out what it hides: the projects checked out of view are neither counted nor cleaned, and the confirmation names the projects it cleans.
+func TestFilterCleansOnlyWhatItShows(t *testing.T) {
+	p := start(t, ready(), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	shop, tool := "/Users/me/Workspace/shop", "/Users/me/Workspace/tool"
+	p.Press(p.project(tool) + "-check")
+	if got := p.stat("已选择"); got != "2 个项目" {
+		t.Fatalf("已选择 %q", got)
+	}
+	// Only blog has uncommitted changes, and it is held.
+	p.Press("id:projects-filter-dirty")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 1 })
+	if got := p.stat("已选择"); got != "0 个项目" {
+		t.Errorf("已选择 %q under 有未提交的改动", got)
+	}
+	if got := p.stat("已选大小"); got != "0 B" {
+		t.Errorf("已选大小 %q under 有未提交的改动", got)
+	}
+	if !p.disabled("id:clean") {
+		t.Fatal("清理 acts on projects the filter hides")
+	}
+	// Idle: shop is shown, tool is not.
+	p.Press("id:projects-filter-idle")
+	p.WaitUntil(wait, func() bool { return len(p.Query("id:projects >> role:checkbox")) == 3 })
+	if got := p.stat("已选择"); got != "1 个项目" {
+		t.Errorf("已选择 %q under 闲置", got)
+	}
+	p.Press("id:clean")
+	p.WaitFor("id:confirm", wait)
+	if got := p.Find("id:confirm-projects").Text; got != "项目：shop" {
+		t.Errorf("projects %q", got)
+	}
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { return len(p.cleans()) == 1 })
+	want := []string{id(shop + "/node_modules"), id(shop + "/.next")}
+	if got := p.cleans()[0].Req.ItemIDs; !reflect.DeepEqual(got, want) {
+		t.Errorf("cleaned %v, want %v", got, want)
+	}
+}

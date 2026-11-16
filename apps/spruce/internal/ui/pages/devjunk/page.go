@@ -90,22 +90,31 @@ func toolsTab(cx *core.Scope, d *cleanflow.Drill, rev reveal) core.Node {
 					func() int { return plan().Count },
 					func() {
 						cats := tools.GetUntracked()
-						d.RequestClean(cats, confirmation, OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
+						d.RequestClean(cats, confirmation(nil), OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
 					}, cleanRef),
 			}
 		})
 	})
 }
 
-// confirmation is the question asked before cleaning the checked items of cats: the total, then one bulleted line per way things go.
-func confirmation(cats []cleanup.Category, sel cleanflow.Selection) kit.ConfirmDialog {
-	c := ConfirmationLines(CleanPlan(cats, sel))
-	return kit.ConfirmDialog{Title: "确认清理", Message: confirmMessage(c), ConfirmLabel: "清理", Danger: c.Danger, TestID: "confirm"}
+// confirmation is the question asked before cleaning the checked items of cats: the total, the projects names gives (nil for none), then one bulleted line per way things go.
+func confirmation(names func(cleanflow.Selection) string) func(cats []cleanup.Category, sel cleanflow.Selection) kit.ConfirmDialog {
+	return func(cats []cleanup.Category, sel cleanflow.Selection) kit.ConfirmDialog {
+		c := ConfirmationLines(CleanPlan(cats, sel))
+		projects := ""
+		if names != nil {
+			projects = names(sel)
+		}
+		return kit.ConfirmDialog{Title: "确认清理", Message: confirmMessage(c, projects), ConfirmLabel: "清理", Danger: c.Danger, TestID: "confirm"}
+	}
 }
 
-// confirmMessage is the confirmation's body: the total, then one bulleted line per way things go.
-func confirmMessage(c Confirmation) core.Node {
+// confirmMessage is the confirmation's body: the total, the projects it cleans ("" for none), then one bulleted line per way things go.
+func confirmMessage(c Confirmation, projects string) core.Node {
 	children := []core.Node{core.Text{Content: c.Summary, TestID: "confirm-summary", Style: core.Style{Margin: core.Edges{Bottom: 8}}}}
+	if projects != "" {
+		children = append(children, core.Text{Content: projects, TestID: "confirm-projects", Style: core.Style{Margin: core.Edges{Bottom: 8}}})
+	}
 	if len(c.Lines) > 0 {
 		lines := make([]core.Node, len(c.Lines))
 		for i, l := range c.Lines {

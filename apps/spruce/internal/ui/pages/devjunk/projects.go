@@ -129,16 +129,19 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, projec
 	list := kit.Card{Clip: true, TestID: "projects", Style: core.Style{FlexShrink: 0}, Children: []core.Node{
 		core.View{Role: core.RoleGroup, Label: "项目", Children: []core.Node{rows}},
 	}}
-	plan := func() Plan { return CleanPlan(artifacts(), d.Selection.Get()) }
+	// What the bar counts and cleans is what the filter shows.
+	shownArtifacts := core.NewMemoFunc(cx, func() []cleanup.Category { return ArtifactsOf(shown.Get(), artifacts()) }, nil)
+	plan := func() Plan { return CleanPlan(shownArtifacts.Get(), d.Selection.Get()) }
+	names := func(sel cleanflow.Selection) string { return ProjectNames(shown.GetUntracked(), sel) }
 	bar := cleanflow.DrillBar(d,
 		func() kit.Stat {
-			return kit.Stat{Label: "已选择", Value: strconv.Itoa(SelectedProjects(projects(), d.Selection.Get())) + " 个项目"}
+			return kit.Stat{Label: "已选择", Value: strconv.Itoa(SelectedProjects(shown.Get(), d.Selection.Get())) + " 个项目"}
 		},
 		func() kit.Stat { return kit.Stat{Label: "已选大小", Value: format.Bytes(plan().Bytes)} },
 		func() int { return plan().Count },
 		func() {
-			cats := core.Untracked(cx, artifacts)
-			d.RequestClean(cats, confirmation, OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
+			cats := shownArtifacts.GetUntracked()
+			d.RequestClean(cats, confirmation(names), OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
 		}, cleanRef)
 	return core.Group{toolbar, tools, list, bar}
 }

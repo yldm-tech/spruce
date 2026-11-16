@@ -281,3 +281,39 @@ func TestProjects(t *testing.T) {
 		t.Errorf("items %+v", got)
 	}
 }
+
+// ArtifactsOf keeps only the build output of the projects given; ProjectNames names the checked ones, five at most.
+func TestArtifactsOfAndProjectNames(t *testing.T) {
+	cats := []cleanup.Category{
+		modelCategory("nm", cleanup.KindProjectArtifact, cleanup.DeletePermanent, "a", "b", "c"),
+		modelCategory("next", cleanup.KindProjectArtifact, cleanup.DeletePermanent, "d"),
+	}
+	project := func(path string, refs ...engdev.ProjectItem) engdev.Project {
+		return engdev.Project{ID: path, Path: path, Items: refs}
+	}
+	a := project("/w/a", engdev.ProjectItem{CategoryID: "nm", ItemID: "a"}, engdev.ProjectItem{CategoryID: "next", ItemID: "d"})
+	b := project("/w/b", engdev.ProjectItem{CategoryID: "nm", ItemID: "b"})
+	got := devjunk.ArtifactsOf([]engdev.Project{b}, cats)
+	if len(got) != 1 || got[0].ID != "nm" || len(got[0].Items) != 1 || got[0].Items[0].ID != "b" || got[0].Size != 100 {
+		t.Errorf("artifacts of b %+v", got)
+	}
+	if got := devjunk.ArtifactsOf([]engdev.Project{a, b}, cats); len(got) != 2 || len(got[0].Items) != 2 {
+		t.Errorf("artifacts of a and b %+v", got)
+	}
+	sel := cleanflow.Selection{"nm": {"b": {}}, "next": {"d": {}}}
+	if got := devjunk.ProjectNames([]engdev.Project{a, b}, sel); got != "项目：a、b" {
+		t.Errorf("names %q", got)
+	}
+	if got := devjunk.ProjectNames([]engdev.Project{a, b}, cleanflow.NothingSelected); got != "" {
+		t.Errorf("no names %q", got)
+	}
+	var many []engdev.Project
+	all := cleanflow.Selection{"nm": {}}
+	for _, n := range []string{"p1", "p2", "p3", "p4", "p5", "p6", "p7"} {
+		many = append(many, project("/w/"+n, engdev.ProjectItem{CategoryID: "nm", ItemID: n}))
+		all["nm"][n] = struct{}{}
+	}
+	if got := devjunk.ProjectNames(many, all); got != "项目：p1、p2、p3、p4、p5 等 7 个" {
+		t.Errorf("many %q", got)
+	}
+}
