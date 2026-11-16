@@ -293,6 +293,28 @@ func TestChosenLargeFilesMoveTogether(t *testing.T) {
 	p.WaitFor(`id:page-footer >> text:"2 项"`, wait)
 }
 
+// TestOneMoveKeepsTheOthersChosen: moving one large file with its own button leaves the rows chosen before it chosen.
+func TestOneMoveKeepsTheOthersChosen(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	trashed(svc)
+	clip := spacefake.Entry(8, app.SpaceFile, "clip.mov", 0.6e9)
+	svc.Large = append(svc.Large, clip)
+	p := start(t, svc, undoable(t))
+	p.WaitFor(homeList, wait)
+	p.Press("id:tab-large")
+	p.WaitFor(`role:group "大文件"`, wait)
+	p.Press(`role:checkbox "选择 big.iso"`)
+	p.Press(`role:checkbox "选择 data.bin"`)
+	p.WaitFor(`id:page-footer >> text:"2 项"`, wait)
+	p.Press(`role:group "大文件" >> role:button "将 clip.mov 移到废纸篓"`)
+	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
+	p.waitToast()
+	if got := svc.Trashes()[0]; !slices.Equal(got, []string{clip.Path}) {
+		t.Errorf("trash %v", got)
+	}
+	p.Find(`id:page-footer >> text:"2 项"`)
+}
+
 // TestNothingMovesDuringARescan: while the location of the results is scanned again, which refuses a move, the rows' 移到废纸篓 does nothing and the menu's is disabled; Backspace and Cmd+↑ still go up a folder.
 func TestNothingMovesDuringARescan(t *testing.T) {
 	svc := spacefake.New(time.Now())

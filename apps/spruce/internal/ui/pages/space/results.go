@@ -464,6 +464,15 @@ func (r *Results) ConfirmTrash() {
 	}
 }
 
+// unchoose takes paths out of the large files chosen, keeping the others chosen.
+func (r *Results) unchoose(paths []string) {
+	keys := r.Chosen.Keys()
+	kept := slices.DeleteFunc(r.Chosen.Keys(), func(k any) bool { return slices.Contains(paths, k.(string)) })
+	if len(kept) < len(keys) {
+		r.Chosen.Set(kept...)
+	}
+}
+
 // trash moves entries to the Trash in one call, one move at a time, then corrects the sizes the page shows and says what happened: the toast when something moved, the notice when nothing did.
 func (r *Results) trash(entries []app.SpaceEntry) {
 	if r.Trashing.GetUntracked() || len(entries) == 0 {
@@ -485,7 +494,7 @@ func (r *Results) trash(entries []app.SpaceEntry) {
 			r.Notice.Set(Notice{Kind: NoticeError, Text: err.Error()})
 			return
 		}
-		r.Chosen.Clear()
+		r.unchoose(paths)
 		r.settle = true
 		r.page.trashed(scanID, res.Root)
 		r.page.Moved(res.RunID)
