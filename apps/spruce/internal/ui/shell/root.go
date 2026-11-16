@@ -19,10 +19,18 @@ const (
 	toastLong  = 10 * time.Second
 )
 
-// Root is the window's root view: the sidebar and the page area over the page background, with the toast at the bottom of the page area, above the pages and below the dialogs. It shows the page of the navigator the app provides (nav.Key), which outlives the window, so a window opened again shows the page the last one did; it hides the system's title bar (the sidebar and the page headers drag the window) and reports the window's frame to keepFrame as it moves.
-func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame)) core.Node {
+// Root is the window's root view: the sidebar and the page area over the page background, with the toast at the bottom of the page area, above the pages and below the dialogs. It shows the page of the navigator the app provides (nav.Key), which outlives the window, so a window opened again shows the page the last one did; it hides the system's title bar (the sidebar and the page headers drag the window) and reports the window's frame to keepFrame as it moves. Escape (back) leaves a drill-down view unless an overlay holds the sidebar. While asking is set it asks before quitting during a run, whose 停止并退出 calls quit.
+func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame), asking *core.Signal[bool], quit func()) core.Node {
 	desktop.SetTitleBar(cx, desktop.TitleBarHidden, 0)
 	navigator := nav.Use(cx)
+	// The dialogs and overlays, modal layers, take back first.
+	cx.OnBackPress(func() bool {
+		if block.Blocked() || navigator.Current().Meta().Parent == "" {
+			return false
+		}
+		navigator.Back()
+		return true
+	})
 	cx.Effect(func() {
 		if f := desktop.Frame(cx); f.Width > 0 && keepFrame != nil {
 			keepFrame(f)
@@ -40,7 +48,14 @@ func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame)) 
 			}),
 			toastLayer(cx, store.Use(cx), navigator),
 		}}
-	return kit.PageBackground{Children: []core.Node{Sidebar{Nav: navigator, Block: block}, main}}
+	return kit.PageBackground{Children: []core.Node{Sidebar{Nav: navigator, Block: block}, main, quitConfirm(asking, quit)}}
+}
+
+// quitConfirm asks before Spruce quits while a run is active: 继续清理, which has the focus, keeps it running; 停止并退出 calls quit, and the run stops after its current item. Either answer closes the question.
+func quitConfirm(asking *core.Signal[bool], quit func()) core.Node {
+	return kit.ConfirmDialog{Open: asking.Get, Title: "正在清理", Lines: []string{"现在退出，清理会在当前项目完成后停止。"},
+		ConfirmLabel: "停止并退出", CancelLabel: "继续清理", Danger: true, OnConfirm: func() { asking.Set(false); quit() }, OnCancel: func() { asking.Set(false) },
+		TestID: "quit-confirm"}
 }
 
 // toastLayer shows the stores' toast centred at the bottom of the page area, a new kit.Toast for every message so its time starts again. 撤销 puts the run's items back through 概览's controller and then says how it went; 查看 opens the run in 操作历史.

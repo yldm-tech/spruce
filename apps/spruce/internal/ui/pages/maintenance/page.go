@@ -86,7 +86,7 @@ func Page(cx *core.Scope) core.Node {
 	}}
 
 	return core.Group{
-		kit.Page{Children: []core.Node{kit.PageHeader{Route: nav.Maintenance}, shared.AlertBanner{}, grid, bar}},
+		kit.Page{ScrollKey: nav.Maintenance, Header: kit.PageHeader{Route: nav.Maintenance}, Children: []core.Node{shared.AlertBanner{}, grid, bar}},
 		live, overlay, done,
 	}
 }

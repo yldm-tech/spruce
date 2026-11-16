@@ -48,15 +48,18 @@ func buttonStyle(v ButtonVariant, large bool) core.Style {
 		st.MinHeight, st.Padding, st.CornerRadius = core.Pt(46), core.Symmetric(0, 40), 23
 		st.FontSize, st.FontFamily, st.FontWeight = FontCardTitle, FontFace(Bold), FaceWeight(Bold)
 		st.Background, st.Color = ButtonLightBackground, ButtonLightText
+		st.Hover = hoverFilled(0.92)
 		if v == ButtonDanger {
 			st.Background, st.Color = 0, ButtonDangerText
 			st.Gradients = []core.Gradient{GradientDanger()}
+			st.Hover = hoverFilled(1.08)
 		}
 		st.Disabled = &core.Style{Opacity: core.Alpha(0.6), Cursor: core.CursorDefault}
 	case ButtonAccent:
 		st.MinHeight, st.Padding, st.CornerRadius = core.Pt(32), core.Symmetric(0, 14), 16
 		st.FontFamily, st.FontWeight, st.Color = FontFace(Semibold), FaceWeight(Semibold), RunButtonText
 		st.Gradients = []core.Gradient{GradientAccent()}
+		st.Hover = hoverFilled(1.08)
 		st.Disabled = &core.Style{Opacity: core.Alpha(0.6), Cursor: core.CursorDefault}
 	case ButtonLink:
 		st.Padding, st.Color = core.Symmetric(2, 4), ColorTextSecondary

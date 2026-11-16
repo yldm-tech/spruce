@@ -61,7 +61,7 @@ func Page(cx *core.Scope) core.Node {
 		return core.Group{}
 	})
 
-	return kit.Page{TestID: "space-page", Children: []core.Node{kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, body}}
+	return kit.Page{TestID: "space-page", Header: kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, Children: []core.Node{body}}
 }
 
 // scanningView takes the page's place while a scan runs: the spinning ring (a walk cannot know its length in advance), the files and space counted so far, the folder being read and 停止.

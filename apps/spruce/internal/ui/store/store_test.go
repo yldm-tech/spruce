@@ -311,6 +311,29 @@ func TestAlertsBroadcastWinsOverTheFirstAnswer(t *testing.T) {
 	}
 }
 
+// Ignore hides a process's alerts for the rest of the session, also those the monitor broadcasts after it, and the others still show.
+func TestAlertsIgnoreHidesAProcessForTheSession(t *testing.T) {
+	h := newHost(t)
+	block := make(chan struct{})
+	close(block)
+	ch := make(chan []health.Alert, 1)
+	st := newStores(t, h, &fakeSettings{}, fakeAlerts{ch: ch, block: block}, fakeFeed{make(chan settings.AppSettings)}, make(chan history.Run))
+	ch <- []health.Alert{{PID: 1, Name: "Xcode"}, {PID: 2, Name: "node"}}
+	h.until(t, func() bool { return len(st.Alerts.List()) == 2 })
+	st.Alerts.Ignore("Xcode")
+	if got := st.Alerts.List(); len(got) != 1 || got[0].Name != "node" {
+		t.Fatalf("after Ignore: %+v", got)
+	}
+	// Xcode starts again under another PID; it stays hidden.
+	ch <- []health.Alert{{PID: 3, Name: "Xcode"}}
+	h.until(t, func() bool { return len(st.Alerts.List()) == 0 })
+	ch <- []health.Alert{{PID: 3, Name: "Xcode"}, {PID: 4, Name: "Docker"}}
+	h.until(t, func() bool { return len(st.Alerts.List()) == 1 })
+	if got := st.Alerts.List(); got[0].Name != "Docker" {
+		t.Errorf("after the next broadcast: %+v", got)
+	}
+}
+
 func TestHistoryGenerationFollowsTheRuns(t *testing.T) {
 	h := newHost(t)
 	runs := make(chan history.Run, 2)

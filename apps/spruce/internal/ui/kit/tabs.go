@@ -31,9 +31,15 @@ func (t Tabs[T]) Render(*core.Scope) core.Node {
 					t.OnChange(o.Value)
 				}
 			},
-			Style: Pressable(core.Style{MinHeight: core.Pt(32), Padding: core.Symmetric(0, 16), CornerRadius: 16, JustifyContent: core.JustifyCenter,
-				FontFamily: FontSans, FontSize: FontBody, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
-				Selected: &core.Style{Background: SurfaceNavActive, Color: ColorText, FontFamily: FontFace(Semibold), FontWeight: FaceWeight(Semibold)}}, 0.96),
+			StyleFunc: func() core.Style {
+				st := core.Style{MinHeight: core.Pt(32), Padding: core.Symmetric(0, 16), CornerRadius: 16, JustifyContent: core.JustifyCenter,
+					FontFamily: FontSans, FontSize: FontBody, Color: ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(2, 2),
+					Selected: &core.Style{Background: SurfaceNavActive, Color: ColorText, FontFamily: FontFace(Semibold), FontWeight: FaceWeight(Semibold)}}
+				if !selected() {
+					st.Hover = HoverEntry()
+				}
+				return Pressable(st, 0.96)
+			},
 			Children: []core.Node{core.Text{Content: o.Label}}}
 	}
 	return base.Tabs{Label: t.Label, Children: tabs,

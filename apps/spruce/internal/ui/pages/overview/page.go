@@ -455,7 +455,7 @@ func Page(cx *core.Scope) core.Node {
 	})
 
 	return core.Group{
-		kit.Page{TestID: "overview-page", Ref: p.ref, Children: []core.Node{header, body}},
+		kit.Page{TestID: "overview-page", Ref: p.ref, ScrollKey: nav.Overview, Header: header, Children: []core.Node{body}},
 		live, dialog,
 	}
 }
