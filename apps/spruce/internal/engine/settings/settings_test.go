@@ -122,6 +122,20 @@ func TestStoreDefaultsThenPersists(t *testing.T) {
 	}
 }
 
+// Resetting the settings leaves the history as it is: a longer 保留天数 stays, since the default would delete the older records at once; a shorter one goes back to the default, which deletes nothing.
+func TestResetKeepsALongerRetention(t *testing.T) {
+	s, _, _ := newStore(t)
+	for days, want := range map[int]int{365: 365, 30: 180} {
+		if _, err := s.Update(func(a *AppSettings) { a.History.RetentionDays = days; a.Health.CPUThreshold = 75 }); err != nil {
+			t.Fatal(err)
+		}
+		r, err := s.Reset()
+		if err != nil || r.History.RetentionDays != want || r.Health.CPUThreshold != 40 {
+			t.Errorf("Reset from %d days = %+v, %v", days, r.History, err)
+		}
+	}
+}
+
 func TestStoreReadsPartialAndCorruptFiles(t *testing.T) {
 	s, path, home := newStore(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

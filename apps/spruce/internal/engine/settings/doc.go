@@ -6,7 +6,7 @@
 //	func (s *Store) Get() AppSettings                              // the current settings, defaults where the file is missing or unreadable
 //	func (s *Store) Set(next AppSettings) (AppSettings, error)     // normalizes, writes atomically, notifies; returns what was stored
 //	func (s *Store) Update(fn func(*AppSettings)) (AppSettings, error)
-//	func (s *Store) Reset() (AppSettings, error)                   // back to the defaults
+//	func (s *Store) Reset() (AppSettings, error)                   // back to the defaults, keeping a longer RetentionDays
 //	func (s *Store) Subscribe() (<-chan AppSettings, func())       // the current settings at once, then every change
 //
 // # Normalizing
