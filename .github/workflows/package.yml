@@ -1,0 +1,192 @@
+name: Package
+
+# Builds Spruce's installers with nsgo build (go tool nsgo, the version go.mod pins) for macOS (arm64 and x64, disk images) and Windows (x64 and arm64, NSIS installers), and keeps nsgo build's releases folder, with a checksums.txt of their SHA-256, as the run's artifact spruce-packages: per target the installer with the .sha256 beside it, and the install.sh and install.ps1 that install the latest release. Release calls it with the tag it made, and its Publish job uploads the files to that tag's draft release. Run it by hand (Actions › Package › Run workflow) to build, sign and notarize a branch without releasing: the packages become the run's artifact.
+#
+# Everything builds on the Mac Studio's self-hosted runners: the repository is private, so GitHub's runners would bill every minute, and nsgo build makes the Windows installers there too, with the NSIS that Homebrew installed (makensis).
+#
+# A release build signs the macOS apps and their disk images with YLDM's Developer ID certificate (the MACOS_CERTIFICATE secret, a base64 PKCS#12, and MACOS_CERTIFICATE_PASSWORD) and notarizes the disk images with an App Store Connect API key (APPSTORE_API_KEY_P8, base64, APPSTORE_API_KEY_ID and APPSTORE_API_ISSUER_ID, which the build gets as NSGO_NOTARY_KEY, NSGO_NOTARY_KEY_ID and NSGO_NOTARY_ISSUER), so Gatekeeper opens them without a warning. The Windows installers carry no signature yet, for which SmartScreen warns; that needs a code signing certificate.
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the macOS packages, as a release does
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to build the packages of, which must match the version in nsgo.yaml
+        type: string
+        required: true
+    secrets:
+      MACOS_CERTIFICATE:
+        description: The Developer ID Application certificate and its private key, as a base64 PKCS#12
+        required: true
+      MACOS_CERTIFICATE_PASSWORD:
+        description: The password of MACOS_CERTIFICATE
+        required: true
+      APPSTORE_API_KEY_P8:
+        description: The App Store Connect API key that notarizes the disk images, as a base64 .p8
+        required: true
+      APPSTORE_API_KEY_ID:
+        description: The ID of APPSTORE_API_KEY_P8
+        required: true
+      APPSTORE_API_ISSUER_ID:
+        description: The issuer ID of the App Store Connect team of APPSTORE_API_KEY_P8
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # The identity in MACOS_CERTIFICATE, by the name codesign finds it by.
+  MACOS_SIGNING_IDENTITY: "Developer ID Application: YLDM Co., Ltd. (LXCL4Z68GU)"
+  TARGETS: macos_arm64,macos_x64,windows_x64,windows_arm64
+
+jobs:
+  build:
+    name: Package
+    runs-on: ${{ fromJSON(vars.MACOS_RUNNER || '["self-hosted","yldm-macos"]') }}
+    # Notarizing the two disk images can take Apple's service a while.
+    timeout-minutes: 60
+    env:
+      GOFLAGS: -trimpath
+      SIGN: ${{ (inputs.tag != '' || inputs.sign) && 'true' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      # A tag that does not match the version in nsgo.yaml would upload packages named for another version.
+      - name: Check the version
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          test "$TAG" = "v$(sed -nE 's/^version: *"?([0-9.]+)"? *$/\1/p' nsgo.yaml)"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      # The certificate goes into a keychain of the job's own, put on the user's keychain list for codesign; the runner is self-hosted, so the list as it was is kept and put back by the last step, which also deletes the keychain and the notary key's file. The certificate's file is deleted at once.
+      - name: Import the signing certificate and the notary key
+        id: signing
+        if: env.SIGN == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPSTORE_API_KEY_P8: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD APPSTORE_API_KEY_P8 APPSTORE_API_KEY_ID APPSTORE_API_ISSUER_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::The $name secret is not set, so the macOS packages cannot be signed and notarized."
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          original="$(security list-keychains -d user | xargs)"
+          echo "keychains=$original" >> "$GITHUB_OUTPUT"
+          password="$(openssl rand -base64 24)"
+          security create-keychain -p "$password" "$keychain"
+          echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          # shellcheck disable=SC2086 # one argument per keychain path
+          security list-keychains -d user -s "$keychain" $original
+          if ! security find-identity -v -p codesigning "$keychain" | grep -qF "\"$MACOS_SIGNING_IDENTITY\""; then
+            echo "::error::MACOS_CERTIFICATE does not hold $MACOS_SIGNING_IDENTITY."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/notary-key.p8"
+          printf '%s' "$APPSTORE_API_KEY_P8" | base64 --decode > "$key"
+          chmod 600 "$key"
+          echo "notary-key=$key" >> "$GITHUB_OUTPUT"
+      # A signed build passes the Developer ID identity to -sign and the notary key in NSGO_NOTARY_KEY*, so nsgo build signs with the hardened runtime, notarizes the disk images and staples their tickets. makensis comes from Homebrew, which the runner's PATH may leave out.
+      - name: Build
+        env:
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+          NOTARY_KEY: ${{ steps.signing.outputs.notary-key }}
+          NOTARY_KEY_ID: ${{ steps.signing.outputs.notary-key != '' && secrets.APPSTORE_API_KEY_ID || '' }}
+          NOTARY_ISSUER: ${{ steps.signing.outputs.notary-key != '' && secrets.APPSTORE_API_ISSUER_ID || '' }}
+        run: |
+          export PATH="$PATH:/opt/homebrew/bin"
+          command -v makensis >/dev/null || { echo "::error::makensis is not installed on the runner, so the Windows installers cannot be made."; exit 1; }
+          sign=()
+          if [ -n "$KEYCHAIN" ]; then
+            sign=(-sign "$MACOS_SIGNING_IDENTITY")
+            export NSGO_NOTARY_KEY=$NOTARY_KEY NSGO_NOTARY_KEY_ID=$NOTARY_KEY_ID NSGO_NOTARY_ISSUER=$NOTARY_ISSUER
+          fi
+          rm -rf "$RUNNER_TEMP/packages"
+          go tool nsgo build -target "$TARGETS" -output "$RUNNER_TEMP/packages" "${sign[@]}"
+      # Gatekeeper's own check of what users download: each app is signed with the Developer ID and the hardened runtime, and each disk image carries its notarization ticket.
+      - name: Check the signatures
+        if: steps.signing.outcome == 'success'
+        run: |
+          shopt -s nullglob
+          for target in macos_arm64 macos_x64; do
+            apps=("$RUNNER_TEMP"/packages/Spruce-*-"$target"/Spruce.app)
+            if [ "${#apps[@]}" -ne 1 ]; then
+              echo "::error::nsgo build made ${#apps[@]} Spruce.app for $target, not one"
+              exit 1
+            fi
+            codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+            codesign -dvv "${apps[0]}" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
+            for dmg in "$RUNNER_TEMP"/packages/releases/*-"${target/_/-}".dmg; do
+              xcrun stapler validate "$dmg"
+              spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+            done
+          done
+      # Every installer the targets should make must be there once, with its .sha256, so one that nsgo build left out fails the run rather than going missing from the release. Their SHA-256 is taken here from the files nsgo build made; Publish checks it again before uploading.
+      - name: Collect the packages
+        run: |
+          cd "$RUNNER_TEMP/packages/releases"
+          shopt -s nullglob
+          for want in macos-arm64.dmg macos-x64.dmg windows-x64-setup.exe windows-arm64-setup.exe; do
+            found=(*-"$want")
+            if [ "${#found[@]}" -ne 1 ] || [ ! -f "${found[0]}.sha256" ]; then
+              echo "::error::nsgo build made ${#found[@]} files matching *-$want, not one with its .sha256"
+              exit 1
+            fi
+          done
+          if [ ! -f install.sh ] || [ ! -f install.ps1 ]; then
+            echo "::error::nsgo build made no install.sh or install.ps1"
+            exit 1
+          fi
+          out=$RUNNER_TEMP/out
+          rm -rf "$out"
+          mkdir "$out"
+          cp -- *.dmg *.dmg.sha256 *-setup.exe *-setup.exe.sha256 install.sh install.ps1 "$out/"
+          cd "$out"
+          shasum -a 256 -- * > "$RUNNER_TEMP/checksums.txt"
+          mv "$RUNNER_TEMP/checksums.txt" .
+          cat checksums.txt
+      - name: Keep the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: spruce-packages
+          path: ${{ runner.temp }}/out/
+          retention-days: 7
+          if-no-files-found: error
+      # The runner is the Mac Studio's own, which other jobs and its user share: the keychain list goes back to what it was, and the keychain, the notary key and the build's folders go.
+      - name: Clean up
+        if: always()
+        env:
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+          KEYCHAINS: ${{ steps.signing.outputs.keychains }}
+          NOTARY_KEY: ${{ steps.signing.outputs.notary-key }}
+        run: |
+          if [ -n "$KEYCHAINS" ]; then
+            # shellcheck disable=SC2086 # one argument per keychain path
+            security list-keychains -d user -s $KEYCHAINS
+          fi
+          if [ -n "$KEYCHAIN" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
+          rm -f "$NOTARY_KEY" "$RUNNER_TEMP/certificate.p12"
+          rm -rf "$RUNNER_TEMP/packages" "$RUNNER_TEMP/out"
