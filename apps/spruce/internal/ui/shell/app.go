@@ -69,7 +69,9 @@ func App(d Deps) func(app *core.Scope) {
 			return Root(cx, stores.Block, func(f core.WindowFrame) { frame = f }, asking, app.Quit)
 		}, blocked: func() bool { return core.Untracked(app, stores.Block.Blocked) }, busy: busy, asking: asking, end: app.Quit}
 		// The menu bar on macOS; on Windows, where the window has no menu bar, its shortcuts alone.
-		app.Effect(func() { desktop.SetApplicationMenu(app, applicationMenu(navigator, stores.Block.Blocked(), w.quit)) })
+		app.Effect(func() {
+			desktop.SetApplicationMenu(app, applicationMenu(navigator, stores.Block.Blocked(), runtime.GOOS == "darwin", w.quit))
+		})
 
 		// Closing the window ends the app unless it is to stay in the menu bar.
 		app.Effect(func() {
@@ -175,8 +177,8 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 	})
 }
 
-// applicationMenu is the application menu: the app menu with 设置… and 退出 Spruce, which asks first while a run is active (quit); 编辑; 显示 with what the page shown registered (nav.UseCommands), 重新检查 and 查找; 前往 with the sidebar's pages on Cmd+1 to Cmd+7 and 返回 from a drill-down view; and 窗口. Everything that changes the page is disabled while an overlay holds the sidebar (blocked), as the sidebar is. Reading it subscribes to the page shown and its commands.
-func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.MenuItem {
+// applicationMenu is the application menu: the app menu with 设置… and 退出 Spruce, which asks first while a run is active (quit); 编辑; 显示 with what the page shown registered (nav.UseCommands), 重新检查 and 查找; 前往 with the sidebar's pages on Cmd+1 to Cmd+7 and 返回 from a drill-down view; and on a Mac (mac) 窗口. Everything that changes the page is disabled while an overlay holds the sidebar (blocked), as the sidebar is. Reading it subscribes to the page shown and its commands. Windows draws no menu bar but chooses the items by their shortcuts, the roles' own too, so 窗口 is left out there: its Ctrl+W would close the window, which ends Spruce.
+func applicationMenu(n *nav.Navigator, blocked, mac bool, quit func()) []desktop.MenuItem {
 	sep := desktop.MenuItem{Separator: true}
 	cmds := n.Commands()
 	goTo := make([]desktop.MenuItem, 0, len(nav.Pages)+2)
@@ -184,7 +186,7 @@ func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.Menu
 		goTo = append(goTo, desktop.MenuItem{Label: r.Meta().Title, Shortcut: "mod+" + strconv.Itoa(i+1), Disabled: blocked, OnSelect: func() { n.Go(r) }})
 	}
 	goTo = append(goTo, sep, desktop.MenuItem{Label: "返回", Shortcut: "mod+[", Disabled: blocked || n.Current().Meta().Parent == "", OnSelect: n.Back})
-	return []desktop.MenuItem{
+	menu := []desktop.MenuItem{
 		{Label: "Spruce", Items: []desktop.MenuItem{
 			{Role: desktop.MenuAbout}, sep,
 			{Label: "设置…", Shortcut: "mod+,", Disabled: blocked, OnSelect: func() { n.Go(nav.Settings) }}, sep,
@@ -200,9 +202,12 @@ func applicationMenu(n *nav.Navigator, blocked bool, quit func()) []desktop.Menu
 			{Label: "查找", Shortcut: "mod+f", Disabled: blocked || cmds.Find == nil, OnSelect: cmds.Find},
 		}},
 		{Label: "前往", Items: goTo},
-		{Label: "窗口", Items: []desktop.MenuItem{
-			{Role: desktop.MenuMinimize}, {Role: desktop.MenuZoom}, {Role: desktop.MenuToggleFullScreen}, sep,
-			{Role: desktop.MenuClose},
-		}},
 	}
+	if !mac {
+		return menu
+	}
+	return append(menu, desktop.MenuItem{Label: "窗口", Items: []desktop.MenuItem{
+		{Role: desktop.MenuMinimize}, {Role: desktop.MenuZoom}, {Role: desktop.MenuToggleFullScreen}, sep,
+		{Role: desktop.MenuClose},
+	}})
 }
