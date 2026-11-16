@@ -1191,3 +1191,17 @@ func TestStopACheckOverAResult(t *testing.T) {
 		t.Error("the cards cannot act once the check stopped")
 	}
 }
+
+// A press anywhere on a card's head opens its items, and on an item's row checks it.
+func TestCardHeadAndRowsTakePresses(t *testing.T) {
+	p := open(t, ready())
+	p.Press("id:rec-app-caches-head")
+	p.WaitFor("id:rec-app-caches-items", wait)
+	if !p.Find("id:rec-app-caches-expand").Props.Expanded {
+		t.Error("the chevron does not say the card is open")
+	}
+	p.Press("id:row-" + cleanup.ItemID(home+"/Library/Caches/com.apple.Safari"))
+	p.waitText("id:rec-app-caches-act", "删除… · 1.2 GB")
+	p.Press("id:rec-app-caches-head")
+	p.WaitForGone("id:rec-app-caches-items", wait)
+}

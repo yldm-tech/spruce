@@ -2,6 +2,7 @@ package cleanflow
 
 import (
 	"maps"
+	"slices"
 	"strings"
 
 	"spruce/apps/spruce/internal/engine/advice"
@@ -143,6 +144,32 @@ func SetItem(sel Selection, c cleanup.Category, itemID string, on bool) Selectio
 		next[c.ID] = items
 	}
 	return next
+}
+
+// SetItems checks or unchecks the items ids of a category; held items stay unchecked.
+func SetItems(sel Selection, c cleanup.Category, ids []string, on bool) Selection {
+	for _, id := range ids {
+		sel = SetItem(sel, c, id, on)
+	}
+	return sel
+}
+
+// Between returns the IDs of items from the one with ID from to the one with ID to, both included, in list order whichever comes first: a Shift-press's range from the row pressed before. It is just to when from is not among items.
+func Between(items []cleanup.Item, from, to string) []string {
+	i := slices.IndexFunc(items, func(it cleanup.Item) bool { return it.ID == from })
+	j := slices.IndexFunc(items, func(it cleanup.Item) bool { return it.ID == to })
+	switch {
+	case j < 0:
+		return nil
+	case i < 0:
+		return []string{to}
+	}
+	lo, hi := min(i, j), max(i, j)
+	ids := make([]string, 0, hi-lo+1)
+	for _, it := range items[lo : hi+1] {
+		ids = append(ids, it.ID)
+	}
+	return ids
 }
 
 // SelectAll checks every item of every category that may be checked.

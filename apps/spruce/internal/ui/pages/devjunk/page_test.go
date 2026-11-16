@@ -500,3 +500,23 @@ func TestComesBackAsLeft(t *testing.T) {
 		t.Error("a link opened 项目 under a filter")
 	}
 }
+
+// A press on a project's head opens its build output, whose chevron comes last; the head's menu checks the project.
+func TestProjectHeadTakesPresses(t *testing.T) {
+	// Context menus show in the desktop idiom; nsgotest starts in the phone's.
+	p := startSized(t, ready(), roots, nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}), func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	tool := p.project("/Users/me/Workspace/tool")
+	p.Press(tool + "-head")
+	p.WaitFor(tool+"-items", wait)
+	kids := p.Find(tool + "-head").Children
+	if last := kids[len(kids)-1]; last.Props.TestID != "project-"+id("/Users/me/Workspace/tool")+"-expand" {
+		t.Errorf("the head ends with %q, not the chevron", last.Props.TestID)
+	}
+	p.RightClick(tool + "-head")
+	p.ChoosePopup("勾选")
+	if !p.checked(tool + "-check") {
+		t.Error("勾选 left the project unchecked")
+	}
+	p.Press(tool + "-head")
+	p.WaitForGone(tool+"-items", wait)
+}

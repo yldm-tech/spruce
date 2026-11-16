@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
@@ -132,15 +133,16 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 	name := func() string { return filepath.Base(p().Path) }
 	state := func() cleanflow.CheckState { return ProjectState(p(), artifacts(), d.Selection.Get()) }
 	checkable := func() bool { return Checkable(p(), artifacts()) }
+	setChecked := func(on bool) {
+		d.Change(SetProjects(d.Selection.GetUntracked(), []engdev.Project{core.Untracked(cx, p)}, core.Untracked(cx, artifacts), on))
+	}
 	check := core.Dynamic(func(*core.Scope) core.Node {
 		tip := HoldTip(p())
 		box := kit.Checkbox{Label: core.Untracked(cx, name), TestID: "project-" + id + "-check",
 			Checked:       func() bool { return state() == cleanflow.CheckAll },
 			Indeterminate: func() bool { return state() == cleanflow.CheckSome },
 			Disabled:      func() bool { return disabled() || !checkable() },
-			OnChange: func(on bool) {
-				d.Change(SetProjects(d.Selection.GetUntracked(), []engdev.Project{core.Untracked(cx, p)}, core.Untracked(cx, artifacts), on))
-			}}
+			OnChange:      setChecked}
 		return core.Func(func(*core.Scope) core.Node {
 			if tip == "" {
 				return box
@@ -169,21 +171,38 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 		t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
 		return t
 	}
-	head := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(14, 18)}, Children: []core.Node{
-		check,
-		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
-			ellipsis(kit.TextFunc(name, kit.FontCardTitle, kit.Semibold, kit.ColorText)),
-			ellipsis(kit.TextFunc(func() string { return ProjectSub(p()) }, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
-		}},
-		git,
-		kit.Tabular(kit.TextFunc(func() string { return format.RelativeTime(p().LastActive, timeNow()) }, kit.FontSmall, kit.Regular, kit.ColorTextSecondary)),
-		core.View{Style: core.Style{MinWidth: core.Pt(72), AlignItems: core.AlignEnd, FlexShrink: 0}, Children: []core.Node{
-			kit.Tabular(kit.TextFunc(func() string { return format.Bytes(p().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
-		}},
-		expandButton("project-"+id+"-expand", name, open, func() { d.SetOpen(key, !core.Untracked(cx, open)) }),
-		kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + core.Untracked(cx, name), TestID: "project-" + id + "-reveal",
-			OnPress: func() { reveal(core.Untracked(cx, p).Path) }},
-	}}
+	toggle := func() { d.SetOpen(key, !core.Untracked(cx, open)) }
+	menu := kit.RowMenu(cx, func() []desktop.MenuItem {
+		path := core.Untracked(cx, p).Path
+		items := []desktop.MenuItem{kit.RevealItem(format.FileManagerName(), func() { reveal(path) }), kit.CopyPathItem(cx, path)}
+		if core.Untracked(cx, disabled) || !core.Untracked(cx, checkable) {
+			return items
+		}
+		label, on := "勾选", true
+		if core.Untracked(cx, state) == cleanflow.CheckAll {
+			label, on = "取消勾选", false
+		}
+		return append(items, desktop.MenuItem{Separator: true}, desktop.MenuItem{Label: label, OnSelect: func() { setChecked(on) }})
+	})
+	// The whole head opens and closes the build output; the chevron, last, stays the control the keyboard reaches.
+	head := core.View{TestID: "project-" + id + "-head", NoFocus: true, OnPress: func(core.PressEvent) { toggle() }, OnContextMenu: menu,
+		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(14, 18), Cursor: core.CursorPointer,
+			Hover: &core.Style{Background: kit.SurfaceRowHover}},
+		Children: []core.Node{
+			check,
+			core.View{Tooltip: kit.Tooltip(core.Untracked(cx, p).Path), Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 2}, Children: []core.Node{
+				ellipsis(kit.TextFunc(name, kit.FontCardTitle, kit.Semibold, kit.ColorText)),
+				ellipsis(kit.TextFunc(func() string { return ProjectSub(p()) }, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
+			}},
+			git,
+			kit.Tabular(kit.TextFunc(func() string { return format.RelativeTime(p().LastActive, timeNow()) }, kit.FontSmall, kit.Regular, kit.ColorTextSecondary)),
+			core.View{Style: core.Style{MinWidth: core.Pt(72), AlignItems: core.AlignEnd, FlexShrink: 0}, Children: []core.Node{
+				kit.Tabular(kit.TextFunc(func() string { return format.Bytes(p().Size) }, kit.FontCardTitle, kit.Bold, kit.ColorText)),
+			}},
+			kit.IconButton{Glyph: "reveal", Label: "在" + format.FileManagerName() + "中显示 " + core.Untracked(cx, name), TestID: "project-" + id + "-reveal",
+				OnPress: func() { reveal(core.Untracked(cx, p).Path) }},
+			expandButton("project-"+id+"-expand", name, open, toggle),
+		}}
 	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
 		list := core.NewMemoFunc(cx, func() []ProjectArtifact { return ProjectItems(p(), artifacts()) }, nil)
 		return core.View{Role: core.RoleGroup, Label: core.Untracked(cx, name) + "的构建产物", TestID: "project-" + id + "-items",

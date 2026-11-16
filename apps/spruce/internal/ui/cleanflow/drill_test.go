@@ -808,3 +808,41 @@ func (p *page) waitRecheck(want string) {
 		return len(v) == 1 && len(v[0].Children) > 0 && p.Exists("id:recheck >> text:"+want)
 	})
 }
+
+// A press anywhere on a category's head opens it and on an item's row checks it; the row's menu reveals it, copies its path and checks it, and its path shows whole as its tooltip.
+func TestRowsAndHeadsTakePresses(t *testing.T) {
+	// Context menus show in the desktop idiom; nsgotest starts in the phone's.
+	p := startSized(t, ready(), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	p.Press("id:head-system-junk:caches")
+	p.WaitFor("id:items-system-junk:caches", wait)
+	p.Press("id:row-a")
+	if p.checked("role:checkbox com.example.a") {
+		t.Error("a press on the row left it checked")
+	}
+	p.Press("id:row-a")
+	if !p.checked("role:checkbox com.example.a") {
+		t.Error("a second press on the row left it unchecked")
+	}
+	p.RightClick("id:row-a")
+	var labels []string
+	for _, it := range p.PopupMenu {
+		labels = append(labels, it.Label)
+	}
+	if !reflect.DeepEqual(labels, []string{"在访达中显示", "拷贝路径", "", "取消勾选"}) {
+		t.Fatalf("menu %q", labels)
+	}
+	p.ChoosePopup("取消勾选")
+	if p.checked("role:checkbox com.example.a") {
+		t.Error("取消勾选 left it checked")
+	}
+	p.RightClick("id:row-a")
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != "/Users/me/Library/Caches/com.example.a" {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	p.RightClick("id:row-a")
+	p.ChoosePopup("在访达中显示")
+	p.WaitUntil(wait, func() bool { return len(p.files.Revealed()) == 1 })
+	p.Press("id:head-system-junk:caches")
+	p.WaitForGone("id:items-system-junk:caches", wait)
+}

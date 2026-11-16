@@ -232,27 +232,30 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		})
 	})
 	indent := core.Edges{Left: iconColumn + iconGap}
-	head := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignStart, Gap: iconGap}, Children: []core.Node{
-		// The icon breathes while the card's clean runs.
-		core.View{Style: core.Style{FlexShrink: 0, Animated: kit.Breathing(cx, busy)}, Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
-			icon := rec().Icon
-			return core.Func(func(*core.Scope) core.Node { return kit.CategoryTile(icon) })
-		})}},
-		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 3}, Children: []core.Node{
-			core.Text{ContentFunc: title, TestID: "rec-" + id + "-title", Style: core.Style{FontFamily: kit.FontFace(kit.Semibold),
-				FontWeight: kit.FaceWeight(kit.Semibold), FontSize: kit.FontCardTitle, LineHeightMultiple: 1.4, Color: kit.ColorText}},
-			bodyText(func() string { return ReasonText(rec(), p.now.Get()) }, kit.ColorTextSecondary, "rec-"+id+"-reason"),
-			core.Show{When: func() bool { return rec().Reason2 != "" }, Then: func(*core.Scope) core.Node {
-				return bodyText(func() string { return rec().Reason2 }, kit.ColorTextMuted, "rec-"+id+"-held")
+	// The whole head opens and closes the items; the chevron stays the control the keyboard reaches.
+	toggle := func() { p.kept.setOpen(id, !core.Untracked(cx, open)) }
+	head := core.View{TestID: "rec-" + id + "-head", NoFocus: true, OnPress: func(core.PressEvent) { toggle() },
+		Style: core.Style{Direction: core.Row, AlignItems: core.AlignStart, Gap: iconGap, Cursor: core.CursorPointer}, Children: []core.Node{
+			// The icon breathes while the card's clean runs.
+			core.View{Style: core.Style{FlexShrink: 0, Animated: kit.Breathing(cx, busy)}, Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
+				icon := rec().Icon
+				return core.Func(func(*core.Scope) core.Node { return kit.CategoryTile(icon) })
+			})}},
+			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 3}, Children: []core.Node{
+				core.Text{ContentFunc: title, TestID: "rec-" + id + "-title", Style: core.Style{FontFamily: kit.FontFace(kit.Semibold),
+					FontWeight: kit.FaceWeight(kit.Semibold), FontSize: kit.FontCardTitle, LineHeightMultiple: 1.4, Color: kit.ColorText}},
+				bodyText(func() string { return ReasonText(rec(), p.now.Get()) }, kit.ColorTextSecondary, "rec-"+id+"-reason"),
+				core.Show{When: func() bool { return rec().Reason2 != "" }, Then: func(*core.Scope) core.Node {
+					return bodyText(func() string { return rec().Reason2 }, kit.ColorTextMuted, "rec-"+id+"-held")
+				}},
 			}},
-		}},
-		core.View{Style: core.Style{AlignItems: core.AlignEnd, Gap: 2, FlexShrink: 0}, Children: []core.Node{
-			kit.Tabular(core.Text{ContentFunc: func() string { return format.Bytes(rec().Bytes) }, TestID: "rec-" + id + "-size",
-				Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontWeight: kit.FaceWeight(kit.Bold), FontSize: kit.FontCardTitle, Color: kit.ColorText}}),
-			kit.Tabular(kit.TextFunc(func() string { return countText(len(rec().Items)) }, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
-		}},
-		expandButton(id, title, open, func() { p.kept.setOpen(id, !core.Untracked(cx, open)) }),
-	}}
+			core.View{Style: core.Style{AlignItems: core.AlignEnd, Gap: 2, FlexShrink: 0}, Children: []core.Node{
+				kit.Tabular(core.Text{ContentFunc: func() string { return format.Bytes(rec().Bytes) }, TestID: "rec-" + id + "-size",
+					Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontWeight: kit.FaceWeight(kit.Bold), FontSize: kit.FontCardTitle, Color: kit.ColorText}}),
+				kit.Tabular(kit.TextFunc(func() string { return countText(len(rec().Items)) }, kit.FontSmall, kit.Regular, kit.ColorTextMuted)),
+			}},
+			expandButton(id, title, open, toggle),
+		}}
 	consequence := core.View{Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, ColumnGap: 8, RowGap: 6, Padding: indent},
 		Children: []core.Node{
 			core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 6, FlexShrink: 1, MinWidth: core.Pt(0), Color: kit.ColorTextMuted},
@@ -405,10 +408,21 @@ func devTab(r advice.Recommendation) nav.DevTab {
 // categoryItems lists one category's items of a card: in place up to scrollItemsAfter, else in a list that scrolls inside the card.
 func categoryItems(c cleanup.Category, pick *core.Memo[Pick], set func(cleanflow.Selection),
 	disabled func() bool, reveal func(string)) core.Node {
+	// anchor is the item the user checked or unchecked last, and how: a Shift-press gives the rows from it to the one pressed the same.
+	anchor, anchorOn := "", false
 	row := func(it cleanup.Item) core.Node {
 		return cleanflow.ItemRow{Item: it, Disabled: disabled, Reveal: reveal,
-			Checked:  func() bool { return pick.Get().Sel.Has(c.ID, it.ID) },
-			OnChange: func(on bool) { set(cleanflow.SetItem(pick.GetUntracked().Sel, c, it.ID, on)) }}
+			Checked: func() bool { return pick.Get().Sel.Has(c.ID, it.ID) },
+			OnChange: func(on bool) {
+				anchor, anchorOn = it.ID, on
+				set(cleanflow.SetItem(pick.GetUntracked().Sel, c, it.ID, on))
+			},
+			OnRange: func() {
+				if anchor == "" {
+					anchor, anchorOn = it.ID, !pick.GetUntracked().Sel.Has(c.ID, it.ID)
+				}
+				set(cleanflow.SetItems(pick.GetUntracked().Sel, c, cleanflow.Between(c.Items, anchor, it.ID), anchorOn))
+			}}
 	}
 	if len(c.Items) <= scrollItemsAfter {
 		children := make([]core.Node, len(c.Items))

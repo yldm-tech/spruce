@@ -364,3 +364,29 @@ func TestChoice(t *testing.T) {
 		t.Errorf("gone categories kept %+v", ch)
 	}
 }
+
+// A Shift-press takes the rows from the one pressed before to the one pressed, whichever comes first, and leaves held items unchecked; with nothing pressed before it is the row alone.
+func TestRange(t *testing.T) {
+	held := item("c", 3)
+	held.Hold = "x"
+	c := category("caches", false, item("a", 1), item("b", 2), held, item("d", 4), item("e", 5))
+	if got := Between(c.Items, "d", "a"); !slices.Equal(got, []string{"a", "b", "c", "d"}) {
+		t.Errorf("up %v", got)
+	}
+	if got := Between(c.Items, "b", "e"); !slices.Equal(got, []string{"b", "c", "d", "e"}) {
+		t.Errorf("down %v", got)
+	}
+	if got := Between(c.Items, "gone", "b"); !slices.Equal(got, []string{"b"}) {
+		t.Errorf("no anchor %v", got)
+	}
+	if got := Between(c.Items, "a", "gone"); got != nil {
+		t.Errorf("no target %v", got)
+	}
+	sel := SetItems(NothingSelected, c, Between(c.Items, "a", "d"), true)
+	if !reflect.DeepEqual(sel, Selection{"caches": {"a": {}, "b": {}, "d": {}}}) {
+		t.Errorf("checked %v", sel)
+	}
+	if sel = SetItems(sel, c, Between(c.Items, "d", "b"), false); !reflect.DeepEqual(sel, Selection{"caches": {"a": {}}}) {
+		t.Errorf("unchecked %v", sel)
+	}
+}
