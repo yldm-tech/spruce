@@ -111,7 +111,9 @@ jobs:
           chmod 600 "$key"
           echo "notary-key=$key" >> "$GITHUB_OUTPUT"
       # A signed build passes the Developer ID identity (by its SHA-1) to -sign and the notary key in NSGO_NOTARY_KEY*, so nsgo build signs with the hardened runtime, notarizes the disk images and staples their tickets. makensis comes from Homebrew, which the runner's PATH may leave out.
+      # The packages go to a folder on the system volume, not RUNNER_TEMP: the runners' work directories are on the Mac Studio's /Volumes/Workspace, an external APFS volume mounted nodev, nosuid, noowners, where hdiutil refuses to attach the disk image nsgo build lays out ("Permission denied"), as yldm-tech/metaseq's desktop-release.yml found. The last step removes the folder.
       - name: Build
+        id: build
         env:
           KEYCHAIN: ${{ steps.signing.outputs.keychain }}
           IDENTITY: ${{ steps.signing.outputs.identity }}
@@ -126,30 +128,37 @@ jobs:
             sign=(-sign "$IDENTITY")
             export NSGO_NOTARY_KEY=$NOTARY_KEY NSGO_NOTARY_KEY_ID=$NOTARY_KEY_ID NSGO_NOTARY_ISSUER=$NOTARY_ISSUER
           fi
-          rm -rf "$RUNNER_TEMP/packages"
-          go tool nsgo build -target "$TARGETS" -output "$RUNNER_TEMP/packages" "${sign[@]}"
+          base=${TMPDIR:-/tmp}
+          case $base in /Volumes/*) base=/tmp ;; esac
+          pkg=$(mktemp -d "$base/spruce-packages.XXXXXX")
+          echo "dir=$pkg" >> "$GITHUB_OUTPUT"
+          go tool nsgo build -target "$TARGETS" -output "$pkg" "${sign[@]}"
       # Gatekeeper's own check of what users download: each app is signed with the Developer ID and the hardened runtime, and each disk image carries its notarization ticket.
       - name: Check the signatures
         if: steps.signing.outcome == 'success'
+        env:
+          PKG: ${{ steps.build.outputs.dir }}
         run: |
           shopt -s nullglob
           for target in macos_arm64 macos_x64; do
-            apps=("$RUNNER_TEMP"/packages/Spruce-*-"$target"/Spruce.app)
+            apps=("$PKG"/Spruce-*-"$target"/Spruce.app)
             if [ "${#apps[@]}" -ne 1 ]; then
               echo "::error::nsgo build made ${#apps[@]} Spruce.app for $target, not one"
               exit 1
             fi
             codesign --verify --deep --strict --verbose=2 "${apps[0]}"
             codesign -dvv "${apps[0]}" 2>&1 | grep -F "Authority=$MACOS_SIGNING_IDENTITY"
-            for dmg in "$RUNNER_TEMP"/packages/releases/*-"${target/_/-}".dmg; do
+            for dmg in "$PKG"/releases/*-"${target/_/-}".dmg; do
               xcrun stapler validate "$dmg"
               spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
             done
           done
       # Every installer the targets should make must be there once, with its .sha256, so one that nsgo build left out fails the run rather than going missing from the release. Their SHA-256 is taken here from the files nsgo build made; Publish checks it again before uploading.
       - name: Collect the packages
+        env:
+          PKG: ${{ steps.build.outputs.dir }}
         run: |
-          cd "$RUNNER_TEMP/packages/releases"
+          cd "$PKG/releases"
           shopt -s nullglob
           for want in macos-arm64.dmg macos-x64.dmg windows-x64-setup.exe windows-arm64-setup.exe; do
             found=(*-"$want")
@@ -184,6 +193,7 @@ jobs:
           KEYCHAIN: ${{ steps.signing.outputs.keychain }}
           KEYCHAINS: ${{ steps.signing.outputs.keychains }}
           NOTARY_KEY: ${{ steps.signing.outputs.notary-key }}
+          PKG: ${{ steps.build.outputs.dir }}
         run: |
           if [ -n "$KEYCHAINS" ]; then
             # shellcheck disable=SC2086 # one argument per keychain path
@@ -193,4 +203,7 @@ jobs:
             security delete-keychain "$KEYCHAIN" || true
           fi
           rm -f "$NOTARY_KEY" "$RUNNER_TEMP/certificate.p12"
-          rm -rf "$RUNNER_TEMP/packages" "$RUNNER_TEMP/out"
+          if [ -n "$PKG" ]; then
+            rm -rf "$PKG"
+          fi
+          rm -rf "$RUNNER_TEMP/out"
