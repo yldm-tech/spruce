@@ -2,6 +2,7 @@ package health_test
 
 import (
 	"errors"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/health"
 	"spruce/apps/spruce/internal/ui/pages/health/healthfake"
+	"spruce/apps/spruce/internal/ui/shared"
 	"spruce/apps/spruce/internal/ui/store/storefake"
 )
 
@@ -140,19 +142,20 @@ func TestShowsEveryCardFromASample(t *testing.T) {
 	p.has("card-cpu", "Apple M4 Max · 12 核（8 性能核 + 4 能效核）")
 
 	p.has("card-memory", "68%")
-	p.has("card-memory", "已用 24.5 GB，共 36 GB")
-	p.has("card-memory", "已用 1.2 GB")
+	// Sizes read as the system's file manager counts them (1000s on macOS, 1024s on Windows), as format.Bytes renders them.
+	p.has("card-memory", "已用 "+health.FormatBytes(24.5e9)+"，共 "+health.FormatBytes(36e9))
+	p.has("card-memory", "已用 "+health.FormatBytes(1.2e9))
 	p.has("card-memory", "偏高")
 	if got := p.Find("id:meter-memory").Props.Value.Now; got != 68 {
 		t.Errorf("memory meter at %v", got)
 	}
 
-	p.has("card-disk", "245 GB 可用")
-	p.has("card-disk", "读取 1.2 MB/s")
-	p.has("card-disk", "写入 300 KB/s")
+	p.has("card-disk", health.FormatBytes(245e9)+" 可用")
+	p.has("card-disk", "读取 "+health.FormatRate(1.2e6))
+	p.has("card-disk", "写入 "+health.FormatRate(300e3))
 
-	p.has("card-network", "↓ 2.5 MB/s")
-	p.has("card-network", "↑ 120 KB/s")
+	p.has("card-network", "↓ "+health.FormatRate(2.5e6))
+	p.has("card-network", "↑ "+health.FormatRate(120e3))
 
 	p.has("card-battery", "87%")
 	p.has("card-battery", "正在充电 · 充满还需 38 分钟")
@@ -245,21 +248,21 @@ func TestOffersARetryWhenWatchingFails(t *testing.T) {
 func TestListsTheTopProcesses(t *testing.T) {
 	p := start(t, newService(), newFakes(t))
 	p.send(sample(0, nil))
-	for _, text := range []string{"Xcode", "PID 812", "148%", "3.1 GB"} {
+	for _, text := range []string{"Xcode", "PID 812", "148%", health.FormatBytes(3.1e9)} {
 		p.has("top-cpu-812", text)
 	}
-	for _, text := range []string{"Safari", "PID 90", "4.3%", "1 GB"} {
+	for _, text := range []string{"Safari", "PID 90", "4.3%", health.FormatBytes(1e9)} {
 		p.has("top-cpu-90", text)
 	}
 	if a, b := p.Find("id:top-cpu-812").Frame.Origin.Y, p.Find("id:top-cpu-90").Frame.Origin.Y; a >= b {
 		t.Error("the list is not in the sampler's order")
 	}
-	for _, text := range []string{"launchd-helper", "PID 300", "—", "2 GB"} {
+	for _, text := range []string{"launchd-helper", "PID 300", "—", health.FormatBytes(2e9)} {
 		p.has("top-memory-300", text)
 	}
 	// The process cell is named for assistive technology.
 	p.Find("id:top-memory-300 >> label:launchd-helper，PID 300")
-	p.Find("text:CPU 按单个处理器核心计算，100% 即占满一个核心，与活动监视器一致")
+	p.Find(`text:"` + health.ProcessFootnote(runtime.GOOS) + `"`)
 	p.Find("text:Spruce 只显示进程，不会结束进程")
 }
 
@@ -267,7 +270,7 @@ func TestOpensActivityMonitorAndNeverOffersToEndAProcess(t *testing.T) {
 	fakes := newFakes(t)
 	p := start(t, newService(), fakes)
 	p.send(sample(0, nil))
-	p.Press(`role:button "在活动监视器中打开"`)
+	p.Press(`role:button "在` + shared.Monitor().Name + `中打开"`)
 	p.WaitUntil(wait, func() bool { m, _ := fakes.Counts(); return m == 1 })
 	if p.Exists("role:button /结束|退出|强制/") {
 		t.Error("the page offers to end a process")
@@ -287,7 +290,7 @@ func TestSaysWhenTheMonitorCannotOpen(t *testing.T) {
 		t.Error("a pressure row shows without a pressure level")
 	}
 	p.Press("id:open-monitor")
-	if got := p.WaitFor("id:open-monitor-error", wait).Text; got != "无法打开活动监视器" {
+	if got := p.WaitFor("id:open-monitor-error", wait).Text; got != "无法打开"+shared.Monitor().Name {
 		t.Errorf("error %q", got)
 	}
 }

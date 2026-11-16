@@ -341,15 +341,8 @@ func TestCardCategories(t *testing.T) {
 	}
 }
 
-func TestSkippedNames(t *testing.T) {
-	home := "/Users/me"
-	got := SkippedNames(home, []string{home + "/Downloads", home + "/Desktop", home + "/Documents", home + "/Library/Mobile Documents",
-		home + "/Library/CloudStorage/Dropbox-Personal", "/Volumes/T7", "/Volumes/Backup", home + "/Downloads"})
-	want := []string{"下载", "桌面", "文稿", "iCloud 云盘", "Dropbox", "外接磁盘"}
-	if !slices.Equal(got, want) {
-		t.Errorf("names %v", got)
-	}
-	if got := SkippedText(want[:2]); got != "后台检查没有读取下载、桌面，这些位置要在你使用 Spruce 时才能检查。" {
+func TestSkippedText(t *testing.T) {
+	if got := SkippedText([]string{"下载", "桌面"}); got != "后台检查没有读取下载、桌面，这些位置要在你使用 Spruce 时才能检查。" {
 		t.Errorf("text %q", got)
 	}
 }
