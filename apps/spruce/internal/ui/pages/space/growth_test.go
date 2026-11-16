@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,7 +126,7 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	// Back on the results, the scan runs under them.
 	p.Press("id:return-results")
 	p.WaitFor("id:space-stop", wait)
-	p.Find(homeList)
+	p.WaitFor(homeList, wait)
 }
 
 // TestActionBarRisesOverTheToast: the shell's toast sits at the bottom of the page area, 24 points up and at least 44 tall, so while it shows the figures and 重新扫描 stand above it, and come back down once it goes.
@@ -377,13 +378,13 @@ func TestGrowthEmpty(t *testing.T) {
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
 	fakes.Overview.GrowthErr = growth.ErrNoHistory
 	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, fakes)
-	if got := p.WaitFor("id:growth-empty", wait).Text; got != "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。" {
+	if got := p.WaitFor("id:growth-empty", wait).Text; got != "Spruce 每天记下一次主要位置的大小，保留 90 天；过一两天这里就会显示哪些位置在变大。" {
 		t.Errorf("empty %q", got)
 	}
 
 	// Without the controller it says the same.
 	q := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
-	if got := q.WaitFor("id:growth-empty", wait).Text; got != "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。" {
+	if got := q.WaitFor("id:growth-empty", wait).Text; got != "Spruce 每天记下一次主要位置的大小，保留 90 天；过一两天这里就会显示哪些位置在变大。" {
 		t.Errorf("empty without a controller %q", got)
 	}
 
@@ -426,5 +427,19 @@ func TestGrowthListsAtMostTwenty(t *testing.T) {
 	p.WaitFor("id:growth-row-19", wait)
 	if p.Exists("id:growth-row-20") {
 		t.Error("more than 20 rows")
+	}
+}
+
+// TestGrowthNoteShowsOnce: before the records exist, one line says they are coming and how long they are kept.
+func TestGrowthNoteShowsOnce(t *testing.T) {
+	fakes := newFakes(t)
+	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
+	fakes.Overview.GrowthErr = growth.ErrNoHistory
+	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, fakes)
+	if got := p.WaitFor("id:growth-empty", wait).Text; !strings.Contains(got, "保留 90 天") {
+		t.Errorf("empty %q", got)
+	}
+	if p.Exists("id:growth-note") {
+		t.Error("the note repeats the line above it")
 	}
 }
