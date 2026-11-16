@@ -33,8 +33,10 @@ func Root(cx *core.Scope, block *store.Block, keepFrame func(core.WindowFrame)) 
 			Position: core.Relative},
 		Children: []core.Node{
 			core.Dynamic(func(cx *core.Scope) core.Node {
-				// core.Func mounts the page untracked: what the page reads as it is made does not remake it.
-				return core.Func(pages[navigator.Current()])
+				// core.Func mounts the page untracked: what the page reads as it is made does not remake it. Each page comes in rising as it is shown.
+				return kit.Appear{Entrance: kit.EnterRise, TestID: "page-area",
+					Style:    core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0), MinWidth: core.Pt(0), Position: core.Relative},
+					Children: []core.Node{core.Func(pages[navigator.Current()])}}
 			}),
 			toastLayer(cx, store.Use(cx), navigator),
 		}}
@@ -47,6 +49,26 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 		return core.Group{}
 	}
 	toasts := stores.Toasts
+	// shown is the toast on screen: it stays after the stores dismissed it until its exit has played (leaving), so it sinks away instead of vanishing.
+	shown := core.NewSignal[*store.Toast](cx, nil)
+	leaving := core.NewSignal(cx, false)
+	cx.Effect(func() {
+		t := toasts.Current()
+		cx.Untrack(func() {
+			if t != nil {
+				leaving.Set(false)
+				shown.Set(t)
+			} else if shown.GetUntracked() != nil {
+				leaving.Set(true)
+			}
+		})
+	})
+	gone := func() {
+		if leaving.GetUntracked() {
+			leaving.Set(false)
+			shown.Set(nil)
+		}
+	}
 	undoing := core.NewSignal(cx, false)
 	undo := func(runID string) {
 		if undoing.GetUntracked() {
@@ -64,7 +86,7 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 		Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(24), AlignItems: core.AlignCenter,
 			Padding: core.Symmetric(0, 24), ZIndex: 10},
 		Children: []core.Node{core.Dynamic(func(cx *core.Scope) core.Node {
-			t := toasts.Current()
+			t := shown.Get()
 			if t == nil {
 				return core.Group{}
 			}
@@ -83,7 +105,7 @@ func toastLayer(cx *core.Scope, stores *store.Stores, navigator *nav.Navigator) 
 				runID := t.ViewRun
 				actions = append(actions, kit.ToastAction{Text: "查看", TestID: "toast-details", OnPress: func() { navigator.GoHistory("", runID) }})
 			}
-			return kit.Toast{Text: text, Actions: actions, Duration: t.Duration, OnClose: toasts.Dismiss}
+			return kit.Toast{Text: text, Actions: actions, Duration: t.Duration, OnClose: toasts.Dismiss, Leaving: leaving.Get, OnGone: gone}
 		})}}
 }
 

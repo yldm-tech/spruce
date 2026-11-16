@@ -42,10 +42,12 @@ func stateOf(latest *sysinfo.Vitals, present bool) cardState {
 
 // vitalCard is one overview card of the page: a gradient tile and title, the headline figure, its caption and the details below. The body changes only when State does, so the meters and charts in it stay mounted from sample to sample.
 type vitalCard struct {
-	Title   string
-	Tone    kit.Tone
-	Glyph   string
-	TestID  string
+	Title  string
+	Tone   kit.Tone
+	Glyph  string
+	TestID string
+	// Order is the card's place on the page: the cards come in one after another.
+	Order   int
 	State   func() cardState
 	Value   func() string
 	Caption func() string
@@ -83,9 +85,10 @@ func (c vitalCard) Render(cx *core.Scope) core.Node {
 			return core.Group(nodes)
 		})
 	})
-	return core.View{Role: core.RoleRegion, Label: c.Title, TestID: c.TestID, Style: core.Style{MinWidth: core.Pt(0)}, Children: []core.Node{
-		kit.Card{Padding: core.Symmetric(20, 22), Gap: 10, Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}, Children: []core.Node{head, body}},
-	}}
+	return core.View{Role: core.RoleRegion, Label: c.Title, TestID: c.TestID,
+		Style: core.Style{MinWidth: core.Pt(0), Animated: kit.Enter(cx, kit.EnterRise, kit.StaggerDelay(c.Order))}, Children: []core.Node{
+			kit.Card{Padding: core.Symmetric(20, 22), Gap: 10, Style: core.Style{FlexGrow: 1, MinWidth: core.Pt(0)}, Children: []core.Node{head, body}},
+		}}
 }
 
 // pendingValue is the headline while there is no figure.
@@ -287,7 +290,7 @@ func (c cards) info() sysinfo.SystemInfo {
 }
 
 func (c cards) CPU() core.Node {
-	return vitalCard{Title: "CPU", Tone: kit.ToneAmber, Glyph: "cpu", TestID: "card-cpu",
+	return vitalCard{Title: "CPU", Tone: kit.ToneAmber, Glyph: "cpu", Order: 0, TestID: "card-cpu",
 		State: func() cardState { l := c.s.Latest(); return stateOf(l, l != nil && l.CPU != nil) },
 		Value: func() string { return FormatPercent(c.cpuStats().Percent) },
 		Caption: func() string {
@@ -308,7 +311,7 @@ func (c cards) CPU() core.Node {
 }
 
 func (c cards) Memory() core.Node {
-	return vitalCard{Title: "内存", Tone: kit.ToneViolet, Glyph: "memory", TestID: "card-memory",
+	return vitalCard{Title: "内存", Tone: kit.ToneViolet, Glyph: "memory", Order: 1, TestID: "card-memory",
 		State: func() cardState { l := c.s.Latest(); return stateOf(l, l != nil && l.Memory != nil) },
 		Value: func() string { return FormatPercent(c.memoryStats().Percent) },
 		Caption: func() string {
@@ -342,7 +345,7 @@ func (c cards) Memory() core.Node {
 }
 
 func (c cards) Disk() core.Node {
-	return vitalCard{Title: "磁盘", Tone: kit.ToneCyan, Glyph: "disk", TestID: "card-disk",
+	return vitalCard{Title: "磁盘", Tone: kit.ToneCyan, Glyph: "disk", Order: 2, TestID: "card-disk",
 		State: func() cardState { l := c.s.Latest(); return stateOf(l, l != nil && l.Disk != nil) },
 		Value: func() string { return FormatBytes(float64(c.diskUsage().Free)) + " 可用" },
 		Caption: func() string {
@@ -374,7 +377,7 @@ func (c cards) Disk() core.Node {
 }
 
 func (c cards) Network() core.Node {
-	return vitalCard{Title: "网络", Tone: kit.ToneBlue, Glyph: "network", TestID: "card-network",
+	return vitalCard{Title: "网络", Tone: kit.ToneBlue, Glyph: "network", Order: 3, TestID: "card-network",
 		State:   func() cardState { l := c.s.Latest(); return stateOf(l, l != nil && l.Network != nil) },
 		Value:   func() string { return "↓ " + FormatRate(c.network().DownloadPerSec) },
 		Caption: func() string { return "↑ " + FormatRate(c.network().UploadPerSec) },
@@ -388,7 +391,7 @@ func (c cards) Network() core.Node {
 
 // Battery is shown on a machine with a battery, and says 无法读取 when the battery could not be read.
 func (c cards) Battery() core.Node {
-	return vitalCard{Title: "电池", Tone: kit.ToneGreen, Glyph: "battery", TestID: "card-battery",
+	return vitalCard{Title: "电池", Tone: kit.ToneGreen, Glyph: "battery", Order: 4, TestID: "card-battery",
 		State:   func() cardState { l := c.s.Latest(); return stateOf(l, l != nil && l.Battery != nil) },
 		Value:   func() string { return FormatPercent(c.battery().Percent) },
 		Caption: func() string { return BatteryCaption(c.battery()) },
@@ -420,7 +423,7 @@ func (c cards) System() core.Node {
 		}
 		return s
 	}
-	return vitalCard{Title: "系统", Tone: kit.ToneSlate, Glyph: "display", TestID: "card-system",
+	return vitalCard{Title: "系统", Tone: kit.ToneSlate, Glyph: "display", Order: 5, TestID: "card-system",
 		State: func() cardState {
 			if c.s.Info.Get() == nil {
 				return cardPending

@@ -7,7 +7,7 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 )
 
-// ProgressRing is the overlays' ring: a filling amber arc when Value knows the fraction done, the 维护 page's spinning quarter arc when it does not. Children sit in its middle (the percent, the bytes found). Size is its diameter (96 when 0), Stroke its line (8 when 0), both at 96 points and scaled with Size.
+// ProgressRing is the overlays' ring: a filling amber arc when Value knows the fraction done, with a faint glint circling the track until it is full, so work that goes on shows as moving while its fraction stands still; the 维护 page's spinning quarter arc when it does not. Children sit in its middle (the percent, the bytes found). Size is its diameter (96 when 0), Stroke its line (8 when 0), both at 96 points and scaled with Size.
 type ProgressRing struct {
 	Value    func() (fraction float64, known bool)
 	Size     core.Points
@@ -70,7 +70,26 @@ func (p ProgressRing) Render(cx *core.Scope) core.Node {
 			return st
 		},
 	}
-	children := []core.Node{canvas}
+	// The glint turns with the ring's own spin, slower; it is not drawn once the ring is full or while it spins anyway.
+	glint := core.Canvas{
+		Draw: func(d *core.Drawing, sz core.Size) {
+			s := float32(sz.Width) / 96
+			cxy, r := 48*s, 40*s
+			d.SetLineWidth(float32(stroke) * s).SetLineCap(core.CapRound)
+			d.BeginPath().Arc(cxy, cxy, r, float32(-math.Pi/2), float32(-math.Pi/2+math.Pi/4), false).SetStrokeColor(core.RGBA(0xffffff, 0.28)).Stroke()
+		},
+		StyleFunc: func() core.Style {
+			st := core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Width: core.Pt(size), Height: core.Pt(size)}
+			f, known := value()
+			if !known || f >= 1 || cx.Env().ReduceMotion() {
+				st.Display = core.DisplayNone
+				return st
+			}
+			st.Animation = core.KeyframeAnimation{Keyframes: core.KeyframesSpin, Duration: 1600 * time.Millisecond, Easing: core.Linear}
+			return st
+		},
+	}
+	children := []core.Node{canvas, glint}
 	if len(p.Children) > 0 {
 		children = append(children, core.View{Style: core.Style{Position: core.Relative, AlignItems: core.AlignCenter,
 			FontFamily: FontFace(Bold), FontSize: 20, FontWeight: FaceWeight(Bold), FontVariant: core.FontTabularNums, Color: ColorText}, Children: p.Children})

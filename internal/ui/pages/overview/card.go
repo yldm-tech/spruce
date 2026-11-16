@@ -239,10 +239,11 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 	})
 	indent := core.Edges{Left: iconColumn + iconGap}
 	head := core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignStart, Gap: iconGap}, Children: []core.Node{
-		core.Dynamic(func(*core.Scope) core.Node {
+		// The icon breathes while the card's clean runs.
+		core.View{Style: core.Style{FlexShrink: 0, Animated: kit.Breathing(cx, busy)}, Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
 			icon := rec().Icon
 			return core.Func(func(*core.Scope) core.Node { return kit.CategoryTile(icon) })
-		}),
+		})}},
 		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 3}, Children: []core.Node{
 			core.Text{ContentFunc: title, TestID: "rec-" + id + "-title", Style: core.Style{FontFamily: kit.FontFace(kit.Semibold),
 				FontWeight: kit.FaceWeight(kit.Semibold), FontSize: kit.FontCardTitle, LineHeightMultiple: 1.4, Color: kit.ColorText}},
@@ -272,11 +273,12 @@ func recCard(cx *core.Scope, p *page, rec func() advice.Recommendation, index fu
 		core.View{Style: core.Style{Padding: indent}, Children: []core.Node{actions}},
 	}}
 	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
-		return cardItems(cx, p, id, rec, pick, reveal, func() bool { return busy() || leaving() })
+		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{cardItems(cx, p, id, rec, pick, reveal, func() bool { return busy() || leaving() })}}
 	}}
+	// Cards come in one after another as the page shows them.
 	card := core.View{Role: core.RoleRegion, LabelFunc: title, TestID: "rec-" + id, Ref: ref,
 		Style: core.Style{CornerRadius: kit.RadiusCard, Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Overflow: core.Hidden,
-			FlexShrink: 0},
+			FlexShrink: 0, Animated: kit.Enter(cx, kit.EnterRise, kit.StaggerDelay(core.Untracked(cx, index)))},
 		Children: []core.Node{top, items}}
 	// A card acted on fades and folds away as it goes.
 	return core.View{StyleFunc: func() core.Style {
@@ -307,7 +309,8 @@ func confirmDialog(c Confirm) kit.ConfirmDialog {
 func progressRow(id string, progress func() cleanup.Progress, stop func()) core.Node {
 	return core.View{Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12}, Children: []core.Node{
 		core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(80)}, Children: []core.Node{
-			kit.Meter{Height: 4, Label: "清理进度", TestID: "rec-" + id + "-progress", Value: func() float64 {
+			// The row shows only while the clean runs, so the bar's light always sweeps: one long item or a command stands at 0/1 until it ends.
+			kit.Meter{Height: 4, Label: "清理进度", TestID: "rec-" + id + "-progress", Active: func() bool { return true }, Value: func() float64 {
 				pr := progress()
 				if pr.Total <= 0 {
 					return 0
@@ -336,14 +339,8 @@ func expandButton(id string, title func() string, open *core.Signal[bool]) core.
 			JustifyContent: core.JustifyCenter, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer,
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
 			Hover:        &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText}},
-		OnPress: func(core.PressEvent) { open.Set(!open.GetUntracked()) },
-		Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
-			glyph := "chevron-down"
-			if open.Get() {
-				glyph = "chevron-up"
-			}
-			return core.Func(func(*core.Scope) core.Node { return kit.Glyph{Name: glyph, Size: 16, Color: core.CurrentColor} })
-		})},
+		OnPress:  func(core.PressEvent) { open.Set(!open.GetUntracked()) },
+		Children: []core.Node{kit.Chevron{Open: open.Get}},
 	}
 }
 

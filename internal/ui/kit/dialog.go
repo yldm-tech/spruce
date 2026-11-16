@@ -2,6 +2,7 @@ package kit
 
 import (
 	"strings"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/base"
 	"github.com/nsgo-dev/nsgo/core"
@@ -30,11 +31,37 @@ type layer struct {
 	testID      string
 }
 
+// layerFade is how long a layer's scrim and popup take to come in; the popup also grows from 96%. They go at once: a base.Dialog EndingStyle holds the layer until OnTransitionEnd, which nsgotest's steps do not wait for (https://github.com/nsgo-dev/nsgo/issues/335), so every test that closes a dialog would need to move the clock.
+const layerFade = 200 * time.Millisecond
+
+var popupHidden = core.Style{Opacity: core.Alpha(0), Transform: core.Transform{Scale: 0.96}}
+
 func (l layer) render() core.Node {
 	fill := core.Style{Position: core.Absolute, Top: core.Pt(0), Bottom: core.Pt(0)}
 	scrim := fill
 	scrim.Left, scrim.Right = core.Pt(SidebarWidth), core.Pt(0)
 	scrim.Background, scrim.BackdropFilters = Scrim, []core.Filter{core.Blur(BlurOverlay)}
+	// The scrim fades in after its first frame, as the popup does.
+	scrimView := core.Func(func(cx *core.Scope) core.Node {
+		entered := core.NewSignal(cx, cx.Env().ReduceMotion())
+		if !entered.GetUntracked() {
+			enter := func() { entered.Set(true) }
+			cx.RequestAnimationFrame(func(time.Time) { enter() })
+			cx.AfterFunc(20*time.Millisecond, enter)
+		}
+		return core.View{OnPress: func(core.PressEvent) {}, NoFocus: true, StyleFunc: func() core.Style {
+			st := scrim
+			if !cx.Env().ReduceMotion() {
+				st.Transition = core.Transition{Duration: layerFade, Easing: core.Ease, Properties: core.TransitionOpacity}
+			}
+			if !entered.Get() {
+				st.Opacity = core.Alpha(0)
+			}
+			return st
+		}}
+	})
+	popup := l.popup
+	popup.Transition = core.Transition{Duration: layerFade, Easing: core.Ease, Properties: core.TransitionOpacity | core.TransitionTransform}
 	sidebar := fill
 	sidebar.Left, sidebar.Width = core.Pt(0), core.Pt(SidebarWidth)
 	absorb := func(core.PressEvent) {}
@@ -65,9 +92,10 @@ func (l layer) render() core.Node {
 			TextAlign: core.TextAlignCenter},
 		Before: []core.Node{
 			core.View{Style: sidebar, OnPress: absorb, NoFocus: true},
-			core.View{Style: scrim, OnPress: absorb, NoFocus: true},
+			scrimView,
 		},
-		PopupStyle:               l.popup,
+		PopupStyle:               popup,
+		StartingStyle:            popupHidden,
 		Label:                    l.label,
 		Role:                     l.role,
 		AccessibilityDescription: l.description,
@@ -186,7 +214,7 @@ func (c ConfirmDialog) Render(cx *core.Scope) core.Node {
 		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render()
 }
 
-// DoneDialog is the card at the end of a run or a clean, as the 维护 design draws it: the badge (a check mark when Succeeded, else an exclamation mark), the title, the big figure, the lines (scrolling when they outgrow the window), Children (a permission prompt) and 完成 (CloseLabel), which has the focus.
+// DoneDialog is the card at the end of a run or a clean, as the 维护 design draws it: the badge (a check mark when Succeeded, else an exclamation mark), which pops in as the card comes, the title, the big figure, the lines (scrolling when they outgrow the window), Children (a permission prompt) and 完成 (CloseLabel), which has the focus.
 type DoneDialog struct {
 	Open        func() bool
 	Title, Big  string
@@ -211,8 +239,8 @@ func (d DoneDialog) Render(*core.Scope) core.Node {
 	}
 	closeRef := new(core.Ref)
 	children := []core.Node{
-		core.View{Style: core.Style{Width: core.Pt(88), Height: core.Pt(88), CornerRadius: 44, FlexShrink: 0, AlignItems: core.AlignCenter,
-			JustifyContent: core.JustifyCenter, Gradients: []core.Gradient{GradientAccent()}, Shadows: []core.BoxShadow{shadow(16, 40, ShadowAccent)}},
+		Appear{Entrance: EnterPop, Delay: 80 * time.Millisecond, Style: core.Style{Width: core.Pt(88), Height: core.Pt(88), CornerRadius: 44, FlexShrink: 0,
+			AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gradients: []core.Gradient{GradientAccent()}, Shadows: []core.BoxShadow{shadow(16, 40, ShadowAccent)}},
 			Children: []core.Node{Glyph{Name: glyph, Size: 44, StrokeWidth: 2.6}}},
 		core.Text{Content: d.Title, Role: core.RoleHeader, Style: core.Style{Margin: core.Edges{Top: 6}, FontFamily: FontFace(Bold), FontSize: FontTitle,
 			FontWeight: FaceWeight(Bold), Color: ColorText}},

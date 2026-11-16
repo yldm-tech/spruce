@@ -519,7 +519,9 @@ func resultBody(cx *core.Scope, p *page) core.Node {
 	hasCards := core.NewMemo(cx, func() bool { return len(displayed.Get()) > 0 })
 	conclusion := core.Dynamic(func(*core.Scope) core.Node {
 		if hasCards.Get() {
-			return core.Func(func(*core.Scope) core.Node { return figure(p) })
+			return core.Func(func(*core.Scope) core.Node {
+				return kit.Appear{Entrance: kit.EnterRise, Style: core.Style{AlignItems: core.AlignCenter, Gap: 6}, Children: []core.Node{figure(p)}}
+			})
 		}
 		return core.Func(func(*core.Scope) core.Node {
 			return kit.EmptyState{Glyph: "check", Tone: kit.ToneGreen, TestID: "overview-empty", Title: "没有需要清理的内容",

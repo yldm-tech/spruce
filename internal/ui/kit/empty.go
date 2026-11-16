@@ -1,8 +1,12 @@
 package kit
 
-import "github.com/nsgo-dev/nsgo/core"
+import (
+	"time"
 
-// EmptyState fills a page or a list that has nothing to show, e.g. 没有找到可以清理的内容: a 56-point tile (when Glyph is set), the title, the description and an action below.
+	"github.com/nsgo-dev/nsgo/core"
+)
+
+// EmptyState fills a page or a list that has nothing to show, e.g. 没有找到可以清理的内容: a 56-point tile (when Glyph is set), the title, the description and an action below. The tile pops in and the rest rises after it.
 type EmptyState struct {
 	Title, Description string
 	Tone               Tone
@@ -12,24 +16,28 @@ type EmptyState struct {
 }
 
 // Render implements core.Node.
-func (e EmptyState) Render(*core.Scope) core.Node {
+func (e EmptyState) Render(cx *core.Scope) core.Node {
 	var children []core.Node
 	if e.Glyph != "" {
-		children = append(children, IconTile{Tone: e.Tone, Size: 56, GlyphSize: 26, Glyph: e.Glyph, Radius: 16})
+		children = append(children, core.View{Style: core.Style{Animated: Enter(cx, EnterPop, 0)},
+			Children: []core.Node{IconTile{Tone: e.Tone, Size: 56, GlyphSize: 26, Glyph: e.Glyph, Radius: 16}}})
 	}
-	children = append(children, Text(e.Title, FontTitle, Bold, ColorText))
+	var text []core.Node
+	text = append(text, Text(e.Title, FontTitle, Bold, ColorText))
 	if e.Description != "" {
-		children = append(children, core.Text{Content: e.Description, Style: core.Style{MaxWidth: core.Pt(440), TextAlign: core.TextAlignCenter,
+		text = append(text, core.Text{Content: e.Description, Style: core.Style{MaxWidth: core.Pt(440), TextAlign: core.TextAlignCenter,
 			LineHeightMultiple: 1.5, FontFamily: FontSans, FontSize: FontSubheading, Color: ColorTextOverlaySub}})
 	}
 	if e.Action != nil {
-		children = append(children, e.Action)
+		text = append(text, e.Action)
 	}
+	children = append(children, core.View{Style: core.Style{AlignItems: core.AlignCenter, Gap: 12, Animated: Enter(cx, EnterRise, 80*time.Millisecond)},
+		Children: text})
 	return core.View{TestID: e.TestID, Style: core.Style{FlexGrow: 1, FlexShrink: 1, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter,
 		Gap: 12, Padding: core.Symmetric(24, 0)}, Children: children}
 }
 
-// ErrorLine is a line in the warning color that is there only while Text returns something, announced to screen readers as it appears.
+// ErrorLine is a line in the warning color that is there only while Text returns something, announced to screen readers as it appears; it fades in.
 type ErrorLine struct {
 	Text   func() string
 	TestID string
@@ -38,8 +46,9 @@ type ErrorLine struct {
 // Render implements core.Node.
 func (e ErrorLine) Render(*core.Scope) core.Node {
 	return core.Show{When: func() bool { return e.Text != nil && e.Text() != "" }, Then: func(*core.Scope) core.Node {
-		return core.Text{ContentFunc: e.Text, LiveRegion: core.LiveRegionPolite, TestID: e.TestID, Role: core.RoleAlert,
-			Style: core.Style{FontFamily: FontSans, FontSize: FontBody, LineHeightMultiple: 1.5, Color: ColorWarning}}
+		return Appear{Entrance: EnterFade, Style: core.Style{FlexShrink: 1, MinWidth: core.Pt(0)}, Children: []core.Node{
+			core.Text{ContentFunc: e.Text, LiveRegion: core.LiveRegionPolite, TestID: e.TestID, Role: core.RoleAlert,
+				Style: core.Style{FontFamily: FontSans, FontSize: FontBody, LineHeightMultiple: 1.5, Color: ColorWarning}}}}
 	}}
 }
 

@@ -18,17 +18,18 @@ func meterFill(l Level) core.Gradient {
 	return GradientAccent()
 }
 
-// Meter is a capacity or usage bar: Value from 0 to 1 fills it in the color of its Level, its width moving smoothly. Height is its thickness (8 when 0).
+// Meter is a capacity, usage or progress bar: Value from 0 to 1 fills it in the color of its Level, its width moving smoothly. While Active says so a band of light sweeps across it, so work that goes on shows as moving even while its fraction stands still (one long item, a command). Height is its thickness (8 when 0).
 type Meter struct {
 	Value  func() float64
 	Level  func() Level
+	Active func() bool
 	Height core.Points
 	Label  string
 	TestID string
 }
 
 // Render implements core.Node.
-func (m Meter) Render(*core.Scope) core.Node {
+func (m Meter) Render(cx *core.Scope) core.Node {
 	h := m.Height
 	if h == 0 {
 		h = 8
@@ -52,10 +53,18 @@ func (m Meter) Render(*core.Scope) core.Node {
 			Gradients:  []core.Gradient{meterFill(l)},
 			Transition: core.Transition{Duration: 250 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionLayout | core.TransitionBackground}}
 	}}
-	return core.View{Role: core.RoleProgressBar, Label: m.Label, TestID: m.TestID,
+	children := []core.Node{fill}
+	var onLayout func(core.Bounds)
+	if m.Active != nil {
+		width := core.NewSignal(cx, core.Points(0))
+		onLayout = func(b core.Bounds) { width.Set(b.Size.Width) }
+		children = append(children, sweepBand(cx, width.Get, m.Active, 0xffd23f, 0.7))
+	}
+	return core.View{Role: core.RoleProgressBar, Label: m.Label, TestID: m.TestID, OnLayout: onLayout,
+		Busy: m.Active,
 		AccessibilityValue: func() core.AccessibilityValue {
 			return core.AccessibilityValue{Min: 0, Max: 100, Now: float32(math.Round(value() * 100))}
 		},
 		Style:    core.Style{Height: core.Pt(h), CornerRadius: h / 2, Background: MeterTrack, Overflow: core.Hidden, Direction: core.Row},
-		Children: []core.Node{fill}}
+		Children: children}
 }

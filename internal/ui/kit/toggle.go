@@ -10,6 +10,13 @@ import (
 // controlFade is the 0.15 s ease the design's switches and checkboxes change color with.
 var controlFade = core.Transition{Duration: 150 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionBackground | core.TransitionBorder}
 
+// thumbSlide moves a switch's thumb across its track; markPop brings a checkbox's mark in from 60% with a little overshoot.
+var (
+	thumbSlide = core.Transition{Duration: 180 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionLayout}
+	markPop    = core.Transition{Duration: 180 * time.Millisecond, Easing: core.Curve{X1: 0.34, Y1: 1.56, X2: 0.64, Y2: 1},
+		Properties: core.TransitionOpacity | core.TransitionTransform}
+)
+
 // Switch is the 维护 cards' on/off switch for any page: a 44 by 26 track, amber when on, with a white thumb. Label names it for assistive technology.
 type Switch struct {
 	Checked  func() bool
@@ -28,7 +35,7 @@ func (s Switch) Render(*core.Scope) core.Node {
 			JustifyContent: core.JustifyStart, Background: SwitchOff, Transition: controlFade,
 			Checked:  &core.Style{JustifyContent: core.JustifyEnd, Background: SwitchOn},
 			Disabled: &core.Style{Opacity: core.Alpha(0.45)}},
-		ThumbStyle: core.Style{Width: core.Pt(20), Height: core.Pt(20), CornerRadius: 10, Background: SwitchThumb},
+		ThumbStyle: core.Style{Width: core.Pt(20), Height: core.Pt(20), CornerRadius: 10, Background: SwitchThumb, Transition: thumbSlide},
 	}
 }
 
@@ -59,9 +66,9 @@ func (c Checkbox) Render(*core.Scope) core.Node {
 			Checked: on, Indeterminate: on, Disabled: &core.Style{Opacity: core.Alpha(0.45)}},
 		Indicator: core.View{StyleFunc: func() core.Style {
 			if is(c.Checked) || is(c.Indeterminate) {
-				return core.Style{}
+				return core.Style{Transition: markPop}
 			}
-			return core.Style{Opacity: core.Alpha(0)}
+			return core.Style{Opacity: core.Alpha(0), Transform: core.Transform{Scale: 0.6}, Transition: markPop}
 		}, Children: []core.Node{mark}},
 	}
 }

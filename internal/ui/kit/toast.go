@@ -21,6 +21,9 @@ type Toast struct {
 	Actions  []ToastAction
 	OnClose  func()
 	Duration time.Duration
+	// Leaving, once it says so, plays the toast's exit (it sinks as it fades), then calls OnGone, so whoever mounts it can take it away; the toast takes no presses meanwhile. Without it the toast goes when it is unmounted. It comes in rising from the bottom edge either way.
+	Leaving func() bool
+	OnGone  func()
 }
 
 // toastBase is the toast's opaque ground: unlike a dialog it has no scrim behind it, so the dialogs' translucent surface alone would let the page show through its text.
@@ -33,6 +36,25 @@ func toastSheen() core.Gradient {
 
 // Render implements core.Node.
 func (t Toast) Render(cx *core.Scope) core.Node {
+	enter := EnterSlide.spec(0)
+	motion := core.NewMotion(cx, &enter)
+	leaving := func() bool { return t.Leaving != nil && t.Leaving() }
+	if t.Leaving != nil {
+		gone := false
+		cx.Effect(func() {
+			if !leaving() {
+				return
+			}
+			cx.Untrack(func() {
+				motion.Play(leaveSpec(), func(bool) {
+					if !gone && t.OnGone != nil {
+						gone = true
+						t.OnGone()
+					}
+				})
+			})
+		})
+	}
 	hovered := false
 	focused := core.NewSignal(cx, false)
 	left := t.Duration
@@ -75,13 +97,18 @@ func (t Toast) Render(cx *core.Scope) core.Node {
 		children = append(children, Button{Variant: ButtonLink, Text: a.Text, TestID: a.TestID, OnPress: a.OnPress, Busy: a.Busy})
 	}
 	children = append(children, IconButton{Glyph: "close", Label: "关闭", TestID: "toast-close", OnPress: t.OnClose}, escape)
+	// A leaving toast takes no more presses.
+	children = append(children, core.Show{When: leaving, Then: func(*core.Scope) core.Node {
+		return core.View{OnPress: func(core.PressEvent) {}, NoFocus: true,
+			Style: core.Style{Position: core.Absolute, Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Left: core.Pt(0)}}
+	}})
 	return core.View{Role: core.RoleGroup, Label: "提示", TestID: "toast",
 		OnMouseEnter: func(core.MouseEvent) { hovered = true; sync() },
 		OnMouseLeave: func(core.MouseEvent) { hovered = false; sync() },
 		OnFocusIn:    func() { focused.Set(true); sync() },
 		OnFocusOut:   func() { focused.Set(false); sync() },
-		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, MinHeight: core.Pt(44), MaxWidth: core.Pt(520),
+		Style: core.Style{Position: core.Relative, Direction: core.Row, AlignItems: core.AlignCenter, Gap: 8, MinHeight: core.Pt(44), MaxWidth: core.Pt(520),
 			Padding: core.Edges{Left: 18, Right: 8}, CornerRadius: RadiusPill, Background: toastBase, Gradients: []core.Gradient{toastSheen()},
-			BorderWidth: 1, BorderColor: BorderDialog, Shadows: []core.BoxShadow{shadow(12, 32, ShadowDialog)}},
+			BorderWidth: 1, BorderColor: BorderDialog, Shadows: []core.BoxShadow{shadow(12, 32, ShadowDialog)}, Animated: motion.Style()},
 		Children: children}
 }

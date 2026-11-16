@@ -1,6 +1,8 @@
 package space
 
 import (
+	"time"
+
 	"github.com/nsgo-dev/nsgo/core"
 
 	"github.com/yldm-tech/spruce/internal/app"
@@ -85,7 +87,9 @@ func treemapCell(cell func() Cell[app.SpaceEntry], index func() int, m Treemap) 
 			Width: core.Pt(core.Points(c.Width)), Height: core.Pt(core.Points(c.Height)),
 			JustifyContent: core.JustifyEnd, AlignItems: core.AlignStart, Gap: 1, Padding: core.Symmetric(6, 8), Overflow: core.Hidden,
 			CornerRadius: cellRadius, Color: kit.ColorText, TextAlign: core.TextAlignLeft,
-			TextShadowColor: cellTextShadow, TextShadowOffset: core.Point{Y: 1}, TextShadowRadius: 2}
+			TextShadowColor: cellTextShadow, TextShadowOffset: core.Point{Y: 1}, TextShadowRadius: 2,
+			// A cell whose share changes (a move to the Trash) slides and resizes to its new place.
+			Transition: core.Transition{Duration: 260 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionLayout | core.TransitionBackground}}
 		if group {
 			st.Background, st.BorderWidth, st.BorderColor, st.BorderStyle = cellGroup, 1, cellGroupBorder, core.BorderDashed
 		} else {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/ui/async"
+	"github.com/yldm-tech/spruce/internal/ui/kit"
 	"github.com/yldm-tech/spruce/internal/ui/store"
 )
 
@@ -62,6 +63,8 @@ type Results struct {
 	RevealErr *core.Signal[string]
 
 	listSeq, largeSeq int
+	// settle is set after a move to the Trash: the listing and the large files it asks for again move into place (kit.SettleLayout).
+	settle bool
 	// largeStale is set when a move to the Trash changed the large files while the 大文件 tab was not showing.
 	largeStale bool
 }
@@ -120,6 +123,10 @@ func (r *Results) loadListing() {
 				return
 			}
 			r.ListingErr.Set("")
+			if r.settle && l.Entry.ID == core.Untracked(r.cx, r.Folder.Get) {
+				r.settle = false
+				kit.SettleLayout(r.cx)
+			}
 			r.Listing.Set(&l)
 		})
 }
@@ -215,6 +222,7 @@ func (r *Results) trash(entry app.SpaceEntry) {
 			r.Notice.Set(Notice{Kind: NoticeError, Text: err.Error()})
 			return
 		}
+		r.settle = true
 		r.page.trashed(r.scanID, res.Root)
 		r.page.Moved(res.RunID)
 		r.loadListing()

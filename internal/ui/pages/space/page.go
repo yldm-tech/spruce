@@ -174,11 +174,13 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 	}}
 	revealErr := kit.ErrorLine{Text: r.RevealErr.Get, TestID: "space-reveal-error"}
 
+	// A tab's panel fades in as it shows.
+	panel := core.Style{FlexGrow: 1, FlexShrink: 0}
 	mapPanel := core.Show{When: func() bool { return r.Tab.Get() == TabMap }, Then: func(cx *core.Scope) core.Node {
-		return mapView(cx, r, actions)
+		return kit.Appear{Entrance: kit.EnterFade, Style: panel, Children: []core.Node{mapView(cx, r, actions)}}
 	}}
 	largePanel := core.Show{When: func() bool { return r.Tab.Get() == TabLarge }, Then: func(*core.Scope) core.Node {
-		return largeView(r, actions, summary)
+		return kit.Appear{Entrance: kit.EnterFade, Style: panel, Children: []core.Node{largeView(r, actions, summary)}}
 	}}
 
 	trash := format.TrashName()
@@ -232,11 +234,13 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 				return kit.EmptyState{Title: "这个文件夹是空的", Tone: kit.ToneCyan, TestID: "space-empty"}
 			})
 		}},
-		core.Show{When: func() bool { return has() && len(children()) > 0 }, Then: func(*core.Scope) core.Node {
+		core.Show{When: func() bool { return has() && len(children()) > 0 }, Then: func(cx *core.Scope) core.Node {
+			// Opening another folder fades the map and the list in again.
+			fade := kit.FadeOnChange(cx, func() int { return listing().Entry.ID })
 			return core.View{Busy: r.Fetching.Get, TestID: "space-browser",
 				StyleFunc: func() core.Style {
 					return core.Style{Display: core.DisplayGrid, GridTemplateColumns: "minmax(0, 3fr) minmax(300px, 2fr)", Gap: 14,
-						Height: core.Pt(browserHeight())}
+						Height: core.Pt(browserHeight()), Animated: fade}
 				},
 				Children: []core.Node{
 					Treemap{Entries: children, Total: total, Label: folderName, OnOpen: actions.OnOpen},

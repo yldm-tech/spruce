@@ -44,8 +44,10 @@ func Page(cx *core.Scope) core.Node {
 	grid := core.View{Role: core.RoleGroup, Label: "维护任务", TestID: "task-grid",
 		Busy:  func() bool { return s.Catalog.Get() == nil },
 		Style: core.Style{Display: core.DisplayGrid, GridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", Gap: 14},
-		Children: []core.Node{core.Each(s.Catalog.Get, func(t app.TaskView) string { return t.ID }, func(_ *core.Scope, task func() app.TaskView, _ func() int) core.Node {
-			return taskCard(task(), s, missing, onGuided)
+		Children: []core.Node{core.Each(s.Catalog.Get, func(t app.TaskView) string { return t.ID }, func(cx *core.Scope, task func() app.TaskView, index func() int) core.Node {
+			// The cards come in one after another.
+			return kit.Appear{Entrance: kit.EnterRise, Delay: kit.StaggerDelay(core.Untracked(cx, index)), Style: core.Style{MinWidth: core.Pt(0)},
+				Children: []core.Node{taskCard(task(), s, missing, onGuided)}}
 		})}}
 
 	bar := kit.ActionBar{
@@ -105,7 +107,7 @@ func taskCard(t app.TaskView, s *State, missing func() bool, onGuided func(maint
 			return shared.PermissionAction{Text: permissionText, Start: true, OnGuided: onGuided}
 		}})
 	}
-	return kit.Card{Variant: variant, Padding: core.Symmetric(24, 22), Gap: 18, TestID: "task-" + t.ID, Children: []core.Node{
+	return kit.Card{Variant: variant, Padding: core.Symmetric(24, 22), Gap: 18, TestID: "task-" + t.ID, Style: core.Style{FlexGrow: 1}, Children: []core.Node{
 		core.View{Style: core.Style{Direction: core.Row, JustifyContent: core.JustifySpaceBetween, AlignItems: core.AlignStart}, Children: []core.Node{
 			kit.TaskTile(string(t.Icon)),
 			kit.Switch{Label: t.Title, TestID: "switch-" + t.ID, Checked: on, OnChange: func(v bool) { s.Toggle(t.ID, v) }},

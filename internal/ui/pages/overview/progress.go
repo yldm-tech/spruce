@@ -23,7 +23,7 @@ func checkProgress(progress func() cleanup.Progress, stop func()) core.Node {
 	}}
 	rows := make([]core.Node, len(Sources))
 	for i, id := range Sources {
-		rows[i] = sourceRow{ID: id, Row: func() SourceRow { return SourceRows(progress())[i] }}
+		rows[i] = sourceRow{ID: id, Index: i, Row: func() SourceRow { return SourceRows(progress())[i] }}
 	}
 	return core.View{Role: core.RoleRegion, Label: "正在检查", TestID: "check-progress", Busy: func() bool { return true },
 		Style: core.Style{FlexShrink: 0, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Edges{Top: 16, Bottom: 8}, TextAlign: core.TextAlignCenter},
@@ -40,8 +40,9 @@ func checkProgress(progress func() cleanup.Progress, stop func()) core.Node {
 
 // sourceRow is one source while the check runs (.smart-scan-row): its tile, name and scope over its bar, and its state on the right.
 type sourceRow struct {
-	ID  app.CleanerID
-	Row func() SourceRow
+	ID    app.CleanerID
+	Index int
+	Row   func() SourceRow
 }
 
 // Render implements core.Node.
@@ -55,7 +56,8 @@ func (r sourceRow) Render(cx *core.Scope) core.Node {
 			return core.Func(func(*core.Scope) core.Node { return kit.SweepBar{Height: 6, TestID: "sweep-" + id} })
 		}
 		return core.Func(func(*core.Scope) core.Node {
-			return kit.Meter{Value: func() float64 { return r.Row().Fraction }, Height: 6, Label: meta.Title + "检查进度", TestID: "bar-" + id}
+			return kit.Meter{Value: func() float64 { return r.Row().Fraction }, Height: 6, Label: meta.Title + "检查进度", TestID: "bar-" + id,
+				Active: func() bool { return r.Row().Status == RowStatus(cleanup.SourceScanning) }}
 		})
 	})
 	status := core.Text{TestID: "row-status-" + id, ContentFunc: func() string { return RowStatusText(r.Row()) }, StyleFunc: func() core.Style {
@@ -68,7 +70,8 @@ func (r sourceRow) Render(cx *core.Scope) core.Node {
 	}}
 	return core.View{TestID: "row-" + id,
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(14, 18), CornerRadius: kit.RadiusCard,
-			Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, TextAlign: core.TextAlignLeft},
+			Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, TextAlign: core.TextAlignLeft,
+			Animated: kit.Enter(cx, kit.EnterRise, kit.StaggerDelay(r.Index+1))},
 		Children: []core.Node{
 			kit.IconTile{Tone: meta.Tone, Size: 36, GlyphSize: 18, Glyph: meta.Glyph, Radius: kit.RadiusCardIcon},
 			core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinWidth: core.Pt(0), Gap: 4}, Children: []core.Node{

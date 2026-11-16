@@ -118,6 +118,9 @@ func rowTitle(s string) core.Text {
 }
 
 // runRow is one run: a button with the kind's tile, title and summary line, the start time and a chevron, which shows or hides the run's details under it. A run 放回原处 can put back shows that button left of the time; it is a sibling of the row's button, not inside it, so the row's press area lies under the line and the line itself lets presses through to it.
+// enterRows is how many rows of a day come in with a motion.
+const enterRows = 12
+
 func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core.Node {
 	open := core.NewSignal(cx, run.ID == s.Opened.GetUntracked())
 	// GoHistory asking for this run opens it, also while the page is open.
@@ -181,12 +184,19 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 				return st
 			}, Children: []core.Node{kit.Glyph{Name: "chevron-right", Size: 16, Color: core.CurrentColor}}},
 		}}
-	details := core.Show{When: open.Get, Then: func(*core.Scope) core.Node { return runDetails(s, run) }}
+	details := core.Show{When: open.Get, Then: func(*core.Scope) core.Node {
+		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{runDetails(s, run)}}
+	}}
+	// The first rows come in one after another; the ones further down, out of view, just show.
+	var enter *core.AnimatedStyle
+	if i := core.Untracked(cx, index); i < enterRows {
+		enter = kit.Enter(cx, kit.EnterRise, kit.StaggerDelay(i))
+	}
 	return core.View{TestID: "run-" + run.ID, StyleFunc: func() core.Style {
 		if index() == 0 {
-			return core.Style{}
+			return core.Style{Animated: enter}
 		}
-		return core.Style{Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}
+		return core.Style{Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle, Animated: enter}
 	}, Children: []core.Node{core.View{Children: []core.Node{head, line}}, details}}
 }
 
