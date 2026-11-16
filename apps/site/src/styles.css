@@ -47,6 +47,8 @@
     --card-border: rgba(255, 255, 255, 0.14);
     --ghost: rgba(255, 255, 255, 0.14);
     --well: rgba(0, 0, 0, 0.22);
+    /* The header has no background until the page scrolls, and its right end lies on the warm glow, so the section links, the language menu and the GitHub link stand on this dark chip, which keeps their text above 4.5:1 on the glow's brightest part. */
+    --chip: rgba(28, 15, 38, 0.5);
     --wrap: 1176px;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
@@ -227,7 +229,7 @@
     margin-left: auto;
     padding: 3px;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--chip);
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
   .nav a {
@@ -274,6 +276,7 @@
     height: 36px;
     padding: 0 12px;
     border-radius: 18px;
+    background: var(--chip);
     color: rgba(255, 255, 255, 0.82);
     font-size: 13px;
     font-weight: 500;
@@ -285,7 +288,7 @@
   }
   .lang summary:hover,
   .lang[open] summary {
-    background: rgba(255, 255, 255, 0.1);
+    background: linear-gradient(rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.1)), var(--chip);
     color: var(--text);
   }
   .lang svg {
@@ -333,7 +336,7 @@
     height: 36px;
     padding: 0 14px;
     border-radius: 18px;
-    background: var(--ghost);
+    background: linear-gradient(var(--ghost), var(--ghost)), var(--chip);
     box-shadow: inset 0 0 0 1px var(--card-border);
     color: var(--text);
     font-size: 14px;
@@ -344,7 +347,7 @@
   }
   .gh:hover {
     color: var(--text);
-    background: rgba(255, 255, 255, 0.2);
+    background: linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.2)), var(--chip);
   }
 
   /* ---- buttons ---- */
