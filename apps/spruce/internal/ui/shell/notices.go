@@ -52,7 +52,7 @@ func CheckNoticeText(failed string, headline int64) (title, body string) {
 	return "检查完成", "没有需要清理的内容。"
 }
 
-// trayCheck returns what the menu bar icon's 立即检查 runs: a foreground check, which, started while the window is out of sight (away), ends with a notification (CheckNoticeText), as the window would have shown how it went; a refused check says why at once. It asks for the permission as the user starts it, the moment the system's prompt makes sense; without it nothing shows.
+// trayCheck returns what the menu bar icon's 立即检查 runs: a foreground check, which, started while the window is out of sight (away), ends with a notification (CheckNoticeText) unless the window came back meanwhile and shows how it went itself; a refused check says why at once. It asks for the permission as the user starts it, the moment the system's prompt makes sense; without it nothing shows.
 func trayCheck(cx *core.Scope, o *store.Overview, away func() bool) func() {
 	// watching is set from a check started while away until it ends; seen once it ran (the phase went to checking), or its result came (checkedAt moved on).
 	var watching, seen bool
@@ -77,7 +77,11 @@ func trayCheck(cx *core.Scope, o *store.Overview, away func() bool) func() {
 		if st.Result != nil {
 			headline = st.Result.Headline
 		}
-		cx.Untrack(func() { notify(st.Error, headline) })
+		cx.Untrack(func() {
+			if away() {
+				notify(st.Error, headline)
+			}
+		})
 	})
 	return func() {
 		watching, seen = false, false
@@ -92,7 +96,9 @@ func trayCheck(cx *core.Scope, o *store.Overview, away func() bool) func() {
 		o.CheckNow(func(err error) {
 			if err != nil && watching {
 				watching = false
-				notify(err.Error(), 0)
+				if away() {
+					notify(err.Error(), 0)
+				}
 			}
 		})
 	}
