@@ -14,6 +14,7 @@ import (
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/maintenance"
+	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/pages/space"
 	"spruce/apps/spruce/internal/ui/pages/space/spacefake"
@@ -52,6 +53,8 @@ func mount(t *testing.T, p *page, shown bool, opts ...nsgotest.Option) *page {
 		p.nav = nav.NewNavigator(cx, nav.Space)
 		nav.Key.Provide(cx, p.nav)
 		space.Provide(cx, space.Deps{Space: p.svc, Files: p.files})
+		// The shell's toast raises a page's footer.
+		kit.ToastShownKey.Provide(cx, func() bool { return p.stores.Toasts.Current() != nil })
 		p.shown = core.NewSignal(cx, shown)
 		return core.Show{When: p.shown.Get, Then: space.Page}
 	}, append([]nsgotest.Option{nsgotest.Size(1052, 820), wallNow}, opts...)...)
@@ -119,6 +122,21 @@ func movedText(n int64) string { return "已移到" + spacefake.Trash + " " + sp
 
 var restoreText = "，需要时可以在" + spacefake.Trash + "里还原"
 
+// revealItem and trashItem are the context menu's 在访达中显示 and 移到废纸篓 in this system's words.
+var (
+	revealItem = "在" + spacefake.FileManager + "中显示"
+	trashItem  = "移到" + spacefake.Trash
+)
+
+// confirmText is how the confirmation starts for what (「big.iso」, 2 项) of n bytes: 将把「big.iso」（3 GB）移到废纸篓。 It goes on with confirmUndo where Spruce can undo the move, else with confirmRestore.
+func confirmText(what string, n int64) string {
+	return "将把" + what + "（" + spacefake.Size(n) + "）移到" + spacefake.Trash + "。"
+}
+
+var confirmRestore = "需要时可以从" + spacefake.Trash + "放回原处。"
+
+const confirmUndo = "移走后可以撤销。"
+
 func TestStartListsDisksAndFolders(t *testing.T) {
 	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
 	p.WaitFor("id:volume-/", wait)
@@ -134,7 +152,7 @@ func TestStartListsDisksAndFolders(t *testing.T) {
 	for _, id := range []string{"home", "downloads", "applications"} {
 		p.Find("id:target-" + id)
 	}
-	p.Find(`id:target-downloads >> text:"/Users/me/Downloads"`)
+	p.Find(`id:target-downloads >> text:"` + filepath.Join(spacefake.Home, "Downloads") + `"`)
 	p.Find("id:choose-folder >> text:选择其他文件夹…")
 	if p.Exists("id:return-results") || p.Exists("id:change-location") {
 		t.Error("a header action shows without a scan")
@@ -325,8 +343,17 @@ func TestComingBackOpensTheFolderAndTabLeftOpen(t *testing.T) {
 	}
 }
 
+// TestGoSpaceReplacesARunningScan: the service runs one scan at a time and the walk replaced takes a moment to stop, so the new scan waits for it instead of failing with 已有扫描正在进行.
 func TestGoSpaceReplacesARunningScan(t *testing.T) {
-	svc := &spacefake.Service{Listings: spacefake.Listings()}
+	unwound := make(chan struct{})
+	svc := &spacefake.Service{Listings: spacefake.Listings(),
+		OnScan: func(ctx context.Context, path string, _ func(app.SpaceProgress)) (app.SpaceSummary, error) {
+			<-ctx.Done()
+			if path == spacefake.Home {
+				<-unwound
+			}
+			return app.SpaceSummary{}, errors.New("已取消")
+		}}
 	p := start(t, svc, newFakes(t))
 	p.WaitFor("id:target-home", wait)
 	p.Press("id:target-home")
@@ -340,6 +367,11 @@ func TestGoSpaceReplacesARunningScan(t *testing.T) {
 		p.shown.Set(true)
 	})
 	p.WaitFor("text:正在分析「Caches」…", wait)
+	p.Advance(200 * time.Millisecond)
+	if got := svc.Scans(); len(got) != 1 {
+		t.Fatalf("the new scan did not wait for the old one: %v", got)
+	}
+	close(unwound)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 2 })
 	if got := svc.Scans(); got[1] != caches {
 		t.Errorf("scans %v", got)
@@ -402,7 +434,7 @@ func TestTrashAfterConfirming(t *testing.T) {
 	trashGen := p.stores.Trash.Generation()
 	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「big.iso」（" + spacefake.Size(3e9) + "）移到" + spacefake.Trash + "。需要时可以从" + spacefake.Trash + "放回原处。")
+	p.Find("id:trash-confirm >> text:" + confirmText("「big.iso」", 3e9) + confirmRestore)
 	if !p.stores.Block.Blocked() {
 		t.Error("the shell is not blocked while the confirmation shows")
 	}
@@ -544,8 +576,9 @@ func TestLargeFilesTab(t *testing.T) {
 		t.Errorf("large calls %d", svc.LargeCalls())
 	}
 	p.Find(`role:group "大文件" >> text:big.iso`)
-	p.Find(`role:group "大文件" >> text:"` + spacefake.Home + `/Projects"`)
-	p.Find("text:「个人文件夹」中 " + spacefake.Size(500e6) + " 以上的文件，最多列出 200 个。可以在「设置」中调整大小。")
+	p.Find(`role:group "大文件" >> text:"` + filepath.Join(spacefake.Home, "Projects") + `"`)
+	p.Find("id:space-large-note >> text:「个人文件夹」中 " + spacefake.Size(500e6) + " 以上的文件，最多列出 200 个。可以在")
+	p.Find("id:space-large-settings >> text:设置")
 	if p.Exists("id:treemap") {
 		t.Error("the map shows on the 大文件 tab")
 	}
@@ -608,16 +641,26 @@ func TestChangeLocationAndReturn(t *testing.T) {
 	p.WaitFor(homeList, wait)
 }
 
+// TestRescanTheSameLocation: 重新扫描 keeps the results and the folder open while the scan runs, and 停止 leaves them as they were.
 func TestRescanTheSameLocation(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "Projects"`)
+	p.WaitFor(`role:group "Projects 的内容"`, wait)
 	p.Press("id:rescan")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
 	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) > 0 })
 	if got := svc.Scans(); len(got) != 1 || got[0] != spacefake.Home {
 		t.Errorf("scans %v", got)
+	}
+	p.Find(`role:group "Projects 的内容"`)
+	p.Press("id:space-stop")
+	p.WaitFor("id:rescan", wait)
+	p.Find(`role:group "Projects 的内容"`)
+	if p.Exists("role:alert") {
+		t.Errorf("an alert shows: %v", p.Texts())
 	}
 }
 
@@ -629,7 +672,8 @@ func TestStaleFolderOffersRescan(t *testing.T) {
 		t.Errorf("error %q", got)
 	}
 	p.Press(`role:alert >> role:button "重新扫描"`)
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
 }
 
 // TestConfirmationFocus checks where the keyboard's focus goes (macOS): onto 移到废纸篓 as the confirmation opens, since a move can be undone, and back to the row's button as Escape closes it.

@@ -13,6 +13,7 @@ type Service interface {
 	Scan(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error)
 	Current() *app.SpaceSummary
 	Children(scanID string, id int) (app.SpaceListing, error)
+	Folder(scanID, path string) (app.SpaceListing, error)
 	LargeFiles(scanID string) ([]app.SpaceEntry, error)
 	Trash(ctx context.Context, scanID string, paths []string) (app.SpaceTrashResult, error)
 }

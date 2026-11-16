@@ -361,6 +361,27 @@ func (s *Space) Children(scanID string, id int) (SpaceListing, error) {
 	if err := s.checkScanLocked(scanID); err != nil {
 		return SpaceListing{}, err
 	}
+	return s.childrenLocked(id)
+}
+
+// Folder returns the folder at path of the scan scanID as Children does, or the nearest folder above it that the scan holds (its root at last) when the scan has no folder there, so the page can stay where it was in a newer scan of the same location, after a move to the Trash took the folder away or an undo put it back.
+func (s *Space) Folder(scanID, path string) (SpaceListing, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkScanLocked(scanID); err != nil {
+		return SpaceListing{}, err
+	}
+	id := s.tree.Root().ID
+	for p := filepath.Clean(path); p != s.tree.RootPath() && filepath.Dir(p) != p; p = filepath.Dir(p) {
+		if e, ok := s.tree.Find(p); ok && e.Kind == space.KindDir {
+			id = e.ID
+			break
+		}
+	}
+	return s.childrenLocked(id)
+}
+
+func (s *Space) childrenLocked(id int) (SpaceListing, error) {
 	e, ok := s.tree.Entry(id)
 	if !ok {
 		return SpaceListing{}, errors.New("这个文件夹已经不在扫描结果里了")

@@ -113,8 +113,9 @@ func volumeCard(v app.SpaceVolume, s *State) core.Node {
 		Children: []core.Node{core.View{Style: core.Style{Width: core.Pct(float32(usage.Share * 100)), Height: core.Pct(100), CornerRadius: kit.RadiusPill,
 			Gradients: []core.Gradient{fill.Gradient()}}}}}
 	return core.View{Role: core.RoleButton, Label: v.Name + "，" + usage.Text + "，" + UsedText(usage.Share), TestID: "volume-" + v.Path,
-		Style:   cardStyle(),
-		OnPress: func(core.PressEvent) { s.Scan(ScanRequest{Path: v.Path, Name: v.Name}) },
+		Style: cardStyle(),
+		// The disk's used space is about what the scan will count, so the scan can say how far it is.
+		OnPress: func(core.PressEvent) { s.Scan(ScanRequest{Path: v.Path, Name: v.Name, Expected: usage.Used}) },
 		Children: []core.Node{
 			kit.IconTile{Tone: tone, Size: 42, GlyphSize: 22, Glyph: "volume", Radius: kit.RadiusCardIcon},
 			cardText(v.Name, usage.Text, bar),

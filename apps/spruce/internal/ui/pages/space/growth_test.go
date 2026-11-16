@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,13 +40,25 @@ func (p *page) undo(runID string) {
 	p.Settle()
 }
 
+// TestOneClickMoveOffersUndoAndScansAgainAfterIt: a move that can be undone happens at once with 撤销 in the toast; its undo scans the location again while the results stay, dimmed, with the scan's progress and 停止 in the action bar, and the newer scan opens at the folder that was open.
 func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	trashed(svc)
+	release := make(chan struct{})
+	svc.OnScan = func(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error) {
+		progress(app.SpaceProgress{Files: 900, Bytes: 5e9, Path: path})
+		<-release
+		sum := spacefake.Summary(time.Now())
+		sum.ScanID = "scan-2"
+		return sum, nil
+	}
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "Projects"`)
+	projects := `role:group "Projects 的内容"`
+	p.WaitFor(projects, wait)
 	trashGen := p.stores.Trash.Generation()
-	p.Press(moveButton(homeList, "big.iso"))
+	p.Press(moveButton(projects, "data.bin"))
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
 	if p.Exists("id:trash-confirm") {
 		t.Error("asked before a move that can be undone")
@@ -67,13 +80,32 @@ func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 		t.Errorf("scanned after another run's undo: %v", svc.Scans())
 	}
 	p.undo("run-1")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
 	if got := svc.Scans(); got[0] != spacefake.Home {
 		t.Errorf("scans %v", got)
 	}
 	if _, _, _, undos, _ := p.fakes.Overview.Calls(); !slices.Equal(undos, []string{"elsewhere", "run-1"}) {
 		t.Errorf("undos %v", undos)
+	}
+	// The results stay while the scan runs: dimmed, the action bar with its progress against the 7 GB the folder came to after the move, and 停止.
+	p.waitTicking("text:" + spacefake.Size(5e9))
+	p.Find(projects)
+	if p.Exists("id:space-scanning") {
+		t.Error("the scan took the results' place")
+	}
+	if o := p.Find("id:space-results").Style.Opacity; o == 0 || o >= 1 {
+		t.Errorf("the results are not dimmed: opacity %v", o)
+	}
+	p.Find("text:正在重新扫描")
+	p.Find("text:71%")
+	p.Find("id:space-stop")
+
+	close(release)
+	p.WaitFor("id:rescan", wait)
+	p.WaitUntil(wait, func() bool { return slices.Contains(svc.FolderCalls(), spacefake.Projects.Path) })
+	p.Find(projects)
+	if got := p.Find("id:space-path-current").Text; got != "Projects" {
+		t.Errorf("current %q", got)
 	}
 }
 
@@ -91,8 +123,10 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	if len(svc.Scans()) != 0 || !p.Exists("id:volume-/") {
 		t.Fatalf("scanned over the start screen: %v", svc.Scans())
 	}
+	// Back on the results, the scan runs under them.
 	p.Press("id:return-results")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
+	p.WaitFor(homeList, wait)
 }
 
 // TestActionBarRisesOverTheToast: the shell's toast sits at the bottom of the page area, 24 points up and at least 44 tall, so while it shows the figures and 重新扫描 stand above it, and come back down once it goes.
@@ -249,13 +283,13 @@ func TestGoSpaceScansTheFolderAsThePageOpens(t *testing.T) {
 // growthFakes are fakes whose controller lists two locations that grew, the first covered by the 应用缓存 card.
 func growthFakes(t *testing.T, now time.Time) *storefake.Services {
 	fakes := newFakes(t)
-	spotify := spacefake.Home + "/Library/Caches/com.spotify.client"
+	spotify := filepath.Join(spacefake.Home, "Library", "Caches", "com.spotify.client")
 	res := cleanup.ScanResult{Categories: []cleanup.Category{{ID: "system-junk:app-caches", Items: []cleanup.Item{{ID: "i1", Path: spotify, Size: 6e9, Selected: true}}, Size: 6e9}}, Items: 1, Size: 6e9}
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle, CanUndo: true, Result: &app.OverviewResult{Scan: res,
 		Recommendations: []advice.Recommendation{{ID: "app-caches", Title: "应用缓存", Items: []advice.ItemRef{{CategoryID: "system-junk:app-caches", ItemID: "i1"}}}}}})
 	fakes.Overview.GrowthList = []growth.Growth{
 		{Path: spotify, Icon: "cache", Before: 1e9, After: 7e9, Since: now.Add(-3 * 24 * time.Hour)},
-		{Path: spacefake.Home + "/Movies", Label: "影片", Icon: "video", Before: 10e9, After: 12e9, Since: now.Add(-6 * time.Hour), AtLeast: true},
+		{Path: filepath.Join(spacefake.Home, "Movies"), Label: "影片", Icon: "video", Before: 10e9, After: 12e9, Since: now.Add(-6 * time.Hour), AtLeast: true},
 	}
 	return fakes
 }
@@ -316,7 +350,7 @@ func TestGrowthRowActions(t *testing.T) {
 	p.Find("id:growth-row-1-space >> text:扫描")
 	p.Press(`id:growth-row-1-reveal`)
 	p.WaitUntil(wait, func() bool { return len(p.files.Reveals()) == 1 })
-	if got := p.files.Reveals()[0]; got != spacefake.Home+"/Movies" {
+	if got := p.files.Reveals()[0]; got != filepath.Join(spacefake.Home, "Movies") {
 		t.Errorf("reveal %q", got)
 	}
 	if got := p.Find("id:growth-row-1-reveal").Props.Label; got != "在"+spacefake.FileManager+"中显示 影片" {
@@ -326,7 +360,7 @@ func TestGrowthRowActions(t *testing.T) {
 	p.Press("id:growth-row-1-space")
 	p.WaitFor("text:正在分析「Movies」…", wait)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
-	if got := svc.Scans()[0]; got != spacefake.Home+"/Movies" {
+	if got := svc.Scans()[0]; got != filepath.Join(spacefake.Home, "Movies") {
 		t.Errorf("scan %q", got)
 	}
 	p.Press("id:space-stop")
@@ -344,13 +378,13 @@ func TestGrowthEmpty(t *testing.T) {
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
 	fakes.Overview.GrowthErr = growth.ErrNoHistory
 	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, fakes)
-	if got := p.WaitFor("id:growth-empty", wait).Text; got != "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。" {
+	if got := p.WaitFor("id:growth-empty", wait).Text; got != "Spruce 每天记下一次主要位置的大小，保留 90 天；过一两天这里就会显示哪些位置在变大。" {
 		t.Errorf("empty %q", got)
 	}
 
 	// Without the controller it says the same.
 	q := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
-	if got := q.WaitFor("id:growth-empty", wait).Text; got != "Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。" {
+	if got := q.WaitFor("id:growth-empty", wait).Text; got != "Spruce 每天记下一次主要位置的大小，保留 90 天；过一两天这里就会显示哪些位置在变大。" {
 		t.Errorf("empty without a controller %q", got)
 	}
 
@@ -393,5 +427,19 @@ func TestGrowthListsAtMostTwenty(t *testing.T) {
 	p.WaitFor("id:growth-row-19", wait)
 	if p.Exists("id:growth-row-20") {
 		t.Error("more than 20 rows")
+	}
+}
+
+// TestGrowthNoteShowsOnce: before the records exist, one line says they are coming and how long they are kept.
+func TestGrowthNoteShowsOnce(t *testing.T) {
+	fakes := newFakes(t)
+	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle})
+	fakes.Overview.GrowthErr = growth.ErrNoHistory
+	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, fakes)
+	if got := p.WaitFor("id:growth-empty", wait).Text; !strings.Contains(got, "保留 90 天") {
+		t.Errorf("empty %q", got)
+	}
+	if p.Exists("id:growth-note") {
+		t.Error("the note repeats the line above it")
 	}
 }

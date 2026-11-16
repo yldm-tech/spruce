@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+	"github.com/nsgo-dev/nsgo/desktop"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/maintenance"
@@ -36,6 +37,16 @@ func Page(cx *core.Scope) core.Node {
 			cx.Untrack(func() { s.Undone(stores.Overview.Undid) })
 		})
 	}
+	// The menu's 重新检查 (Cmd+R) scans the location of the results again.
+	nav.UseCommands(cx, nav.Commands{Refresh: s.Rescan, Busy: func() bool { return s.Current.Get() == nil || s.Scanning.Get() != nil }})
+	// Back (Escape) stops a scan; the results take it first to go up a folder (resultsView).
+	cx.OnBackPress(func() bool {
+		if s.Scanning.GetUntracked() == nil {
+			return false
+		}
+		s.Stop()
+		return true
+	})
 
 	actions := core.Dynamic(func(*core.Scope) core.Node {
 		switch phase.Get() {
@@ -61,17 +72,28 @@ func Page(cx *core.Scope) core.Node {
 		return core.Group{}
 	})
 
-	return kit.Page{TestID: "space-page", Header: kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, Children: []core.Node{body}}
+	// The action bar is pinned under the results, so the totals and 重新扫描 stay in view whatever shows above them.
+	footer := core.Dynamic(func(*core.Scope) core.Node {
+		if phase.Get() != PhaseResults {
+			return core.Group{}
+		}
+		return core.Func(func(cx *core.Scope) core.Node { return actionBar(cx, s) })
+	})
+
+	return kit.Page{TestID: "space-page", Header: kit.PageHeader{Route: nav.Space, Actions: []core.Node{actions}}, Children: []core.Node{body}, Footer: footer}
 }
 
-// scanningView takes the page's place while a scan runs: the spinning ring (a walk cannot know its length in advance), the files and space counted so far, the folder being read and 停止.
+// scanningView takes the page's place while a scan of a new location runs: the ring, which fills against the disk's used space for a disk and spins for a folder (a walk cannot know its length in advance), the files and space counted so far, the folder being read and 停止 (Escape too).
 func scanningView(s *State) core.Node {
 	req := s.Scanning.GetUntracked()
 	title := "正在分析「" + req.Name + "」…"
 	return core.View{Role: core.RoleGroup, Label: title, Busy: func() bool { return true }, TestID: "space-scanning",
 		Style: core.Style{FlexGrow: 1, FlexShrink: 1, AlignItems: core.AlignCenter, JustifyContent: core.JustifyCenter, Gap: 12, Padding: core.Symmetric(24, 0)},
 		Children: []core.Node{
-			kit.ProgressRing{Size: 120, Label: title},
+			kit.ProgressRing{Size: 120, Label: title, Value: s.Fraction, TestID: "space-scan-ring", Children: []core.Node{
+				kit.Tabular(core.Text{ContentFunc: s.Percent, TestID: "space-scan-percent",
+					Style: core.Style{FontFamily: kit.FontFace(kit.Bold), FontSize: kit.FontCardTitle, FontWeight: kit.FaceWeight(kit.Bold), Color: kit.ColorText}}),
+			}},
 			kit.Text(title, kit.FontTitle, kit.Bold, kit.ColorText),
 			core.Text{ContentFunc: func() string {
 				p := s.Progress.Get()
@@ -93,7 +115,7 @@ func scanningView(s *State) core.Node {
 		}}
 }
 
-// resultsPhase is the page after a scan: why a scan failed, if one did, the scan's results (a new controller for every scan) and the action bar with 重新扫描.
+// resultsPhase is the page after a scan: why a scan failed, if one did, and the scan's results. One controller shows the location's results while the page does; a newer scan of the location moves it onto that scan where it was (Results.Rescanned), and while that scan runs the results stay, dimmed.
 func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 	stores := store.Use(cx)
 	moves := Moves{Undo: func() bool { return stores.Overview.State().CanUndo }, Bump: stores.Trash.Bump, Toast: stores.Toasts.Show}
@@ -103,57 +125,120 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 		}
 		return ""
 	})
-	summary := func() app.SpaceSummary {
-		if sum := s.Current.Get(); sum != nil {
-			return *sum
-		}
-		return app.SpaceSummary{}
-	}
+	summary := s.summary
+	has := core.NewMemo(cx, func() bool { return scanID.Get() != "" })
 	return core.Group{
 		kit.ErrorLine{Text: s.Err.Get, TestID: "space-error"},
 		core.Dynamic(func(*core.Scope) core.Node {
-			if scanID.Get() == "" {
+			if !has.Get() {
 				return core.Group{}
 			}
 			return core.Func(func(cx *core.Scope) core.Node {
 				r := NewResults(cx, s, core.Untracked(cx, summary), files, moves)
+				s.results.Set(r)
+				cx.Cleanup(func() { s.results.Set(nil) })
+				cx.Effect(func() {
+					if id := scanID.Get(); id != r.scanID {
+						cx.Untrack(func() { r.Rescanned(summary()) })
+					}
+				})
 				return resultsView(cx, r, summary)
 			})
 		}),
-		// While the shell's toast shows, the action bar rises above it.
-		core.View{TestID: "space-action-bar", StyleFunc: func() core.Style {
-			return core.Style{AutoMargin: core.SideTop, Padding: core.Edges{Bottom: toastClearance(stores)}}
-		}, Children: []core.Node{kit.ActionBar{
-			Start: func() kit.Stat {
-				sum := summary()
-				return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
-			},
-			End: func() kit.Stat {
-				when := format.RelativeTime(summary().ScannedAt, time.Now())
-				if when == "" {
-					when = "刚刚"
-				}
-				return kit.Stat{Label: "上次扫描", Value: when}
-			},
-			Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
-		}}},
 	}
 }
 
-// toastHeight is what the shell's toast takes at the bottom of the page area: 24 points below it, at least 44 for itself, and 12 to the action bar; the page's own bottom padding (24) is part of it.
-const toastHeight = 24 + 44 + 12 - 24
+// barMode is what the action bar under the results shows.
+type barMode uint8
 
-// toastClearance is how far the action bar rises while the shell's toast shows (centred at the bottom of the page area, over the pages), so the toast does not cover the figures and 重新扫描; 0 without one. Reading it subscribes.
-func toastClearance(stores *store.Stores) core.Points {
-	if stores != nil && stores.Toasts.Current() != nil {
-		return toastHeight
-	}
-	return 0
+// The bar shows the results' totals with 重新扫描, a scan of their location running with 停止, or the large files chosen with 移到废纸篓.
+const (
+	barResults barMode = iota
+	barRescanning
+	barChosen
+)
+
+// actionBar is the bar pinned under the results: resultsBar, rescanningBar while their location is scanned again, or chosenBar while rows of 大文件 are chosen.
+func actionBar(cx *core.Scope, s *State) core.Node {
+	summary := s.summary
+	mode := core.NewMemo(cx, func() barMode {
+		switch r := s.results.Get(); {
+		case s.InPlace():
+			return barRescanning
+		case r != nil && r.Tab.Get() == TabLarge && len(r.ChosenEntries()) > 0:
+			return barChosen
+		}
+		return barResults
+	})
+	return core.Dynamic(func(*core.Scope) core.Node {
+		switch mode.Get() {
+		case barRescanning:
+			return core.Func(func(*core.Scope) core.Node { return rescanningBar(s, summary) })
+		case barChosen:
+			return core.Func(func(cx *core.Scope) core.Node { return chosenBar(core.Untracked(cx, s.results.Get)) })
+		}
+		return core.Func(func(*core.Scope) core.Node { return resultsBar(s, summary) })
+	})
 }
 
-// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash that cannot be undone from Spruce (Windows).
+// chosenBar is the action bar while rows of 大文件 are chosen: how many, 移到废纸篓 for all of them in one move, and their size.
+func chosenBar(r *Results) core.Node {
+	return kit.ActionBar{
+		Start: func() kit.Stat {
+			return kit.Stat{Label: "已选择", Value: strconv.Itoa(len(r.ChosenEntries())) + " 项"}
+		},
+		End: func() kit.Stat {
+			var size int64
+			for _, e := range r.ChosenEntries() {
+				size += e.Size
+			}
+			return kit.Stat{Label: "共", Value: format.Bytes(size)}
+		},
+		Button: kit.ActionButton{Label: "移到" + format.TrashName(), TestID: "trash-chosen", Disabled: r.Trashing.Get,
+			OnPress: func() { r.RequestTrash(r.ChosenEntries()...) }},
+	}
+}
+
+// resultsBar is the action bar under the results: the scanned location's size, 重新扫描 and when it was scanned.
+func resultsBar(s *State, summary func() app.SpaceSummary) core.Node {
+	return kit.ActionBar{
+		Start: func() kit.Stat {
+			sum := summary()
+			return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
+		},
+		End: func() kit.Stat {
+			when := format.RelativeTime(summary().ScannedAt, time.Now())
+			if when == "" {
+				when = "刚刚"
+			}
+			return kit.Stat{Label: "上次扫描", Value: when}
+		},
+		Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
+	}
+}
+
+// rescanningBar is the action bar while the location of the results is scanned again: what the scan counted, 停止 and how far it is against the last scan's size.
+func rescanningBar(s *State, summary func() app.SpaceSummary) core.Node {
+	return kit.ActionBar{
+		Start: func() kit.Stat {
+			counted := "正在准备…"
+			if p := s.Progress.Get(); p != nil {
+				counted = format.Bytes(p.Bytes)
+			}
+			return kit.Stat{Label: summary().Name, Value: counted}
+		},
+		End: func() kit.Stat {
+			return kit.Stat{Label: "正在重新扫描", Value: s.Percent()}
+		},
+		Button: kit.ActionButton{Label: "停止", TestID: "space-stop", OnPress: s.Stop},
+	}
+}
+
+// resultsView is one scan's results: the banner for folders it could not read, the 空间分布 and 大文件 tabs with what they show, the notices, and the confirmation before a move to the Trash that cannot be undone from Spruce (Windows) or is easy to make by mistake. Back (Escape, Cmd+[), Backspace and Cmd+↑ go up a folder; Cmd+Backspace moves what is chosen to the Trash.
 func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) core.Node {
-	// The confirmation gives the focus back to the 移到废纸篓 button that opened it, through this Ref pointed at that button.
+	stores := store.Use(cx)
+	navigator := nav.Use(cx)
+	// The confirmation gives the focus back to the 移到废纸篓 button that opened it, through this Ref pointed at that button; a move from a menu or a key has none.
 	opener := new(core.Ref)
 	actions := EntryActions{
 		OnOpen:   r.Open,
@@ -162,7 +247,29 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 			*opener = *ref
 			r.RequestTrash(e)
 		},
+		OnOpenParent: r.OpenParent,
+		Menu: func(cx *core.Scope, e app.SpaceEntry) []desktop.MenuItem {
+			*opener = core.Ref{}
+			return r.Menu(cx, e)
+		},
 	}
+	// The keys act on the results while no dialog holds the window (a binding stays live under a newer layer that does not bind the same key). Backspace and Cmd+↑ go up during a scan of the location too, as a click on the path does; back is left to the page then, which stops the scan.
+	free := func() bool { return stores == nil || !stores.Block.Blocked() }
+	up := func() {
+		if free() {
+			r.Up()
+		}
+	}
+	cx.OnBackPress(func() bool { return free() && r.page.Scanning.GetUntracked() == nil && r.Up() })
+	cx.OnKeyWith("backspace", core.KeyOptions{When: core.KeyNotEditing}, up)
+	cx.OnKey("mod+up", up)
+	cx.OnKey("mod+backspace", func() {
+		if free() {
+			*opener = core.Ref{}
+			r.RequestTrash(r.Selected()...)
+		}
+	})
+
 	tabs := kit.Tabs[Tab]{Label: "查看方式", Value: r.Tab.Get, OnChange: r.SetTab,
 		Options: []kit.Option[Tab]{{Value: TabMap, Label: "空间分布", TestID: "tab-map"}, {Value: TabLarge, Label: "大文件", TestID: "tab-large"}}}
 
@@ -174,30 +281,44 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 	}}
 	revealErr := kit.ErrorLine{Text: r.RevealErr.Get, TestID: "space-reveal-error"}
 
-	// A tab's panel fades in as it shows.
+	// A tab's panel fades in as it shows and takes the height the page leaves it.
 	panel := core.Style{FlexGrow: 1, FlexShrink: 0}
 	mapPanel := core.Show{When: func() bool { return r.Tab.Get() == TabMap }, Then: func(cx *core.Scope) core.Node {
 		return kit.Appear{Entrance: kit.EnterFade, Style: panel, Children: []core.Node{mapView(cx, r, actions)}}
 	}}
 	largePanel := core.Show{When: func() bool { return r.Tab.Get() == TabLarge }, Then: func(*core.Scope) core.Node {
-		return kit.Appear{Entrance: kit.EnterFade, Style: panel, Children: []core.Node{largeView(r, actions, summary)}}
+		settings := func() {
+			if navigator != nil {
+				navigator.GoSettings(nav.SettingsCleanup)
+			}
+		}
+		return kit.Appear{Entrance: kit.EnterFade, Style: panel, Children: []core.Node{largeView(r, actions, summary, settings)}}
 	}}
 
 	trash := format.TrashName()
 	confirm := kit.ConfirmDialog{Open: func() bool { return r.Confirming.Get() != nil }, Title: "移到" + trash, ConfirmLabel: "移到" + trash,
 		Busy: r.Trashing.Get, OnConfirm: r.ConfirmTrash, OnCancel: r.CancelTrash, ReturnFocus: opener, TestID: "trash-confirm",
 		Message: core.Text{ContentFunc: func() string {
-			e := r.Confirming.Get()
-			if e == nil {
+			entries := r.Confirming.Get()
+			if len(entries) == 0 {
 				return ""
 			}
-			return "将把「" + EntryLabel(*e) + "」（" + format.Bytes(e.Size) + "）移到" + trash + "。需要时可以从" + trash + "放回原处。"
+			return r.ConfirmMessage(entries, time.Now())
 		}}}
 
-	return core.View{TestID: "space-results", Busy: r.Trashing.Get, Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
-		core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
-		tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
-	}}
+	// While the location is scanned again, the results that are about to change fade back.
+	return core.View{TestID: "space-results", Busy: func() bool { return r.Trashing.Get() || r.page.InPlace() },
+		StyleFunc: func() core.Style {
+			st := core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14, Transition: core.Transition{Duration: 200 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionOpacity}}
+			if r.page.InPlace() {
+				st.Opacity = core.Alpha(0.5)
+			}
+			return st
+		},
+		Children: []core.Node{
+			core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
+			tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
+		}}
 }
 
 // mapView is the 空间分布 tab: the path to the open folder, then the folder's treemap beside the list of its children.
@@ -212,10 +333,6 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 	children := func() []app.SpaceEntry { return listing().Children }
 	total := func() int64 { return listing().Entry.Size }
 	folderName := func() string { return listing().Entry.Name }
-	// The map and the list share one row that fills the window's height left by the header, the tabs and the action bar (raised over the toast while it shows), never less than 340 points; the list scrolls inside it.
-	stores := store.Use(cx)
-	browserHeight := func() core.Points { return max(340, cx.Env().Window().Height-380-toastClearance(stores)) }
-
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 12}, Children: []core.Node{
 		core.Show{When: has, Then: func(*core.Scope) core.Node { return breadcrumb(r, listing) }},
 		core.Show{When: func() bool { return r.ListingErr.Get() != "" }, Then: func(*core.Scope) core.Node {
@@ -239,16 +356,17 @@ func mapView(cx *core.Scope, r *Results, actions EntryActions) core.Node {
 			fade := kit.FadeOnChange(cx, func() int { return listing().Entry.ID })
 			return core.View{Busy: r.Fetching.Get, TestID: "space-browser",
 				StyleFunc: func() core.Style {
-					return core.Style{Display: core.DisplayGrid, GridTemplateColumns: "minmax(0, 3fr) minmax(300px, 2fr)", Gap: 14,
-						Height: core.Pt(browserHeight()), Animated: fade}
+					// The map and the list share one row that takes the height the page leaves them, never less than 340 points; the list scrolls inside it. A height of 0 to grow from keeps the list's rows out of the height the page measures.
+					return core.Style{Display: core.DisplayGrid, GridTemplateColumns: "minmax(0, 3fr) minmax(300px, 2fr)", GridTemplateRows: "minmax(0, 1fr)", Gap: 14,
+						FlexGrow: 1, FlexShrink: 0, FlexBasis: core.Pt(0), Height: core.Pt(0), MinHeight: core.Pt(340), Animated: fade}
 				},
 				Children: []core.Node{
-					Treemap{Entries: children, Total: total, Label: folderName, OnOpen: actions.OnOpen},
-					core.Scroll{TestID: "space-list-scroll",
-						Style: core.Style{MinWidth: core.Pt(0), CornerRadius: kit.RadiusCard, Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard,
+					Treemap{Entries: children, Total: total, Label: folderName, OnOpen: actions.OnOpen, OnPick: r.Highlight, Menu: actions.Menu},
+					core.View{TestID: "space-list-box",
+						Style: core.Style{MinWidth: core.Pt(0), MinHeight: core.Pt(0), CornerRadius: kit.RadiusCard, Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard,
 							Overflow: core.Hidden},
 						Children: []core.Node{EntryList{Label: func() string { return folderName() + " 的内容" }, Entries: children, Detail: DetailShare,
-							Total: total, Actions: actions, TestID: "space-list"}}},
+							Total: total, Actions: actions, Selection: r.Cursor, Busy: r.Busy, Ref: r.List, TestID: "space-list"}}},
 				}}
 		}},
 	}}
@@ -286,21 +404,30 @@ func breadcrumb(r *Results, listing func() app.SpaceListing) core.Node {
 		}}
 }
 
-// largeView is the 大文件 tab: what it lists and the files, largest first.
-func largeView(r *Results, actions EntryActions, summary func() app.SpaceSummary) core.Node {
+// largeView is the 大文件 tab: what it lists, with a link to 设置 where its size is set (settings), and the files, largest first, any number of them chosen to move together.
+func largeView(r *Results, actions EntryActions, summary func() app.SpaceSummary, settings func()) core.Node {
 	large := func() []app.SpaceEntry { return r.Large.Get() }
+	note := core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextMuted}
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 12}, Children: []core.Node{
-		core.Text{ContentFunc: func() string {
-			sum := summary()
-			return "「" + sum.Name + "」中 " + format.Bytes(sum.LargeFileMin) + " 以上的文件，最多列出 200 个。可以在「设置」中调整大小。"
-		}, TestID: "space-large-note", Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, Color: kit.ColorTextMuted}},
+		core.View{TestID: "space-large-note", Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter}, Children: []core.Node{
+			core.Text{ContentFunc: func() string {
+				sum := summary()
+				return "「" + sum.Name + "」中 " + format.Bytes(sum.LargeFileMin) + " 以上的文件，最多列出 200 个。可以在"
+			}, Style: note},
+			kit.Link{Text: func() string { return "设置" }, OnPress: settings, TestID: "space-large-settings"},
+			core.Text{Content: "中调整大小。", Style: note},
+		}},
 		kit.ErrorLine{Text: r.LargeErr.Get, TestID: "space-large-error"},
 		core.Show{When: func() bool { l := large(); return l != nil && len(l) == 0 }, Then: func(*core.Scope) core.Node {
 			return kit.EmptyState{Title: "没有找到大文件", Description: "这里没有达到这个大小的文件", Tone: kit.ToneCyan, TestID: "space-large-empty"}
 		}},
 		core.Show{When: func() bool { return len(large()) > 0 }, Then: func(*core.Scope) core.Node {
-			return kit.Card{Clip: true, Children: []core.Node{EntryList{Label: func() string { return "大文件" }, Entries: large, Detail: DetailLocation,
-				Actions: actions, TestID: "space-large"}}}
+			// The list's card is as tall as its rows, up to the height the page leaves it (a height of 0 to grow from, as the map's row), where it scrolls.
+			return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, FlexBasis: core.Pt(0), Height: core.Pt(0), MinHeight: core.Pt(340)},
+				Children: []core.Node{core.View{Style: core.Style{MaxHeight: core.Pct(100), CornerRadius: kit.RadiusCard,
+					Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Overflow: core.Hidden},
+					Children: []core.Node{EntryList{Label: func() string { return "大文件" }, Entries: large, Detail: DetailLocation,
+						Actions: actions, Selection: r.Chosen, Checks: true, Busy: r.Busy, TestID: "space-large"}}}}}
 		}},
 	}}
 }

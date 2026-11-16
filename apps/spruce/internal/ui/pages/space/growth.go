@@ -31,7 +31,7 @@ type growthRead struct {
 	loaded bool
 }
 
-// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 扫描 (the folder, on this page), and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming, and when they cannot be read it says so.
+// growthView is the start screen's 最近变化: the locations that grew most over the tab's window (24 小时, 7 天, 30 天), each with 去清理 when a card of 概览 covers it, else 扫描 (the folder, on this page), and 在访达中显示. It reads the snapshots again whenever the tab changes; before two snapshots exist (or without 概览's controller) it says they are coming, and when they cannot be read it says so. How long the records are kept is said once: under the rows, or in the line that says they are coming.
 func growthView(cx *core.Scope, s *State, files Files) core.Node {
 	stores := store.Use(cx)
 	navigator := nav.Use(cx)
@@ -98,7 +98,7 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 			return core.Group{}
 		case errors.Is(g.err, growth.ErrNoHistory), g.err != nil && !stores.Overview.Connected():
 			return core.Func(func(*core.Scope) core.Node {
-				return mutedLine("Spruce 会定期记下主要位置的大小，过一两天这里就会显示哪些位置在变大。", "growth-empty")
+				return mutedLine("Spruce 每天记下一次主要位置的大小，保留 90 天；过一两天这里就会显示哪些位置在变大。", "growth-empty")
 			})
 		case g.err != nil:
 			return core.Func(func(*core.Scope) core.Node {
@@ -117,7 +117,10 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 			for i, item := range list {
 				rows[i] = growthRow(i, item, GrowthName(item, h), now, actions)
 			}
-			return kit.Card{Clip: true, Padding: core.Symmetric(6, 0), Children: rows}
+			return core.Group{
+				kit.Card{Clip: true, Padding: core.Symmetric(6, 0), Children: rows},
+				mutedLine("每天记录一次，保留 90 天。", "growth-note"),
+			}
 		})
 	})
 	return core.View{Role: core.RoleRegion, Label: "最近变化", TestID: "space-growth", Busy: func() bool { return !read.Get().loaded }, Style: core.Style{Gap: 10},
@@ -126,7 +129,6 @@ func growthView(cx *core.Scope, s *State, files Files) core.Node {
 				Children: []core.Node{kit.SectionTitle("最近变化"), tabs}},
 			body,
 			kit.ErrorLine{Text: revealErr.Get, TestID: "growth-reveal-error"},
-			mutedLine("每天记录一次，保留 90 天。", "growth-note"),
 		}}
 }
 

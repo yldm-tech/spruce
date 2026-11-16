@@ -2,6 +2,8 @@ package space
 
 import (
 	"context"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,9 +25,10 @@ const (
 	PhaseResults
 )
 
-// ScanRequest is where a scan goes: its path and what the page calls it while it runs.
+// ScanRequest is where a scan goes: its path, what the page calls it while it runs, and how many bytes it is expected to count (a disk's used space, the last scan's size of the same location), 0 when that is not known.
 type ScanRequest struct {
 	Path, Name string
+	Expected   int64
 }
 
 // progressEvery bounds how often the scan's progress reaches the page; only the latest counts matter (async.Feed).
@@ -51,23 +54,27 @@ type State struct {
 	Err *core.Signal[string]
 	// Choosing is set while the system's folder picker is open.
 	Choosing *core.Signal[bool]
+	// results is the controller of the results showing, nil while none show, for the action bar pinned under them.
+	results *core.Signal[*Results]
 
 	// stopped is set by Stop, so a scan the user stopped goes back without an error.
 	stopped bool
 	cancel  context.CancelFunc
 	// seq counts the scans started, so a scan replaced by another (ScanPath) no longer reaches the page.
 	seq int
-	// place is where the results were left (the open folder and the tab), so the next showing of the same scan opens there.
+	// done closes once the last scan started has returned from the service, which runs one scan at a time: a scan that replaces it waits for it (start).
+	done chan struct{}
+	// place is where the results were left (the open folder and the tab), so the next showing of a scan of the same location opens there.
 	place place
 	// undo is what of the page's moves to the Trash outlives the page, kept with the service (undoWatchFor).
 	undo *undoWatch
 }
 
-// place is where one scan's results were left.
+// place is where the results of a location were left: by path, so a newer scan of the location (重新扫描, an undo) opens there too.
 type place struct {
-	scanID string
-	folder int
-	tab    Tab
+	// root is the scanned location, folder the folder open on the 空间分布 tab ("" for the root).
+	root, folder string
+	tab          Tab
 }
 
 // stateKey provides the State that Provide makes.
@@ -117,6 +124,7 @@ func NewState(cx *core.Scope, svc Service) *State {
 		Progress: core.NewSignalFunc[*app.SpaceProgress](cx, nil, nil),
 		Err:      core.NewSignal(cx, ""),
 		Choosing: core.NewSignal(cx, false),
+		results:  core.NewSignal[*Results](cx, nil),
 		undo:     undoWatchFor(svc),
 	}
 	async.Do(cx, s.ctx, func(context.Context) (*app.SpaceSummary, error) { return svc.Current(), nil },
@@ -131,10 +139,10 @@ func NewState(cx *core.Scope, svc Service) *State {
 	return s
 }
 
-// Phase returns what the page shows; reading it subscribes.
+// Phase returns what the page shows; reading it subscribes. A scan of the location whose results show keeps them (InPlace).
 func (s *State) Phase() Phase {
 	switch {
-	case s.Scanning.Get() != nil:
+	case s.Scanning.Get() != nil && !s.InPlace():
 		return PhaseScanning
 	case !s.Loaded.Get():
 		return PhaseLoading
@@ -142,6 +150,44 @@ func (s *State) Phase() Phase {
 		return PhaseResults
 	}
 	return PhaseStart
+}
+
+// summary is the last scan, the zero summary before the first; reading it subscribes.
+func (s *State) summary() app.SpaceSummary {
+	if sum := s.Current.Get(); sum != nil {
+		return *sum
+	}
+	return app.SpaceSummary{}
+}
+
+// InPlace reports whether the running scan is of the location of the last scan (重新扫描, an undo), whose results then stay while it runs; reading it subscribes.
+func (s *State) InPlace() bool {
+	r, cur := s.Scanning.Get(), s.Current.Get()
+	return r != nil && cur != nil && samePath(r.Path, cur.Root.Path)
+}
+
+// samePath reports whether a and b name the same folder.
+func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
+
+// Fraction is how far the running scan is, when the bytes it will count are expected: what it counted of them, short of the whole until it ends, since the expectation is a guess; known is false without one. Reading it subscribes.
+func (s *State) Fraction() (fraction float64, known bool) {
+	r := s.Scanning.Get()
+	if r == nil || r.Expected <= 0 {
+		return 0, false
+	}
+	if p := s.Progress.Get(); p != nil {
+		return min(float64(p.Bytes)/float64(r.Expected), 0.99), true
+	}
+	return 0, true
+}
+
+// Percent renders Fraction, e.g. "42%", "" when it is not known; reading it subscribes.
+func (s *State) Percent() string {
+	f, ok := s.Fraction()
+	if !ok {
+		return ""
+	}
+	return strconv.Itoa(int(f*100)) + "%"
 }
 
 // Scan starts scanning req; it does nothing while a scan runs.
@@ -152,7 +198,7 @@ func (s *State) Scan(req ScanRequest) {
 	s.start(req)
 }
 
-// start starts scanning req, stopping a scan that runs; that scan's progress and result no longer reach the page.
+// start starts scanning req, stopping a scan that runs; that scan's progress and result no longer reach the page, and the new one reaches the service once it has returned.
 func (s *State) start(req ScanRequest) {
 	if s.cancel != nil {
 		s.cancel()
@@ -161,6 +207,10 @@ func (s *State) start(req ScanRequest) {
 	seq := s.seq
 	s.stopped = false
 	s.Err.Set("")
+	// Scanning the location of the results again shows them, the start screen over them or not.
+	if cur := s.Current.GetUntracked(); cur != nil && samePath(req.Path, cur.Root.Path) {
+		s.Picking.Set(false)
+	}
 	s.Progress.Set(nil)
 	s.Scanning.Set(&req)
 	feed := async.NewFeed(s.cx, progressEvery, func(p app.SpaceProgress) {
@@ -170,8 +220,18 @@ func (s *State) start(req ScanRequest) {
 	})
 	run, cancel := context.WithCancel(s.ctx)
 	s.cancel = cancel
+	prev, done := s.done, make(chan struct{})
+	s.done = done
 	async.Do(s.cx, run, func(ctx context.Context) (app.SpaceSummary, error) {
+		defer close(done)
 		defer feed.Flush()
+		// The service refuses a scan until the one it runs returns, and the scan replaced was only just cancelled.
+		if prev != nil {
+			<-prev
+		}
+		if err := ctx.Err(); err != nil {
+			return app.SpaceSummary{}, err
+		}
 		return s.svc.Scan(ctx, req.Path, feed.Send)
 	}, func(sum app.SpaceSummary, err error) {
 		cancel()
@@ -201,10 +261,10 @@ func (s *State) Stop() {
 	s.cancel()
 }
 
-// Rescan scans the last scan's location again.
+// Rescan scans the last scan's location again, its results staying while it runs.
 func (s *State) Rescan() {
 	if sum := s.Current.GetUntracked(); sum != nil {
-		s.Scan(ScanRequest{Path: sum.Root.Path, Name: sum.Name})
+		s.Scan(ScanRequest{Path: sum.Root.Path, Name: sum.Name, Expected: sum.Root.Size})
 	}
 }
 
@@ -236,7 +296,7 @@ func (s *State) Choose(cx *core.Scope) {
 // ChangeLocation shows the start screen over the results (更换位置).
 func (s *State) ChangeLocation() { s.Picking.Set(true) }
 
-// Return goes back from the start screen to the last scan's results, scanning them again first when an undo changed them meanwhile.
+// Return goes back from the start screen to the last scan's results, scanning them again when an undo changed them meanwhile.
 func (s *State) Return() {
 	s.Err.Set("")
 	s.Picking.Set(false)
@@ -252,6 +312,10 @@ func (s *State) ScanPath(path string) {
 	if r := s.Scanning.GetUntracked(); r != nil && r.Path == path {
 		return
 	}
+	if cur := s.Current.GetUntracked(); cur != nil && samePath(path, cur.Root.Path) {
+		s.start(ScanRequest{Path: path, Name: cur.Name, Expected: cur.Root.Size})
+		return
+	}
 	s.start(ScanRequest{Path: path, Name: name})
 }
 
@@ -262,7 +326,7 @@ func (s *State) Moved(runID string) {
 	}
 }
 
-// Undone looks for moves of the page that undid (store.Overview.Undid) reports put back, also while another page showed: then the last scan's sizes are out of date, so the page scans its location again, at once when its results show, else once they do. The page calls it as it opens and after every undo.
+// Undone looks for moves of the page that undid (store.Overview.Undid) reports put back, also while another page showed: then the last scan's sizes are out of date, so the page scans its location again, its results staying, at once when they show, else once they do. The page calls it as it opens and after every undo.
 func (s *State) Undone(undid func(runID string) bool) {
 	for id := range s.undo.moved {
 		if undid(id) {
