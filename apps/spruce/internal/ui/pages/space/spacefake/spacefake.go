@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"spruce/apps/spruce/internal/app"
@@ -28,18 +29,25 @@ type Service struct {
 	// TrashRelease, when set, holds each Trash until it receives or its ctx ends.
 	TrashRelease chan struct{}
 
+	// scanning refuses a scan while another runs, as *app.Space does until the walk it runs returns.
+	scanning atomic.Bool
+
 	scans    []string
 	children []int
 	larges   int
 	trashes  [][]string
 }
 
-// Scan implements the page's Service.
+// Scan implements the page's Service. A scan that starts while another runs fails at once, as *app.Space's does.
 func (s *Service) Scan(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error) {
 	s.mu.Lock()
 	s.scans = append(s.scans, path)
 	run := s.OnScan
 	s.mu.Unlock()
+	if !s.scanning.CompareAndSwap(false, true) {
+		return app.SpaceSummary{}, errors.New("已有扫描正在进行，请等它结束后再试")
+	}
+	defer s.scanning.Store(false)
 	if run == nil {
 		<-ctx.Done()
 		return app.SpaceSummary{}, errors.New("已取消")

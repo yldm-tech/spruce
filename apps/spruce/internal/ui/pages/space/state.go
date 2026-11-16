@@ -57,6 +57,8 @@ type State struct {
 	cancel  context.CancelFunc
 	// seq counts the scans started, so a scan replaced by another (ScanPath) no longer reaches the page.
 	seq int
+	// done closes once the last scan started has returned from the service, which runs one scan at a time: a scan that replaces it waits for it (start).
+	done chan struct{}
 	// place is where the results were left (the open folder and the tab), so the next showing of the same scan opens there.
 	place place
 	// undo is what of the page's moves to the Trash outlives the page, kept with the service (undoWatchFor).
@@ -152,7 +154,7 @@ func (s *State) Scan(req ScanRequest) {
 	s.start(req)
 }
 
-// start starts scanning req, stopping a scan that runs; that scan's progress and result no longer reach the page.
+// start starts scanning req, stopping a scan that runs; that scan's progress and result no longer reach the page, and the new one reaches the service once it has returned.
 func (s *State) start(req ScanRequest) {
 	if s.cancel != nil {
 		s.cancel()
@@ -170,8 +172,18 @@ func (s *State) start(req ScanRequest) {
 	})
 	run, cancel := context.WithCancel(s.ctx)
 	s.cancel = cancel
+	prev, done := s.done, make(chan struct{})
+	s.done = done
 	async.Do(s.cx, run, func(ctx context.Context) (app.SpaceSummary, error) {
+		defer close(done)
 		defer feed.Flush()
+		// The service refuses a scan until the one it runs returns, and the scan replaced was only just cancelled.
+		if prev != nil {
+			<-prev
+		}
+		if err := ctx.Err(); err != nil {
+			return app.SpaceSummary{}, err
+		}
 		return s.svc.Scan(ctx, req.Path, feed.Send)
 	}, func(sum app.SpaceSummary, err error) {
 		cancel()

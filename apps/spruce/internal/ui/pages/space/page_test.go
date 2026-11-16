@@ -310,8 +310,17 @@ func TestComingBackOpensTheFolderAndTabLeftOpen(t *testing.T) {
 	}
 }
 
+// TestGoSpaceReplacesARunningScan: the service runs one scan at a time and the walk replaced takes a moment to stop, so the new scan waits for it instead of failing with 已有扫描正在进行.
 func TestGoSpaceReplacesARunningScan(t *testing.T) {
-	svc := &spacefake.Service{Listings: spacefake.Listings()}
+	unwound := make(chan struct{})
+	svc := &spacefake.Service{Listings: spacefake.Listings(),
+		OnScan: func(ctx context.Context, path string, _ func(app.SpaceProgress)) (app.SpaceSummary, error) {
+			<-ctx.Done()
+			if path == spacefake.Home {
+				<-unwound
+			}
+			return app.SpaceSummary{}, errors.New("已取消")
+		}}
 	p := start(t, svc, newFakes(t))
 	p.WaitFor("id:target-home", wait)
 	p.Press("id:target-home")
@@ -325,6 +334,11 @@ func TestGoSpaceReplacesARunningScan(t *testing.T) {
 		p.shown.Set(true)
 	})
 	p.WaitFor("text:正在分析「Caches」…", wait)
+	p.Advance(200 * time.Millisecond)
+	if got := svc.Scans(); len(got) != 1 {
+		t.Fatalf("the new scan did not wait for the old one: %v", got)
+	}
+	close(unwound)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 2 })
 	if got := svc.Scans(); got[1] != caches {
 		t.Errorf("scans %v", got)
