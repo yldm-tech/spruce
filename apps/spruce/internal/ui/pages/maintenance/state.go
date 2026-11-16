@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -112,8 +113,30 @@ func (s *State) Estimate() int {
 
 // Run starts the chosen tasks; it does nothing when none is chosen or a run goes on.
 func (s *State) Run() {
-	tasks := core.Untracked(s.cx, s.Selected)
-	if len(tasks) == 0 || s.Phase.GetUntracked() != PhaseIdle {
+	if s.Phase.GetUntracked() != PhaseIdle {
+		return
+	}
+	s.start(core.Untracked(s.cx, s.Selected))
+}
+
+// Rerun closes the done card and runs again the tasks with IDs ids (Unfinished), whatever is chosen on the cards.
+func (s *State) Rerun(ids []string) {
+	if s.Phase.GetUntracked() != PhaseDone {
+		return
+	}
+	var tasks []app.TaskView
+	for _, t := range s.Catalog.GetUntracked() {
+		if slices.Contains(ids, t.ID) {
+			tasks = append(tasks, t)
+		}
+	}
+	s.Finish()
+	s.start(tasks)
+}
+
+// start runs tasks, in catalog order; it does nothing for none.
+func (s *State) start(tasks []app.TaskView) {
+	if len(tasks) == 0 {
 		return
 	}
 	ids := make([]string, len(tasks))

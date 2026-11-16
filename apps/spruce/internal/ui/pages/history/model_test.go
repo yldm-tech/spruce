@@ -2,7 +2,6 @@ package history
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -157,37 +156,6 @@ func TestKindMeta(t *testing.T) {
 	}
 	if KindMeta("future").Glyph != "page/history" {
 		t.Error("an unknown kind does not show the history glyph")
-	}
-}
-
-func TestTaskLines(t *testing.T) {
-	catalog := []app.TaskView{{ID: "dns", Title: "刷新 DNS 缓存"}, {ID: "icons", Title: "重建图标缓存"}, {ID: "databases", Title: "优化应用数据库"}}
-	lines := TaskLines([]taskresult.Result{
-		result("dns", taskresult.Applied, "已刷新 DNS 缓存", false),
-		result("icons", taskresult.Applied, "注销后生效", true),
-		result("databases", taskresult.Skipped, "Safari 仍在运行，已跳过", false),
-		result("gone", taskresult.Unavailable, "这台电脑上没有这项", false),
-	}, catalog)
-	var got []string
-	for _, l := range lines {
-		got = append(got, strings.Join([]string{l.Title, l.Status, l.Message}, "|")+map[bool]string{true: "|!", false: ""}[l.Attention])
-	}
-	want := []string{
-		"重建图标缓存|部分完成|注销后生效|!",
-		"优化应用数据库|已跳过|Safari 仍在运行|!",
-		"gone|不可用|这台电脑上没有这项|!",
-		"刷新 DNS 缓存|已完成|已刷新 DNS 缓存",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("TaskLines = %q", got)
-	}
-}
-
-func TestStatusLabels(t *testing.T) {
-	for o, want := range map[taskresult.Outcome]string{taskresult.Unchanged: "无需处理", taskresult.Failed: "失败", "odd": "odd"} {
-		if got := StatusLabel(taskresult.Result{Outcome: o}); got != want {
-			t.Errorf("StatusLabel(%s) = %q", o, got)
-		}
 	}
 }
 

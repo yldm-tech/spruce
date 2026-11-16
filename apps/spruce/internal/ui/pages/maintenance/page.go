@@ -120,7 +120,7 @@ func taskCard(t app.TaskView, s *State, missing func() bool, onGuided func(maint
 	}}
 }
 
-// doneCard is the card at the end of a run: its big number counts the tasks that completed, its lines give every task's own message, those needing attention first. A run that could not start says why. 完成 returns the page to idle and the focus to 运行.
+// doneCard is the card at the end of a run: its big number counts the tasks that completed, then a grid of every task with how it ended and its own message, those needing attention first, in a scroll view that keeps the card inside the window. A run that could not start says why. When tasks were left unfinished, 重新运行未完成的项目 runs just those again. 完成 returns the page to idle and the focus to 运行.
 func doneCard(s *State, missing func() bool, perm *store.Permission, onGuided func(maintenance.PermissionState), finish func()) core.Node {
 	open := func() bool { return s.Phase.Get() == PhaseDone }
 	sum := s.Summary.GetUntracked()
@@ -128,7 +128,12 @@ func doneCard(s *State, missing func() bool, perm *store.Permission, onGuided fu
 		return kit.DoneDialog{Open: open, Title: "维护没有运行", Big: "0 项", Lines: []string{s.RunErr.GetUntracked()}, OnClose: finish,
 			TestID: "done"}
 	}
-	var children []core.Node
+	var lines []string
+	if sum.Interrupted {
+		lines = []string{InterruptedText}
+	}
+	children := []core.Node{core.Scroll{Style: core.Style{FlexShrink: 1, MinHeight: core.Pt(0), AlignSelf: core.AlignStretch, Margin: core.Edges{Top: 6}},
+		Children: []core.Node{TaskGrid(TaskLines(sum.Results, s.Catalog.GetUntracked()), core.Style{TextAlign: core.TextAlignStart}, "done-tasks")}}}
 	if FullDiskAccessBlocked(sum.Results) {
 		children = append(children, core.Dynamic(func(cx *core.Scope) core.Node {
 			switch {
@@ -143,7 +148,41 @@ func doneCard(s *State, missing func() bool, perm *store.Permission, onGuided fu
 			return core.Group{}
 		}))
 	}
+	if unfinished := Unfinished(sum.Results); len(unfinished) > 0 {
+		children = append(children, core.View{Style: core.Style{Margin: core.Edges{Top: 6}, FlexShrink: 0}, Children: []core.Node{
+			kit.Button{Text: "重新运行未完成的项目", Variant: kit.ButtonGhost, TestID: "rerun", OnPress: func() { s.Rerun(unfinished) }},
+		}})
+	}
 	return kit.DoneDialog{Open: open, Title: DoneTitle(*sum), Big: strconv.Itoa(OKCount(*sum)) + " 项",
-		Lines: DoneLines(*sum, s.Catalog.GetUntracked()), Succeeded: OKCount(*sum) > 0, Children: children, OnClose: finish,
+		Lines: lines, Succeeded: OKCount(*sum) > 0, Children: children, OnClose: finish,
 		TestID: "done"}
+}
+
+// TaskGrid lists a run's tasks in one grid of three columns, so the statuses and messages line up whatever the length of a title: each task's title (TestID task-<id>), how it ended (in the warning color when it needs attention; task-<id>-status) and its message (task-<id>-message). st adds to the grid's own style (its padding, its text alignment). The cells align at the start, not on their baseline: baseline alignment in a grid misplaces whole rows when a cell's text can wrap (https://github.com/nsgo-dev/nsgo/issues/280), so the smaller status is set on the title's baseline here.
+func TaskGrid(lines []TaskLine, st core.Style, testID string) core.Node {
+	st.Display, st.GridTemplateColumns, st.ColumnGap, st.RowGap, st.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 12, 8, core.AlignStart
+	var cells []core.Node
+	for _, l := range lines {
+		cells = append(cells, taskCells(l)...)
+	}
+	return core.View{Style: st, TestID: testID, Children: cells}
+}
+
+// taskCells are one task's three cells of TaskGrid.
+func taskCells(l TaskLine) []core.Node {
+	id := "task-" + l.TaskID
+	text := func(content string, size core.Points, weight core.FontWeight, color core.Color, st core.Style, testID string) core.Node {
+		st.FontFamily, st.FontWeight, st.FontSize, st.LineHeightMultiple, st.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color
+		return core.Text{Content: content, TestID: testID, Style: st}
+	}
+	status := kit.ColorTextMuted
+	if l.Attention {
+		status = kit.ColorWarning
+	}
+	return []core.Node{
+		text(l.Title, kit.FontBody, kit.Semibold, kit.ColorText, core.Style{}, id),
+		// The smaller status sits on the title's baseline: its line starts lower by what the larger lines take more.
+		text(l.Status, kit.FontSmall, kit.Regular, status, core.Style{Padding: core.Edges{Top: (kit.FontBody - kit.FontSmall) * 1.5}}, id+"-status"),
+		text(l.Message, kit.FontBody, kit.Regular, kit.ColorTextSecondary, core.Style{MinWidth: core.Pt(0)}, id+"-message"),
+	}
 }

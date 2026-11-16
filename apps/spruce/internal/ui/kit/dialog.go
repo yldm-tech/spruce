@@ -255,7 +255,7 @@ func (c ConfirmDialog) Render(cx *core.Scope) core.Node {
 		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render(cx)
 }
 
-// DoneDialog is the card at the end of a run or a clean, as the 维护 design draws it: the badge (a check mark when Succeeded, else an exclamation mark), which pops in as the card comes, the title, the big figure, the lines (scrolling when they outgrow the window), Children (a permission prompt) and 完成 (CloseLabel), which has the focus and which Return presses.
+// DoneDialog is the card at the end of a run or a clean, as the 维护 design draws it: the badge (a check mark when Succeeded, else an exclamation mark), which pops in as the card comes, the title, the big figure, the lines when there are any (scrolling when they outgrow the window), Children (a permission prompt) and 完成 (CloseLabel), which has the focus and which Return presses.
 type DoneDialog struct {
 	Open        func() bool
 	Title, Big  string
@@ -287,9 +287,12 @@ func (d DoneDialog) Render(cx *core.Scope) core.Node {
 			FontWeight: FaceWeight(Bold), Color: ColorText}},
 		core.Text{Content: d.Big, Style: core.Style{FontFamily: FontFace(Bold), FontSize: FontDone, FontWeight: FaceWeight(Bold), LetterSpacingEm: LetterSpacingStat,
 			LineHeightMultiple: 1.1, Color: ColorText}},
-		core.Scroll{Style: core.Style{FlexShrink: 1, MinHeight: core.Pt(0), AlignSelf: core.AlignStretch},
+	}
+	// A card whose Children say it all (维护's grid of tasks) has no lines, and no empty line where they would be.
+	if len(d.Lines) > 0 {
+		children = append(children, core.Scroll{Style: core.Style{FlexShrink: 1, MinHeight: core.Pt(0), AlignSelf: core.AlignStretch},
 			Children: []core.Node{core.Text{Content: strings.Join(d.Lines, "\n"), TestID: "done-lines", Style: core.Style{FontFamily: FontSans,
-				FontSize: FontSubheading, LineHeightMultiple: 1.6, Color: ColorTextNavFooter, TextAlign: core.TextAlignCenter}}}},
+				FontSize: FontSubheading, LineHeightMultiple: 1.6, Color: ColorTextNavFooter, TextAlign: core.TextAlignCenter}}}})
 	}
 	children = append(children, d.Children...)
 	children = append(children, core.View{Style: core.Style{Margin: core.Edges{Top: 10}, FlexShrink: 0},

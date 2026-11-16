@@ -8,6 +8,7 @@ import (
 	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
+	"spruce/apps/spruce/internal/ui/pages/maintenance"
 	"spruce/apps/spruce/internal/ui/shared"
 	"spruce/apps/spruce/internal/ui/store"
 )
@@ -205,15 +206,9 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
 	if run.Kind == enginehist.KindMaintenance {
-		// One grid for every task, so the statuses and messages line up in columns whatever the length of a title. Its cells are its direct children, made again when the catalog (the titles) arrives. The cells align at the start, not on their baseline: baseline alignment in a grid misplaces whole rows when a cell's text can wrap (https://github.com/nsgo-dev/nsgo/issues/280), so taskLine sets the smaller status on the title's baseline itself.
-		grid := list
-		grid.Display, grid.GridTemplateColumns, grid.Gap, grid.ColumnGap, grid.RowGap, grid.AlignItems = core.DisplayGrid, "max-content max-content 1fr", 0, 12, 8, core.AlignStart
+		// The grid is made again when the catalog (the titles) arrives.
 		body = core.Dynamic(func(*core.Scope) core.Node {
-			var cells []core.Node
-			for _, l := range TaskLines(run.Results, s.Catalog.Get()) {
-				cells = append(cells, taskLine(l)...)
-			}
-			return core.View{Style: grid, TestID: "run-tasks", Children: cells}
+			return maintenance.TaskGrid(maintenance.TaskLines(run.Results, s.Catalog.Get()), core.Style{Padding: core.Edges{Top: 8}}, "run-tasks")
 		})
 	} else if len(run.Details) > 0 {
 		lines := make([]core.Node, len(run.Details))
@@ -229,23 +224,4 @@ func runDetails(s *State, run enginehist.Run) core.Node {
 	times.TestID = "run-times"
 	return core.View{TestID: "run-details", Style: core.Style{Padding: core.Edges{Top: 4, Right: 18, Bottom: 16, Left: 70}, Background: kit.SurfaceList,
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
-}
-
-// taskLine is one task of a maintenance run, three cells of the run's task grid: its title (TestID task-<id>), how it ended (in the warning color when it needs attention; task-<id>-status) and its message (task-<id>-message).
-func taskLine(l TaskLine) []core.Node {
-	id := "task-" + l.TaskID
-	text := func(content string, size core.Points, weight core.FontWeight, color core.Color, st core.Style, testID string) core.Node {
-		st.FontFamily, st.FontWeight, st.FontSize, st.LineHeightMultiple, st.Color = kit.FontFace(weight), kit.FaceWeight(weight), size, 1.5, color
-		return core.Text{Content: content, TestID: testID, Style: st}
-	}
-	status := kit.ColorTextMuted
-	if l.Attention {
-		status = kit.ColorWarning
-	}
-	return []core.Node{
-		text(l.Title, kit.FontBody, kit.Semibold, kit.ColorText, core.Style{}, id),
-		// The smaller status sits on the title's baseline: its line starts lower by what the larger lines take more.
-		text(l.Status, kit.FontSmall, kit.Regular, status, core.Style{Padding: core.Edges{Top: (kit.FontBody - kit.FontSmall) * 1.5}}, id+"-status"),
-		text(l.Message, kit.FontBody, kit.Regular, kit.ColorTextSecondary, core.Style{MinWidth: core.Pt(0)}, id+"-message"),
-	}
 }
