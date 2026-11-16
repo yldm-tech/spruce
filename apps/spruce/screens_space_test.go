@@ -172,6 +172,8 @@ func TestScreensSpaceGrowth(t *testing.T) {
 	a.WaitFor("id:growth-row-4", wait)
 	a.Screenshot("space-growth-7d")
 
+	// The disks and folders load apart from 最近变化.
+	a.WaitFor("id:target-home", wait)
 	a.Press("id:target-home")
 	a.WaitFor(`role:group "个人文件夹 的内容"`, wait)
 	// The move takes big.iso out of the listing and the scan's size, as the service does.
