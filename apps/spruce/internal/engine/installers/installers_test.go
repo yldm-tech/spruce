@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -258,7 +259,8 @@ func TestScanProgressAndDenied(t *testing.T) {
 	if last.Done != 3 || last.Total != 3 || last.Bytes == 0 || last.Phase != cleanup.PhaseScanning {
 		t.Errorf("progress %+v", events)
 	}
-	if os.Geteuid() != 0 && res.Denied != 1 {
+	// A mode of 0 takes read access away only on Unix (and not from root); on Windows it sets the read-only attribute, and the folder still lists.
+	if os.Geteuid() != 0 && runtime.GOOS != "windows" && res.Denied != 1 {
 		t.Errorf("denied %d", res.Denied)
 	}
 }

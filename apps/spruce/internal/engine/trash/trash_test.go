@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"testing"
 )
 
@@ -27,19 +28,23 @@ func (f *fakeMover) move(path string) (string, error) {
 }
 
 func TestMoveAllKeepsGoingAndReportsEach(t *testing.T) {
-	m := &fakeMover{fail: map[string]error{"/b": fs.ErrNotExist}}
-	out, err := moveAll(t.Context(), m, []string{"/a", "/b", "relative", "/c/../d"})
+	// The mover is fake, so the paths only need to be absolute on this OS; nothing is created under root.
+	root := t.TempDir()
+	a, b, d := filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "d")
+	unclean := root + string(filepath.Separator) + "c" + string(filepath.Separator) + ".." + string(filepath.Separator) + "d"
+	m := &fakeMover{fail: map[string]error{b: fs.ErrNotExist}}
+	out, err := moveAll(t.Context(), m, []string{a, b, "relative", unclean})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 4 || out[0].Err != nil || out[0].TrashedPath != "/a.trashed" {
+	if len(out) != 4 || out[0].Err != nil || out[0].TrashedPath != a+".trashed" {
 		t.Fatalf("outcomes %+v", out)
 	}
 	if !errors.Is(out[1].Err, fs.ErrNotExist) || out[2].Err == nil || out[3].Err != nil {
 		t.Errorf("outcomes %+v", out)
 	}
-	if len(m.moved) != 2 || m.moved[1] != "/d" {
-		t.Errorf("moved %v; want /a and the cleaned /d", m.moved)
+	if len(m.moved) != 2 || m.moved[1] != d {
+		t.Errorf("moved %v; want %s and the cleaned %s", m.moved, a, d)
 	}
 	if bad := Failed(out); len(bad) != 2 {
 		t.Errorf("Failed = %+v", bad)
@@ -49,7 +54,8 @@ func TestMoveAllKeepsGoingAndReportsEach(t *testing.T) {
 func TestMoveAllStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	m := &fakeMover{cancel: cancel}
-	out, err := moveAll(ctx, m, []string{"/a", "/b", "/c"})
+	root := t.TempDir()
+	out, err := moveAll(ctx, m, []string{filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "c")})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v", err)
 	}
