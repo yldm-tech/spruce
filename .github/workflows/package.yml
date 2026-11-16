@@ -99,18 +99,22 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
           # shellcheck disable=SC2086 # one argument per keychain path
           security list-keychains -d user -s "$keychain" $original
-          if ! security find-identity -v -p codesigning "$keychain" | grep -qF "\"$MACOS_SIGNING_IDENTITY\""; then
+          # The identity is passed to codesign by its SHA-1 rather than its name: the Mac Studio's login keychain holds other YLDM Developer ID certificates of the same name, which make the name ambiguous.
+          hash=$(security find-identity -v -p codesigning "$keychain" | grep -F "\"$MACOS_SIGNING_IDENTITY\"" | awk 'NR == 1 {print $2}')
+          if [ -z "$hash" ]; then
             echo "::error::MACOS_CERTIFICATE does not hold $MACOS_SIGNING_IDENTITY."
             exit 1
           fi
+          echo "identity=$hash" >> "$GITHUB_OUTPUT"
           key="$RUNNER_TEMP/notary-key.p8"
           printf '%s' "$APPSTORE_API_KEY_P8" | base64 --decode > "$key"
           chmod 600 "$key"
           echo "notary-key=$key" >> "$GITHUB_OUTPUT"
-      # A signed build passes the Developer ID identity to -sign and the notary key in NSGO_NOTARY_KEY*, so nsgo build signs with the hardened runtime, notarizes the disk images and staples their tickets. makensis comes from Homebrew, which the runner's PATH may leave out.
+      # A signed build passes the Developer ID identity (by its SHA-1) to -sign and the notary key in NSGO_NOTARY_KEY*, so nsgo build signs with the hardened runtime, notarizes the disk images and staples their tickets. makensis comes from Homebrew, which the runner's PATH may leave out.
       - name: Build
         env:
           KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+          IDENTITY: ${{ steps.signing.outputs.identity }}
           NOTARY_KEY: ${{ steps.signing.outputs.notary-key }}
           NOTARY_KEY_ID: ${{ steps.signing.outputs.notary-key != '' && secrets.APPSTORE_API_KEY_ID || '' }}
           NOTARY_ISSUER: ${{ steps.signing.outputs.notary-key != '' && secrets.APPSTORE_API_ISSUER_ID || '' }}
@@ -119,7 +123,7 @@ jobs:
           command -v makensis >/dev/null || { echo "::error::makensis is not installed on the runner, so the Windows installers cannot be made."; exit 1; }
           sign=()
           if [ -n "$KEYCHAIN" ]; then
-            sign=(-sign "$MACOS_SIGNING_IDENTITY")
+            sign=(-sign "$IDENTITY")
             export NSGO_NOTARY_KEY=$NOTARY_KEY NSGO_NOTARY_KEY_ID=$NOTARY_KEY_ID NSGO_NOTARY_ISSUER=$NOTARY_ISSUER
           fi
           rm -rf "$RUNNER_TEMP/packages"
