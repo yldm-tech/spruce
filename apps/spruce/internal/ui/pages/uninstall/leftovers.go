@@ -81,7 +81,8 @@ func (l LeftoverList) row(cx *core.Scope, item func() app.UninstallLeftover) cor
 			kit.CopyPathItem(cx, path),
 		}
 	})
-	return core.View{Tooltip: kit.Tooltip(x.Path), OnPress: func(core.PressEvent) { toggle() }, OnContextMenu: menu, TestID: "leftover-row-" + x.ID,
+	// The row is not a Tab stop of its own: its checkbox takes the keys and speaks for it.
+	return core.View{Tooltip: kit.Tooltip(x.Path), OnPress: func(core.PressEvent) { toggle() }, NoFocus: true, OnContextMenu: menu, TestID: "leftover-row-" + x.ID,
 		Style: core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(48), Padding: core.Edges{Right: 10, Left: 14},
 			Cursor: core.CursorPointer, Hover: &core.Style{Background: kit.SurfaceRowHover}},
 		Children: []core.Node{

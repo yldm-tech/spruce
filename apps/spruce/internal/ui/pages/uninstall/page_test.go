@@ -637,6 +637,26 @@ func TestAPressOnALeftoversRowChecksIt(t *testing.T) {
 	if p.Find("id:leftover-agent").Props.Checked {
 		t.Error("the checkbox's press did not uncheck it")
 	}
+	// Tab goes through the leftovers' checkboxes, never the rows around them, which the checkboxes speak for.
+	p.Focus("id:search")
+	checkboxes := 0
+	for range 40 {
+		p.Key("tab")
+		if p.Find("id:search").Focused {
+			break
+		}
+		for _, id := range []string{"sup", "cache", "agent"} {
+			if p.Find("id:leftover-row-" + id).Focused {
+				t.Fatalf("Tab stopped on %s's row", id)
+			}
+			if p.Find("id:leftover-" + id).Focused {
+				checkboxes++
+			}
+		}
+	}
+	if checkboxes != 3 {
+		t.Errorf("Tab stopped on %d of the 3 checkboxes", checkboxes)
+	}
 	// The row's menu shows it in Finder.
 	p.RightClick("id:leftover-row-cache")
 	p.ChoosePopup("在访达中显示")
