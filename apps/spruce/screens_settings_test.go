@@ -1,7 +1,6 @@
 package main
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -42,15 +41,7 @@ func TestScreensSettings(t *testing.T) {
 	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820), wallNow)
 	a.WaitFor("id:sidebar", wait)
 	a.Press("id:nav-settings")
-	// Full Disk Access is macOS only: the 权限 group follows the system the page runs on, not GOOS, and Windows has none.
-	if runtime.GOOS == "windows" {
-		a.WaitFor("id:section-reset", wait)
-		if a.Exists("id:section-permissions") {
-			t.Fatal("Windows shows the 权限 group")
-		}
-	} else {
-		a.WaitFor("id:section-permissions >> text:未授权", wait)
-	}
+	a.WaitFor("id:section-permissions >> text:未授权", wait)
 	a.Screenshot("settings-general")
 
 	// 空间不足时提醒我 asks for notifications as it is turned on; refused, the switch stays on and says how to allow them.
