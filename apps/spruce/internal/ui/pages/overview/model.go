@@ -129,8 +129,8 @@ func ConclusionSub(recs []advice.Recommendation) string {
 	return s
 }
 
-// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
-func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
+// CheckedAtText is the time line: when the result was checked at, that it may be outdated (stale: Stale, or the last check failed) and that a check is updating it, with how far it is (progress) once it knows. The page's clock moves once a minute, so a result that has just arrived can be later than now; it reads 「刚刚」 rather than a date.
+func CheckedAtText(at time.Time, stale, checking bool, progress cleanup.Progress, now time.Time) string {
 	if now.Before(at) {
 		now = at
 	}
@@ -140,6 +140,9 @@ func CheckedAtText(at time.Time, stale, checking bool, now time.Time) string {
 	}
 	if checking {
 		s += " · 正在更新…"
+		if v, ok := OverallFraction(progress); ok {
+			s += " " + strconv.Itoa(int(v*100+0.5)) + "%"
+		}
 	}
 	return s
 }

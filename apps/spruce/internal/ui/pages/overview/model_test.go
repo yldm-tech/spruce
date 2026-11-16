@@ -104,18 +104,20 @@ func TestConclusion(t *testing.T) {
 	at := now.Add(-3 * time.Hour)
 	for _, tc := range []struct {
 		stale, checking bool
+		progress        cleanup.Progress
 		want            string
 	}{
-		{false, false, "上次检查：3小时前"},
-		{true, false, "上次检查：3小时前，结果可能已经变化"},
-		{true, true, "上次检查：3小时前 · 正在更新…"},
+		{false, false, cleanup.Progress{}, "上次检查：3小时前"},
+		{true, false, cleanup.Progress{}, "上次检查：3小时前，结果可能已经变化"},
+		{true, true, cleanup.Progress{}, "上次检查：3小时前 · 正在更新…"},
+		{false, true, cleanup.Progress{Done: 47, Total: 100}, "上次检查：3小时前 · 正在更新… 47%"},
 	} {
-		if got := CheckedAtText(at, tc.stale, tc.checking, now); got != tc.want {
+		if got := CheckedAtText(at, tc.stale, tc.checking, tc.progress, now); got != tc.want {
 			t.Errorf("%+v: %q", tc, got)
 		}
 	}
 	// A result that arrived after the page's clock last moved is 「刚刚」, not a date.
-	if got := CheckedAtText(now.Add(30*time.Second), false, false, now); got != "上次检查：刚刚" {
+	if got := CheckedAtText(now.Add(30*time.Second), false, false, cleanup.Progress{}, now); got != "上次检查：刚刚" {
 		t.Errorf("a result later than the clock: %q", got)
 	}
 }

@@ -111,6 +111,14 @@ func (p *page) result() *app.OverviewResult { return p.state().Result }
 
 func (p *page) checking() bool { return p.state().Phase == app.OverviewChecking }
 
+// progress is the running check's, zero when none runs or it has not reported yet.
+func (p *page) progress() cleanup.Progress {
+	if pr := p.state().Progress; pr != nil {
+		return *pr
+	}
+	return cleanup.Progress{}
+}
+
 // cleaning reports whether a clean runs: one of this page, one the store started (a drill-down view, 撤销) or one the controller runs.
 func (p *page) cleaning() bool {
 	return p.active.Get() != "" || p.ov.Busy() || p.state().Phase == app.OverviewCleaning
@@ -323,6 +331,8 @@ func Page(cx *core.Scope) core.Node {
 	}
 	cx.AfterFunc(time.Minute, tick)
 
+	// The menu's 重新检查 (⌘R) checks again as the header's does.
+	nav.UseCommands(cx, nav.Commands{Refresh: p.checkNow, Busy: func() bool { return p.checking() || p.cleaning() }})
 	// Opening 概览 checks again when what it shows may be outdated; a check opened this way is the foreground's, not held back by power or load. It decides once, on the controller's state: the store answers it after the page opens at launch.
 	decided := false
 	cx.Effect(func() {
@@ -411,12 +421,7 @@ func Page(cx *core.Scope) core.Node {
 		case viewProgress:
 			return core.Func(func(*core.Scope) core.Node {
 				return core.Group{
-					checkProgress(func() cleanup.Progress {
-						if pr := p.state().Progress; pr != nil {
-							return *pr
-						}
-						return cleanup.Progress{}
-					}, p.ov.StopCheck),
+					checkProgress(p.progress, p.ov.StopCheck),
 					checkRefused(p), diskRow(cx, p), statusCards{},
 				}
 			})
@@ -465,10 +470,16 @@ func Page(cx *core.Scope) core.Node {
 	}
 }
 
-// recheckButton is the header's 重新检查: 正在检查… while a check runs, disabled while a clean does.
+// recheckButton is the header's 重新检查: 正在检查… while the first check runs, 停止检查 while one runs over a result (which stays), disabled while a clean runs.
 func recheckButton(cx *core.Scope, p *page) core.Node {
 	cleaning := core.NewMemo(cx, p.cleaning)
+	over := core.NewMemo(cx, func() bool { return p.checking() && p.result() != nil })
 	return core.Dynamic(func(*core.Scope) core.Node {
+		if over.Get() {
+			return core.Func(func(*core.Scope) core.Node {
+				return kit.Button{Variant: kit.ButtonGhost, TestID: "stop-check", Text: "停止检查", OnPress: p.ov.StopCheck}
+			})
+		}
 		b := kit.Button{Variant: kit.ButtonGhost, TestID: "recheck", OnPress: p.checkNow, Busy: p.checking,
 			Disabled: cleaning.Get,
 			TextFunc: func() string {
@@ -620,7 +631,7 @@ func checkedAt(cx *core.Scope, p *page) core.Node {
 				if r == nil {
 					return ""
 				}
-				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.now.Get())
+				return CheckedAtText(r.CheckedAt, stale(), p.checking(), p.progress(), p.now.Get())
 			}},
 			core.Show{When: func() bool { return p.state().Waiting != "" && !p.checking() }, Then: func(*core.Scope) core.Node {
 				return core.Text{TestID: "check-waiting", StyleFunc: style, ContentFunc: func() string { return "· " + p.state().Waiting }}

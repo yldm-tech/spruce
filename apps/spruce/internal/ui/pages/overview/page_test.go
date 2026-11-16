@@ -1158,3 +1158,36 @@ func TestCardAndDrillShareTheSelection(t *testing.T) {
 		t.Error("the card acts on items unchecked in its drill-down view")
 	}
 }
+
+// A check over a result shows how far it is under the conclusion, and the header stops it instead of waiting: the result stays, and the cards can act once the controller is idle again. The menu's 重新检查 (⌘R) checks again as the header does, and waits while a check runs.
+func TestStopACheckOverAResult(t *testing.T) {
+	p := open(t, ready())
+	p.waitText("id:recheck", "重新检查")
+	if !p.nav.CanRefresh() {
+		t.Fatal("⌘R cannot check again")
+	}
+	p.Post(func() { p.nav.Commands().Refresh() })
+	p.WaitUntil(wait, func() bool { return p.checks() == 1 })
+
+	st := ready()
+	// The controller locks the result while the check runs.
+	st.Phase, st.Progress = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: 47, Total: 100}
+	st.Result.Actionable = false
+	p.set(st)
+	p.waitText("id:checked-at", "上次检查：5分钟前 · 正在更新… 47%")
+	p.waitText("id:stop-check", "停止检查")
+	if p.Exists("id:recheck") || p.nav.CanRefresh() {
+		t.Error("重新检查 is offered while a check runs")
+	}
+	p.waitText("id:rec-app-caches-act", "正在核对…")
+	p.Press("id:stop-check")
+	p.WaitUntil(wait, func() bool { _, stops, _, _, _ := p.ov.Calls(); return stops == 1 })
+
+	p.set(ready())
+	p.waitText("id:recheck", "重新检查")
+	p.waitText("id:conclusion-value", "5.8 GB")
+	p.waitText("id:rec-app-caches-act", "删除…")
+	if p.disabled("id:rec-app-caches-act") {
+		t.Error("the cards cannot act once the check stopped")
+	}
+}
