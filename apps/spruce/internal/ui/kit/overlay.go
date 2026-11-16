@@ -50,6 +50,7 @@ func (o Overlay) Render(*core.Scope) core.Node {
 		children = append(children, Button{Text: label, Variant: ButtonGhost, OnPress: o.OnCancel, TestID: "overlay-cancel"})
 	}
 	return layer{open: o.Open, label: o.Title, role: core.RoleGroup, returnFocus: o.ReturnFocus, testID: o.TestID,
-		popup:    core.Style{AlignItems: core.AlignCenter, Gap: 18, MaxWidth: core.Pct(100)},
-		children: children}.render()
+		sidebarTip: "完成或停止当前操作后可切换页面",
+		popup:      core.Style{AlignItems: core.AlignCenter, Gap: 18, MaxWidth: core.Pct(100)},
+		children:   children}.render()
 }

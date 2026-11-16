@@ -17,11 +17,12 @@ type Blocker interface {
 // BlockerKey provides the shell's Blocker to dialogs and overlays.
 var BlockerKey = core.NewKey[Blocker]("spruce.blocker", nil)
 
-// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. initial takes the keyboard's focus as it opens and returnFocus as it goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey).
+// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. initial takes the keyboard's focus as it opens and returnFocus as it goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey). sidebarTip, when set, is what the sidebar says under the pointer while the layer keeps it out of reach (an overlay's work).
 type layer struct {
 	open        func() bool
 	onClose     func()
 	onReturn    func()
+	sidebarTip  string
 	label       string
 	role        core.Role
 	description string
@@ -66,6 +67,11 @@ func (l layer) render() core.Node {
 	sidebar := fill
 	sidebar.Left, sidebar.Width = core.Pt(0), core.Pt(SidebarWidth)
 	absorb := func(core.PressEvent) {}
+	var tip core.Node
+	if l.sidebarTip != "" {
+		// Beside the sidebar: a view's own tooltip goes above it, out of the window for one this tall.
+		tip = base.Tooltip{Placement: core.PlaceRight, Children: []core.Node{Tooltip(l.sidebarTip)}}
+	}
 	hold := core.Func(func(cx *core.Scope) core.Node {
 		if b := BlockerKey.Use(cx); b != nil {
 			b.Hold(cx)
@@ -96,7 +102,7 @@ func (l layer) render() core.Node {
 		LayerStyle: core.Style{Padding: core.Edges{Top: 24, Right: 24, Bottom: 24, Left: SidebarWidth + 24}, FontFamily: FontSans, Color: ColorText,
 			TextAlign: core.TextAlignCenter},
 		Before: []core.Node{
-			core.View{Style: sidebar, OnPress: absorb, NoFocus: true},
+			core.View{Style: sidebar, OnPress: absorb, NoFocus: true, Tooltip: tip, TestID: "sidebar-absorber"},
 			scrimView,
 		},
 		PopupStyle:               popup,
