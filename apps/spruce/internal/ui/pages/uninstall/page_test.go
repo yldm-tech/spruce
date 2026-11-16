@@ -681,6 +681,21 @@ func TestAPressOnALeftoversRowChecksIt(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return slices.Equal(p.files.Paths(), []string{"/Users/me/Library/caches/cache"}) })
 }
 
+func TestOnlyACutNameShowsWholeUnderThePointer(t *testing.T) {
+	const long = "Xylophone Studio Professional Edition for Musicians and Composers 2026"
+	svc := macService()
+	svc.List = append(svc.List, app.UninstallApp{ID: "long", Name: long, Path: "/Applications/Long.app"})
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.Hover("id:app-list >> text:Foo")
+	p.Advance(time.Second)
+	if n := len(p.Query("text:Foo")); n != 1 {
+		t.Errorf("a name that fits shows %d times under the pointer", n)
+	}
+	p.Hover("id:app-list >> text:" + long)
+	p.settle(func() bool { return len(p.Query("text:"+long)) == 2 })
+}
+
 func TestAnAppsMenuUninstallsRevealsAndCopies(t *testing.T) {
 	p := start(t, macService(), uninstall.PlatformMac)
 	p.waitList()
