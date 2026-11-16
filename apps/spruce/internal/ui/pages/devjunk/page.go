@@ -77,6 +77,8 @@ func Page(cx *core.Scope) core.Node {
 type lists struct {
 	tools, artifacts *core.Memo[[]cleanup.Category]
 	projects         *core.Memo[[]engdev.Project]
+	// byProject is each project's build output (ArtifactsByProject), made once per result.
+	byProject *core.Memo[map[string][]ProjectArtifact]
 	// shown are the projects the 项目 filter shows, in its order, and shownArtifacts their build output: what the bar of 项目 counts and cleans.
 	shown          *core.Memo[[]engdev.Project]
 	shownArtifacts *core.Memo[[]cleanup.Category]
@@ -94,6 +96,7 @@ func newLists(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *c
 			return nil
 		}, nil),
 	}
+	l.byProject = core.NewMemoFunc(cx, func() map[string][]ProjectArtifact { return ArtifactsByProject(l.projects.Get(), l.artifacts.Get()) }, nil)
 	now := timeNow()
 	l.shown = core.NewMemoFunc(cx, func() []engdev.Project {
 		return SortProjects(FilterProjects(l.projects.Get(), filter.Get(), set.Value().Cleanup.DevArtifactMinAgeDays, now), order.Get())

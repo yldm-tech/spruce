@@ -562,3 +562,31 @@ func TestProjectSort(t *testing.T) {
 		t.Errorf("after coming back %v", got)
 	}
 }
+
+// A long list of projects lays out at its full length in the page but mounts only the rows near view, and a row scrolled to works as any other.
+func TestManyProjectsMountOnlyNearView(t *testing.T) {
+	var items []cleanup.Item
+	for i := range 120 {
+		project := fmt.Sprintf("/Users/me/Workspace/p%03d", i)
+		p := project + "/node_modules"
+		items = append(items, cleanup.Item{ID: cleanup.ItemID(p), Path: p, Size: int64(10000 - i), ModTime: now.Add(-100 * 24 * time.Hour), Project: project,
+			Git: cleanup.GitClean, Selected: true, Dir: true, Note: fmt.Sprintf("p%03d", i)})
+	}
+	nm := cleanup.Category{ID: "dev-junk:artifact-node-modules", Source: "dev-junk", Title: "node_modules", Icon: "node", Kind: cleanup.KindProjectArtifact,
+		Deletion: cleanup.DeletePermanent, Items: items}
+	p := start(t, stateOf(nm), roots, func(n *nav.Navigator) { n.Go(nav.DevJunk) })
+	p.WaitFor("id:projects", wait)
+	if n := len(p.QueryMounted("id:projects >> role:checkbox")); n == 0 || n > 60 {
+		t.Fatalf("%d project rows mounted for 120 projects", n)
+	}
+	last := p.project("/Users/me/Workspace/p119")
+	p.ScrollTo("id:drill-dev-junk", core.Point{Y: 74 * 130})
+	p.WaitUntil(wait, func() bool { return len(p.QueryMounted(last+"-check")) == 1 })
+	if !p.checked(last + "-check") {
+		t.Fatal("the last project is not checked by default")
+	}
+	p.Press(last + "-check")
+	if got := p.stat("已选择"); got != "119 个项目" {
+		t.Errorf("已选择 %q", got)
+	}
+}

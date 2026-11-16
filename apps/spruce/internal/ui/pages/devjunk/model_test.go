@@ -249,23 +249,30 @@ func TestProjects(t *testing.T) {
 		devjunk.HoldTip(byPath["/w/lib"]) != "构建产物文件夹里有纳入版本控制的文件，删除后仓库会出现改动。" || devjunk.HoldTip(byPath["/w/tool"]) != "" {
 		t.Error("hold tips")
 	}
-	if devjunk.Checkable(byPath["/w/blog"], res.Categories) || !devjunk.Checkable(byPath["/w/tool"], res.Categories) {
+	arts := devjunk.ArtifactsByProject(ps, res.Categories)
+	for _, p := range ps {
+		if got, want := arts[p.ID], devjunk.ProjectItems(p, res.Categories); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s artifacts %+v, want %+v", p.Path, got, want)
+		}
+	}
+	of := func(path string) []devjunk.ProjectArtifact { return arts[byPath[path].ID] }
+	if devjunk.Checkable(byPath["/w/blog"], of("/w/blog")) || !devjunk.Checkable(byPath["/w/tool"], of("/w/tool")) {
 		t.Error("checkable")
 	}
 
 	sel := cleanflow.DefaultSelection(res.Categories)
-	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, sel) != cleanflow.CheckAll || devjunk.ProjectState(byPath["/w/tool"], res.Categories, sel) != cleanflow.CheckNone {
+	if devjunk.ProjectState(of("/w/shop"), sel) != cleanflow.CheckAll || devjunk.ProjectState(of("/w/tool"), sel) != cleanflow.CheckNone {
 		t.Error("default states")
 	}
 	if devjunk.SelectedProjects(ps, sel) != 1 {
 		t.Errorf("selected %d", devjunk.SelectedProjects(ps, sel))
 	}
 	all := devjunk.SetProjects(sel, ps, res.Categories, true)
-	if devjunk.SelectedProjects(ps, all) != 2 || devjunk.ProjectState(byPath["/w/blog"], res.Categories, all) != cleanflow.CheckNone {
+	if devjunk.SelectedProjects(ps, all) != 2 || devjunk.ProjectState(of("/w/blog"), all) != cleanflow.CheckNone {
 		t.Errorf("checking every project checked held output: %v", all)
 	}
 	part := cleanflow.SetItem(all, res.Categories[1], cleanup.ItemID("/w/shop/.next"), false)
-	if devjunk.ProjectState(byPath["/w/shop"], res.Categories, part) != cleanflow.CheckSome {
+	if devjunk.ProjectState(of("/w/shop"), part) != cleanflow.CheckSome {
 		t.Error("part of a project")
 	}
 	if got := devjunk.SetProjects(all, ps, res.Categories, false); len(got) != 0 {

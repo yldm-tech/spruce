@@ -200,21 +200,38 @@ func HoldTip(p engdev.Project) string {
 
 // ProjectItems are the build output items of p in categories (a merged scan's), in p's order, each with its category; items no longer there are left out.
 func ProjectItems(p engdev.Project, categories []cleanup.Category) []ProjectArtifact {
-	byID := make(map[string]*cleanup.Category, len(categories))
-	for i := range categories {
-		byID[categories[i].ID] = &categories[i]
+	return artifactIndex(categories).of(p)
+}
+
+// ArtifactsByProject is ProjectItems of each of projects, by project ID, from one look through categories: what the 项目 rows read, so each row's state takes only its own project's items.
+func ArtifactsByProject(projects []engdev.Project, categories []cleanup.Category) map[string][]ProjectArtifact {
+	idx := artifactIndex(categories)
+	out := make(map[string][]ProjectArtifact, len(projects))
+	for _, p := range projects {
+		out[p.ID] = idx.of(p)
 	}
+	return out
+}
+
+// artifacts is categories' items by category ID and item ID, with their category.
+type artifacts map[[2]string]ProjectArtifact
+
+func artifactIndex(categories []cleanup.Category) artifacts {
+	idx := artifacts{}
+	for _, c := range categories {
+		for _, it := range c.Items {
+			idx[[2]string{c.ID, it.ID}] = ProjectArtifact{Category: c, Item: it}
+		}
+	}
+	return idx
+}
+
+// of are p's items in idx, in p's order.
+func (idx artifacts) of(p engdev.Project) []ProjectArtifact {
 	var out []ProjectArtifact
 	for _, ref := range p.Items {
-		c := byID[ref.CategoryID]
-		if c == nil {
-			continue
-		}
-		for _, it := range c.Items {
-			if it.ID == ref.ItemID {
-				out = append(out, ProjectArtifact{Category: *c, Item: it})
-				break
-			}
+		if a, ok := idx[[2]string{ref.CategoryID, ref.ItemID}]; ok {
+			out = append(out, a)
 		}
 	}
 	return out
@@ -226,10 +243,10 @@ type ProjectArtifact struct {
 	Item     cleanup.Item
 }
 
-// ProjectState is how much of p's build output that may be checked is checked; a project with nothing that may be is CheckNone.
-func ProjectState(p engdev.Project, categories []cleanup.Category, sel cleanflow.Selection) cleanflow.CheckState {
+// ProjectState is how much of a project's build output arts (ProjectItems) that may be checked is checked; a project with nothing that may be is CheckNone.
+func ProjectState(arts []ProjectArtifact, sel cleanflow.Selection) cleanflow.CheckState {
 	n, all := 0, 0
-	for _, a := range ProjectItems(p, categories) {
+	for _, a := range arts {
 		if a.Item.Hold != "" {
 			continue
 		}
@@ -247,12 +264,12 @@ func ProjectState(p engdev.Project, categories []cleanup.Category, sel cleanflow
 	return cleanflow.CheckSome
 }
 
-// Checkable reports whether any of p's build output may be checked.
-func Checkable(p engdev.Project, categories []cleanup.Category) bool {
+// Checkable reports whether any of p's build output arts (ProjectItems) may be checked.
+func Checkable(p engdev.Project, arts []ProjectArtifact) bool {
 	if p.Hold != "" {
 		return false
 	}
-	for _, a := range ProjectItems(p, categories) {
+	for _, a := range arts {
 		if a.Item.Hold == "" {
 			return true
 		}

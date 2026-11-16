@@ -7,7 +7,6 @@ import (
 	"github.com/nsgo-dev/nsgo/core"
 	"github.com/nsgo-dev/nsgo/desktop"
 
-	"spruce/apps/spruce/internal/engine/cleanup"
 	engdev "spruce/apps/spruce/internal/engine/devjunk"
 	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/format"
@@ -104,8 +103,34 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lis
 				d.Change(SetProjects(d.Selection.GetUntracked(), shown.GetUntracked(), core.Untracked(cx, artifacts), false))
 			}},
 		}}
-	rows := core.Each(shown.Get, func(p engdev.Project) string { return p.ID }, func(cx *core.Scope, p func() engdev.Project, i func() int) core.Node {
-		return projectRow(cx, d, p, i, artifacts, disabled, revealPath)
+	// Past virtualAfter projects the list lays out at its full length in the page but mounts only the rows near view.
+	long := core.NewMemo(cx, func() bool { return len(shown.Get()) > virtualAfter })
+	rows := core.Dynamic(func(*core.Scope) core.Node {
+		if !long.Get() {
+			return core.Func(func(*core.Scope) core.Node {
+				return core.Each(shown.Get, func(p engdev.Project) string { return p.ID }, func(cx *core.Scope, p func() engdev.Project, i func() int) core.Node {
+					return projectRow(cx, d, l, p, i, disabled, revealPath)
+				})
+			})
+		}
+		return core.Func(func(*core.Scope) core.Node {
+			return core.List{Viewport: core.ListViewportParent, EstimatedSize: projectRowHeight,
+				Count: func() int { return len(shown.Get()) },
+				Key:   func(i int) any { return shown.GetUntracked()[i].ID },
+				Row: func(cx *core.Scope, r core.ListRow) core.Node {
+					// A row's cell moves to another project as the list scrolls: the row is made again for the project it shows.
+					return core.Dynamic(func(*core.Scope) core.Node {
+						s, i := shown.Get(), r.Index()
+						if i >= len(s) {
+							return core.Group{}
+						}
+						p := s[i]
+						return core.Func(func(cx *core.Scope) core.Node {
+							return projectRow(cx, d, l, func() engdev.Project { return p }, r.Index, disabled, revealPath)
+						})
+					})
+				}}
+		})
 	})
 	list := kit.Card{Clip: true, TestID: "projects", Style: core.Style{FlexShrink: 0}, Children: []core.Node{
 		core.View{Role: core.RoleGroup, Label: "项目", Children: []core.Node{rows}},
@@ -113,16 +138,23 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lis
 	return core.Group{toolbar, tools, list}
 }
 
+// virtualAfter is how many projects the 项目 tab mounts at once; projectRowHeight is a closed row's height, the list's estimate.
+const (
+	virtualAfter                 = 40
+	projectRowHeight core.Points = 74
+)
+
 // projectRow is one project: its checkbox (disabled, with the reason as its tooltip, for a held project), name, path and kinds of build output, Git status, last activity, size, and its build output once expanded.
-func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, index func() int, artifacts func() []cleanup.Category, disabled func() bool, reveal func(string)) core.Node {
+func projectRow(cx *core.Scope, d *cleanflow.Drill, l *lists, p func() engdev.Project, index func() int, disabled func() bool, reveal func(string)) core.Node {
 	id := core.Untracked(cx, p).ID
 	key := cleanflow.ProjectKey(id)
 	open := func() bool { return d.Open(key) }
 	name := func() string { return filepath.Base(p().Path) }
-	state := func() cleanflow.CheckState { return ProjectState(p(), artifacts(), d.Selection.Get()) }
-	checkable := func() bool { return Checkable(p(), artifacts()) }
+	arts := core.NewMemoFunc(cx, func() []ProjectArtifact { return l.byProject.Get()[id] }, nil)
+	state := core.NewMemo(cx, func() cleanflow.CheckState { return ProjectState(arts.Get(), d.Selection.Get()) }).Get
+	checkable := func() bool { return Checkable(p(), arts.Get()) }
 	setChecked := func(on bool) {
-		d.Change(SetProjects(d.Selection.GetUntracked(), []engdev.Project{core.Untracked(cx, p)}, core.Untracked(cx, artifacts), on))
+		d.Change(SetProjects(d.Selection.GetUntracked(), []engdev.Project{core.Untracked(cx, p)}, l.artifacts.GetUntracked(), on))
 	}
 	check := core.Dynamic(func(*core.Scope) core.Node {
 		tip := HoldTip(p())
@@ -192,10 +224,9 @@ func projectRow(cx *core.Scope, d *cleanflow.Drill, p func() engdev.Project, ind
 			expandButton("project-"+id+"-expand", name, open, toggle),
 		}}
 	items := core.Show{When: open, Then: func(cx *core.Scope) core.Node {
-		list := core.NewMemoFunc(cx, func() []ProjectArtifact { return ProjectItems(p(), artifacts()) }, nil)
 		return core.View{Role: core.RoleGroup, Label: core.Untracked(cx, name) + "的构建产物", TestID: "project-" + id + "-items",
 			Style: core.Style{Padding: core.Symmetric(4, 0), Background: kit.SurfaceList, Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle},
-			Children: []core.Node{core.Each(list.Get, func(a ProjectArtifact) string { return a.Category.ID + "/" + a.Item.ID },
+			Children: []core.Node{core.Each(arts.Get, func(a ProjectArtifact) string { return a.Category.ID + "/" + a.Item.ID },
 				func(cx *core.Scope, a func() ProjectArtifact, _ func() int) core.Node {
 					art := core.Untracked(cx, a)
 					return cleanflow.ItemRow{Item: art.Item, Disabled: disabled, Reveal: reveal,
