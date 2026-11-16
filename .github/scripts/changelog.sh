@@ -2,7 +2,7 @@
 # changelog.sh add <vX.Y.Z> [commit]
 # changelog.sh notes <vX.Y.Z>
 #
-# Spruce's release notes live in CHANGELOG.md, beside nsgo.yaml, a "## X.Y.Z - date" section per version, newest first. The Release workflow writes the section with add when it bumps the version, and makes the same section the GitHub release's notes with notes.
+# Spruce's release notes live in apps/spruce/CHANGELOG.md, beside nsgo.yaml, a "## X.Y.Z - date" section per version, newest first. The Release workflow writes the section with add when it bumps the version, and makes the same section the GitHub release's notes with notes.
 #
 # add writes the section of a version from the Conventional Commits from the version tag before the commit (HEAD by default) to the commit, the range next-version.sh reads: breaking changes (a type ending in "!" or a "BREAKING CHANGE:" footer), features (feat), fixes (fix and revert) and performance (perf), each under a heading of its own, as their subjects without the type. A pull request's merge commit stands for the pull request with its title, so the commits that made it, review fixes among them, are not listed one by one (see entries). The types that release nothing (docs, test, ci, chore, refactor, style, build) are left out, and so are the scopes that are not the app (deps), so a release of nothing else gets a line that says so, as the release's notes would otherwise be empty. A change and a revert of it in the same range are both left out. A version that has a section already keeps it, so notes written by hand before the release are the ones that ship, and the way to leave a change out of them; write one only for the version next-version.sh gives the commits, as it is kept as it is when that version comes. The new section goes above the sections of older versions.
 #
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
-file=$root/CHANGELOG.md
+file=$root/apps/spruce/CHANGELOG.md
 new=$(mktemp)
 trap 'rm -f "$new" "$file.tmp"' EXIT
 
@@ -182,10 +182,10 @@ add() {
   local version=$1 commit=$2 notes
   if notes=$(section "$version"); then
     if [ -z "$notes" ]; then
-      echo "CHANGELOG.md has an empty section for $version: write its notes or remove its heading" >&2
+      echo "apps/spruce/CHANGELOG.md has an empty section for $version: write its notes or remove its heading" >&2
       exit 1
     fi
-    echo "CHANGELOG.md has notes for $version already; keeping them" >&2
+    echo "apps/spruce/CHANGELOG.md has notes for $version already; keeping them" >&2
     return
   fi
   if [ ! -f "$file" ]; then
@@ -229,7 +229,7 @@ case ${1:-} in
     [ "$#" -eq 2 ] || usage
     v=$(version "$2")
     if ! notes=$(section "$v") || [ -z "$notes" ]; then
-      echo "CHANGELOG.md has no notes for $v" >&2
+      echo "apps/spruce/CHANGELOG.md has no notes for $v" >&2
       exit 1
     fi
     echo "$notes"

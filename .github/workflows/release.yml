@@ -96,7 +96,7 @@ jobs:
           .github/scripts/set-version.sh "$VERSION"
           .github/scripts/changelog.sh add "$VERSION"
           # Named, as the changelog is a new file until the first release writes it, and git commit -a leaves new files out.
-          git add -- nsgo.yaml CHANGELOG.md
+          git add -- apps/spruce/nsgo.yaml apps/spruce/CHANGELOG.md
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): $VERSION"
           fi

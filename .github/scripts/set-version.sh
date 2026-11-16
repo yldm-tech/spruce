@@ -25,4 +25,4 @@ bump() {
   mv "$file.tmp" "$file"
 }
 
-bump nsgo.yaml '^version: [0-9.]+$' "version: $version"
+bump apps/spruce/nsgo.yaml '^version: [0-9.]+$' "version: $version"

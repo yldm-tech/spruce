@@ -1,6 +1,6 @@
 name: Package
 
-# Builds Spruce's installers with nsgo build (go tool nsgo, the version go.mod pins) for macOS (arm64 and x64, disk images) and Windows (x64 and arm64, NSIS installers), and keeps nsgo build's releases folder, with a checksums.txt of their SHA-256, as the run's artifact spruce-packages: per target the installer with the .sha256 beside it, and the install.sh and install.ps1 that install the latest release. Release calls it with the tag it made, and its Publish job uploads the files to that tag's draft release. Run it by hand (Actions › Package › Run workflow) to build, sign and notarize a branch without releasing: the packages become the run's artifact.
+# Builds Spruce's installers with nsgo build (go tool nsgo, the version apps/spruce/go.mod pins) for macOS (arm64 and x64, disk images) and Windows (x64 and arm64, NSIS installers), and keeps nsgo build's releases folder, with a checksums.txt of their SHA-256, as the run's artifact spruce-packages: per target the installer with the .sha256 beside it, and the install.sh and install.ps1 that install the latest release. Release calls it with the tag it made, and its Publish job uploads the files to that tag's draft release. Run it by hand (Actions › Package › Run workflow) to build, sign and notarize a branch without releasing: the packages become the run's artifact.
 #
 # Everything builds on the Mac Studio's self-hosted runners: the repository is private, so GitHub's runners would bill every minute, and nsgo build makes the Windows installers there too, with the NSIS that Homebrew installed (makensis).
 #
@@ -63,10 +63,10 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          test "$TAG" = "v$(sed -nE 's/^version: *"?([0-9.]+)"? *$/\1/p' nsgo.yaml)"
+          test "$TAG" = "v$(sed -nE 's/^version: *"?([0-9.]+)"? *$/\1/p' apps/spruce/nsgo.yaml)"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
           cache: false
       # The certificate goes into a keychain of the job's own, put on the user's keychain list for codesign; the runner is self-hosted, so the list as it was is kept and put back by the last step, which also deletes the keychain and the notary key's file. The certificate's file is deleted at once.
       - name: Import the signing certificate and the notary key
@@ -132,7 +132,7 @@ jobs:
           case $base in /Volumes/*) base=/tmp ;; esac
           pkg=$(mktemp -d "$base/spruce-packages.XXXXXX")
           echo "dir=$pkg" >> "$GITHUB_OUTPUT"
-          go tool nsgo build -target "$TARGETS" -output "$pkg" "${sign[@]}"
+          go tool nsgo build -target "$TARGETS" -output "$pkg" "${sign[@]}" apps/spruce
       # Gatekeeper's own check of what users download: each app is signed with the Developer ID and the hardened runtime, and each disk image carries its notarization ticket.
       - name: Check the signatures
         if: steps.signing.outcome == 'success'

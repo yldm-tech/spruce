@@ -14,6 +14,7 @@ git config user.name test
 git config user.email test@example.com
 git config commit.gpgsign false
 git config tag.gpgsign false
+mkdir -p apps/spruce
 
 # commit <subject> [body] makes an empty commit dated 2026-01-02, the date the sections take from the commit they are written at.
 commit() {
@@ -109,34 +110,34 @@ What changed in each version of Spruce, newest first. The app shows the section 
 - Draw fewer frames
 END
 )
-expect "first section" "$want" "$(cat CHANGELOG.md)"
+expect "first section" "$want" "$(cat apps/spruce/CHANGELOG.md)"
 
 git tag -a v0.2.0 -m v0.2.0
 commit "chore: tidy"
 "$script" add v0.2.1
-expect "newest first" "## 0.2.1 - 2026-01-02 ## 0.2.0 - 2026-01-02" "$(grep '^## ' CHANGELOG.md | paste -sd ' ' -)"
+expect "newest first" "## 0.2.1 - 2026-01-02 ## 0.2.0 - 2026-01-02" "$(grep '^## ' apps/spruce/CHANGELOG.md | paste -sd ' ' -)"
 expect "nothing to list" "No changes to the app worth listing: this version only carries maintenance." "$("$script" notes v0.2.1)"
 
 # A section written ahead for a later version stays above the one add writes.
-awk '/^## / && !done { print "## 0.4.0"; print ""; print "Written ahead."; print ""; done = 1 } { print }' CHANGELOG.md >changelog.tmp
-mv changelog.tmp CHANGELOG.md
+awk '/^## / && !done { print "## 0.4.0"; print ""; print "Written ahead."; print ""; done = 1 } { print }' apps/spruce/CHANGELOG.md >changelog.tmp
+mv changelog.tmp apps/spruce/CHANGELOG.md
 commit "fix: keep the order"
 "$script" add v0.2.2
-expect "older versions below" "## 0.4.0 ## 0.2.2 - 2026-01-02 ## 0.2.1 - 2026-01-02 ## 0.2.0 - 2026-01-02" "$(grep '^## ' CHANGELOG.md | paste -sd ' ' -)"
+expect "older versions below" "## 0.4.0 ## 0.2.2 - 2026-01-02 ## 0.2.1 - 2026-01-02 ## 0.2.0 - 2026-01-02" "$(grep '^## ' apps/spruce/CHANGELOG.md | paste -sd ' ' -)"
 expect "section between" "### Fixes
 
 - Keep the order" "$("$script" notes v0.2.2)"
 
-before=$(cat CHANGELOG.md)
+before=$(cat apps/spruce/CHANGELOG.md)
 "$script" add v0.2.0 2>/dev/null
-expect "a section already there is kept" "$before" "$(cat CHANGELOG.md)"
+expect "a section already there is kept" "$before" "$(cat apps/spruce/CHANGELOG.md)"
 
 # A section may be written by hand, with the heading Keep a Changelog uses, and is what notes prints.
-printf '# Changelog\n\n## [0.3.0] - 2026-02-03\n\n\nWritten by hand.\n\n## 0.2.1\n\nOlder.\n' >CHANGELOG.md
+printf '# Changelog\n\n## [0.3.0] - 2026-02-03\n\n\nWritten by hand.\n\n## 0.2.1\n\nOlder.\n' >apps/spruce/CHANGELOG.md
 "$script" add v0.3.0 2>/dev/null
 expect "hand-written notes" "Written by hand." "$("$script" notes 0.3.0)"
 
-printf '# Changelog\n\n## 0.3.0\n\n## 0.2.1\n\nOlder.\n' >CHANGELOG.md
+printf '# Changelog\n\n## 0.3.0\n\n## 0.2.1\n\nOlder.\n' >apps/spruce/CHANGELOG.md
 if "$script" add v0.3.0 2>/dev/null; then
   fail "add accepted an empty section"
 fi
