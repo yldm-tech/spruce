@@ -725,6 +725,25 @@ func TestCardCleanSeenAfterComingBack(t *testing.T) {
 	}
 }
 
+// One big item reports nothing until it ends: the card's progress says how much it handles rather than 0/1.
+func TestCardProgressOfOneItem(t *testing.T) {
+	p := open(t, ready())
+	release := make(chan struct{})
+	p.ov.OnClean = func(ctx context.Context, _ cleanup.CleanRequest, _ app.CleanOrigin, progress func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		progress(cleanup.Progress{Phase: cleanup.PhaseCleaning, Done: 0, Total: 1})
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return app.OverviewOutcome{RunID: "r1", Undoable: true, Result: cleanup.CleanResult{Trashed: 600 * mb, Removed: 1}}, nil
+	}
+	p.Press("id:rec-installers-act")
+	p.ticking(func() bool { return p.Exists("id:rec-installers-progress") })
+	p.waitText("id:rec-installers-progress-text", "已移到废纸篓 0 B / 600 MB")
+	close(release)
+	p.ticking(func() bool { return p.toast() != nil })
+}
+
 // A clean that leaves items keeps the card with how many, and the toast offers 查看.
 func TestTrashCardPartlyFailed(t *testing.T) {
 	p := open(t, ready())
@@ -740,6 +759,12 @@ func TestTrashCardPartlyFailed(t *testing.T) {
 	}
 	p.waitText("id:rec-incomplete-downloads-failed", "2 项未能处理")
 	p.ticking(func() bool { return p.Exists("id:rec-incomplete-downloads") })
+	// Once the toast is gone, the card still leads to what was not handled.
+	p.Press("id:rec-incomplete-downloads-failed-view")
+	p.WaitUntil(wait, func() bool { return p.nav.Current() == nav.History })
+	if kind, run := p.nav.TakeHistoryFilter(); kind != "" || run != "r2" {
+		t.Errorf("history asked for %q %q, want the run r2", kind, run)
+	}
 }
 
 // How many items a card's clean could not handle stays while 概览 shows the check it cleaned, also after leaving 概览, and goes with a newer check.

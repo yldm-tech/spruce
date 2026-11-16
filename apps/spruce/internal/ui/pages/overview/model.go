@@ -176,6 +176,29 @@ func ActionLabel(a advice.Action, partial bool, bytes int64) string {
 	return s
 }
 
+// CleanProgressText is a card's progress line while its clean of total bytes runs: 已处理 {done}/{total} over several items; one item reports nothing until it ends, so it reads how much is freed (or moved to the Trash, for a move) of total, which at least says how much is being handled.
+func CleanProgressText(a advice.Action, pr cleanup.Progress, total int64) string {
+	if pr.Total > 1 {
+		return "已处理 " + strconv.Itoa(pr.Done) + "/" + strconv.Itoa(pr.Total)
+	}
+	verb := "已释放 "
+	if a == advice.ActionTrash {
+		verb = "已移到" + format.TrashName() + " "
+	}
+	return verb + format.Bytes(pr.Bytes) + " / " + format.Bytes(total)
+}
+
+// CleanProgressFraction is how far a card's clean of total bytes is, as CleanProgressText counts it: by items over several, by bytes for one.
+func CleanProgressFraction(pr cleanup.Progress, total int64) float64 {
+	switch {
+	case pr.Total > 1:
+		return min(1, float64(pr.Done)/float64(pr.Total))
+	case total > 0:
+		return min(1, float64(pr.Bytes)/float64(total))
+	}
+	return 0
+}
+
 // BusyLabel is a card's button while its action runs.
 func BusyLabel(a advice.Action) string {
 	switch a {
