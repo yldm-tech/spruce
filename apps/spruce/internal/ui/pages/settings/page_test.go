@@ -880,21 +880,53 @@ func TestOpensOnTheTabALinkAskedFor(t *testing.T) {
 		t.Error("清理 is not the selected tab")
 	}
 
+	// Mounted without Provide, a visit without a link opens on 通用.
 	p.Post(func() { n.Go(nav.Health) })
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })
 	p.WaitFor("id:settings-tab-general", wait)
 
-	// A link made while 设置 is open switches the tab in place and leaves nothing pending for the next visit.
+	// A link made while 设置 is open switches the tab in place.
 	p.Post(func() { n.GoSettings(nav.SettingsAuto) })
 	p.WaitFor("id:settings-tab-auto", wait)
 	if !p.Find("id:tab-auto").Props.Selected {
 		t.Error("自动清理 is not the selected tab")
 	}
-	p.Post(func() { n.Go(nav.Health) })
+}
+
+// With Provide, 设置 opens on the tab it showed last, whether the visit comes from the sidebar or from a link without a tab; a link with a tab still wins.
+func TestComesBackOnTheTabItShowed(t *testing.T) {
+	var n *nav.Navigator
+	p := &page{t: t, svc: settingsfake.New(dataDir), files: &settingsfake.Files{}, fakes: storefake.New(t.TempDir())}
+	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		p.stores = storefake.Provide(cx, p.svc.Use(p.fakes.Deps()))
+		settings.Provide(cx, settings.Deps{Files: p.files})
+		n = nav.NewNavigator(cx, nav.Settings)
+		nav.Key.Provide(cx, n)
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if n.Current() != nav.Settings {
+				return core.Text{Content: "elsewhere"}
+			}
+			return core.Func(settings.Page)
+		})
+	}, nsgotest.Size(1052, 2600))
+	p.tab("health")
+	p.Post(func() { n.Go(nav.History) })
 	p.WaitFor("text:elsewhere", wait)
 	p.Post(func() { n.Go(nav.Settings) })
-	p.WaitFor("id:settings-tab-general", wait)
+	p.WaitFor("id:settings-tab-health", wait)
+
+	p.Post(func() { n.Go(nav.History) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.GoSettings("") })
+	p.WaitFor("id:settings-tab-health", wait)
+
+	p.Post(func() { n.GoSettings(nav.SettingsCleanup) })
+	p.WaitFor("id:settings-tab-cleanup", wait)
+	p.Post(func() { n.Go(nav.History) })
+	p.WaitFor("text:elsewhere", wait)
+	p.Post(func() { n.Go(nav.Settings) })
+	p.WaitFor("id:settings-tab-cleanup", wait)
 }
 
 func TestGeneralTabOnMacOS(t *testing.T) {

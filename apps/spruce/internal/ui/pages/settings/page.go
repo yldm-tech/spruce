@@ -31,21 +31,23 @@ var tabs = []kit.Option[nav.SettingsTab]{
 	{Value: nav.SettingsAbout, Label: "关于", TestID: "tab-about"},
 }
 
-// Page is the 设置 page. It opens on the tab a link asked for (nav.Navigator.GoSettings), else on 通用.
+// Page is the 设置 page. It opens on the tab a link asked for (nav.Navigator.GoSettings), else on the tab it showed last (Provide keeps it; 通用 at first, and on every visit when the page is mounted without Provide).
 func Page(cx *core.Scope) core.Node {
 	deps := DepsKey.Use(cx)
 	stores := store.Use(cx)
 	ctx := cx.Context()
-	start := nav.SettingsGeneral
+	tab := tabKey.Use(cx)
+	if tab == nil {
+		tab = core.NewSignal(cx, nav.SettingsGeneral)
+	}
 	n := nav.Use(cx)
 	var asked int
 	if n != nil {
 		asked = core.Untracked(cx, n.SettingsAsked)
 		if t := n.TakeSettingsTab(); t != "" {
-			start = t
+			tab.Set(t)
 		}
 	}
-	tab := core.NewSignal(cx, start)
 	// A link made while 设置 is open (the menu bar's 自动清理 item over a window on 设置) switches the tab in place.
 	if n != nil {
 		cx.Effect(func() {
@@ -115,7 +117,7 @@ func Page(cx *core.Scope) core.Node {
 	clear := shared.ClearHistoryDialog{Open: clearing.Get, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef}
 
 	return core.Group{
-		kit.Page{TestID: "settings-page", Header: kit.PageHeader{Route: nav.Settings}, Children: []core.Node{
+		kit.Page{TestID: "settings-page", ScrollKey: nav.Settings, Header: kit.PageHeader{Route: nav.Settings}, Children: []core.Node{
 			kit.Tabs[nav.SettingsTab]{Label: "设置分类", Options: tabs, Value: tab.Get, OnChange: tab.Set},
 			content,
 		}},

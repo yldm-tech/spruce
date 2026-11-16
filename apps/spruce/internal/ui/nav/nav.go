@@ -260,7 +260,7 @@ func (n *Navigator) WindowShown() { n.shown.Set(n.shown.GetUntracked() + 1) }
 // Shown counts WindowShown's calls; reading it subscribes, so 概览 treats the window coming back like opening it.
 func (n *Navigator) Shown() int { return n.shown.Get() }
 
-// TakeSettingsTab returns the tab GoSettings asked for, or "" when 设置 was opened without one, and forgets it, so the next visit opens on the first tab.
+// TakeSettingsTab returns the tab GoSettings asked for, or "" when 设置 was opened without one, and forgets it, so the next visit opens on the tab 设置 showed last.
 func (n *Navigator) TakeSettingsTab() SettingsTab {
 	t := n.settingsTab
 	n.settingsTab = ""
