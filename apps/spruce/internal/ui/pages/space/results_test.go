@@ -402,10 +402,21 @@ func TestDiskScanSaysHowFarItIs(t *testing.T) {
 		t.Errorf("ring %+v", v)
 	}
 	p.Key("Escape")
+	// The stopped scan ends once the service returns; a location pressed before that is ignored, as a scan still runs.
+	p.WaitUntil(wait, func() bool {
+		if !p.Exists("id:space-scanning") {
+			return true
+		}
+		p.Advance(20 * time.Millisecond)
+		return false
+	})
 	p.WaitFor("id:volume-/", wait)
 	if p.Exists("role:alert") {
 		t.Errorf("an alert shows: %v", p.Texts())
 	}
+	// The start screen fades in; a press lands once it has.
+	p.Advance(time.Second)
+	p.Settle()
 
 	// A folder's size is not known in advance: the ring spins without a figure.
 	p.Press("id:target-home")
