@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +35,7 @@ type Service struct {
 
 	scans    []string
 	children []int
+	folders  []string
 	larges   int
 	trashes  [][]string
 }
@@ -80,6 +82,28 @@ func (s *Service) Children(scanID string, id int) (app.SpaceListing, error) {
 	return l, nil
 }
 
+// Folder implements the page's Service: the listing whose folder is at path, else the nearest one above it, else the root's (id 0).
+func (s *Service) Folder(scanID, path string) (app.SpaceListing, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.folders = append(s.folders, path)
+	for p := path; ; p = filepath.Dir(p) {
+		for _, l := range s.Listings {
+			if l.Entry.Path == p {
+				return l, nil
+			}
+		}
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	l, ok := s.Listings[0]
+	if !ok {
+		return app.SpaceListing{}, errors.New("这个文件夹已经不在扫描结果里了")
+	}
+	return l, nil
+}
+
 // LargeFiles implements the page's Service.
 func (s *Service) LargeFiles(scanID string) ([]app.SpaceEntry, error) {
 	s.mu.Lock()
@@ -118,6 +142,13 @@ func (s *Service) ChildrenCalls() []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]int(nil), s.children...)
+}
+
+// FolderCalls returns the paths Folder was asked for, oldest first.
+func (s *Service) FolderCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.folders...)
 }
 
 // LargeCalls counts the calls of LargeFiles.

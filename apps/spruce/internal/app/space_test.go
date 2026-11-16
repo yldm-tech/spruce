@@ -167,6 +167,35 @@ func TestSpaceScanAndBrowse(t *testing.T) {
 	}
 }
 
+// A folder asked for by its path opens there, or at the nearest folder above it the scan holds: a newer scan of the same location may no longer have it.
+func TestSpaceFolderByPath(t *testing.T) {
+	f := newSpaceFixture(t)
+	sum := f.scan(t)
+	videos := filepath.Join(f.data, "videos")
+	for _, c := range []struct{ path, want string }{
+		{videos, videos},
+		{filepath.Join(videos, "gone", "deeper"), videos},
+		{filepath.Join(videos, "film.mov"), videos},
+		{filepath.Join(f.data, "gone"), f.data},
+		{f.data, f.data},
+		{f.home, f.data},
+	} {
+		l, err := f.svc.Folder(sum.ScanID, c.path)
+		if err != nil {
+			t.Fatalf("%s: %v", c.path, err)
+		}
+		if l.Entry.Path != c.want || len(l.Ancestors) == 0 || l.Ancestors[len(l.Ancestors)-1].Path != c.want {
+			t.Errorf("%s opened %+v, want %s", c.path, l.Entry, c.want)
+		}
+	}
+	if l, _ := f.svc.Folder(sum.ScanID, f.data); l.Entry.Name != "data" || len(l.Children) == 0 {
+		t.Errorf("root by path %+v", l)
+	}
+	if _, err := f.svc.Folder("old", videos); err == nil || err.Error() != "扫描结果已过期，请重新扫描" {
+		t.Errorf("stale scan: %v", err)
+	}
+}
+
 func TestSpaceTrashUpdatesTheTreeAndHistory(t *testing.T) {
 	f := newSpaceFixture(t)
 	sum := f.scan(t)

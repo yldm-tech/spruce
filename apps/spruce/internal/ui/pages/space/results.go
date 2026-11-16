@@ -35,19 +35,18 @@ type Notice struct {
 	Text string
 }
 
-// Results is the controller of one scan's results: the open folder, the tab, the large files and a move to the Trash. Make it in the scope that shows the scan scanID (NewResults), which a new scan replaces; its methods run on the engine goroutine.
+// Results is the controller of a location's results: the open folder, the tab, the large files and a move to the Trash. Make it in the scope that shows them (NewResults); a newer scan of the same location moves it onto that scan (Rescanned), a scan of another location replaces it. Its methods run on the engine goroutine.
 type Results struct {
-	cx     *core.Scope
-	ctx    context.Context
-	page   *State
-	svc    Service
-	files  Files
-	moves  Moves
-	scanID string
+	cx    *core.Scope
+	ctx   context.Context
+	page  *State
+	svc   Service
+	files Files
+	moves Moves
+	// scanID is the scan shown, root its location.
+	scanID, root string
 
-	// Folder is the id of the folder open on the 空间分布 tab.
-	Folder *core.Signal[int]
-	Tab    *core.Signal[Tab]
+	Tab *core.Signal[Tab]
 	// Listing is the open folder, kept while another loads; nil until the first arrives or after an error (ListingErr).
 	Listing    *core.Signal[*app.SpaceListing]
 	ListingErr *core.Signal[string]
@@ -79,15 +78,15 @@ type Moves struct {
 	Toast func(store.Toast)
 }
 
-// NewResults makes the controller of the scan sum in cx and opens where the page left its results, its root the first time.
+// NewResults makes the controller of the scan sum in cx and opens where the page left the results of its location, at its root the first time.
 func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, moves Moves) *Results {
-	folder, tab := sum.Root.ID, TabMap
-	if p := page.place; p.scanID == sum.ScanID {
-		folder, tab = p.folder, p.tab
+	at := place{root: sum.Root.Path}
+	if page.place.root == sum.Root.Path {
+		at = page.place
 	}
-	r := &Results{cx: cx, ctx: cx.Context(), page: page, svc: page.svc, files: files, moves: moves, scanID: sum.ScanID,
-		Folder:     core.NewSignal(cx, folder),
-		Tab:        core.NewSignal(cx, tab),
+	page.place = at
+	r := &Results{cx: cx, ctx: cx.Context(), page: page, svc: page.svc, files: files, moves: moves, scanID: sum.ScanID, root: sum.Root.Path,
+		Tab:        core.NewSignal(cx, at.tab),
 		Listing:    core.NewSignalFunc[*app.SpaceListing](cx, nil, nil),
 		ListingErr: core.NewSignal(cx, ""),
 		Fetching:   core.NewSignal(cx, false),
@@ -98,20 +97,73 @@ func NewResults(cx *core.Scope, page *State, sum app.SpaceSummary, files Files, 
 		Notice:     core.NewSignal(cx, Notice{}),
 		RevealErr:  core.NewSignal(cx, ""),
 	}
-	r.loadListing()
-	if tab == TabLarge {
+	if at.folder != "" {
+		r.openPath(at.folder)
+	} else {
+		r.open(sum.Root.ID)
+	}
+	if at.tab == TabLarge {
 		r.loadLarge()
 	}
-	cx.Effect(func() { page.place = place{scanID: sum.ScanID, folder: r.Folder.Get(), tab: r.Tab.Get()} })
+	cx.Effect(func() {
+		next := place{root: r.root, folder: page.place.folder, tab: r.Tab.Get()}
+		if l := r.Listing.Get(); l != nil {
+			next.folder = l.Entry.Path
+		}
+		page.place = next
+	})
 	return r
 }
 
-// loadListing asks for the open folder; only the latest answer counts.
-func (r *Results) loadListing() {
+// Rescanned moves the results onto sum, a newer scan of their location: the folder open stays open, or the nearest folder above it the scan holds, and the large files are asked for again.
+func (r *Results) Rescanned(sum app.SpaceSummary) {
+	r.scanID = sum.ScanID
+	r.openPath(r.folder())
+	if r.Tab.GetUntracked() == TabLarge {
+		r.loadLarge()
+	} else {
+		r.largeStale = true
+	}
+}
+
+// folder is the path of the folder open, or asked for while none shows.
+func (r *Results) folder() string {
+	if l := r.Listing.GetUntracked(); l != nil {
+		return l.Entry.Path
+	}
+	if f := r.page.place.folder; f != "" {
+		return f
+	}
+	return r.root
+}
+
+// reload asks for the folder shown again.
+func (r *Results) reload() {
+	if l := r.Listing.GetUntracked(); l != nil {
+		r.open(l.Entry.ID)
+		return
+	}
+	r.openPath(r.folder())
+}
+
+// open asks for the folder id of the scan shown.
+func (r *Results) open(id int) {
+	scanID := r.scanID
+	r.loadListing(func() (app.SpaceListing, error) { return r.svc.Children(scanID, id) })
+}
+
+// openPath asks for the folder at path of the scan shown, or the nearest one above it the scan holds.
+func (r *Results) openPath(path string) {
+	scanID := r.scanID
+	r.loadListing(func() (app.SpaceListing, error) { return r.svc.Folder(scanID, path) })
+}
+
+// loadListing asks for a folder with fetch; only the latest answer counts, and the folder shown stays until it comes.
+func (r *Results) loadListing(fetch func() (app.SpaceListing, error)) {
 	r.listSeq++
-	seq, id := r.listSeq, r.Folder.GetUntracked()
+	seq := r.listSeq
 	r.Fetching.Set(true)
-	async.Do(r.cx, r.ctx, func(context.Context) (app.SpaceListing, error) { return r.svc.Children(r.scanID, id) },
+	async.Do(r.cx, r.ctx, func(context.Context) (app.SpaceListing, error) { return fetch() },
 		func(l app.SpaceListing, err error) {
 			if seq != r.listSeq {
 				return
@@ -123,9 +175,11 @@ func (r *Results) loadListing() {
 				return
 			}
 			r.ListingErr.Set("")
-			if r.settle && l.Entry.ID == core.Untracked(r.cx, r.Folder.Get) {
+			if r.settle {
 				r.settle = false
-				kit.SettleLayout(r.cx)
+				if cur := r.Listing.GetUntracked(); cur != nil && cur.Entry.Path == l.Entry.Path {
+					kit.SettleLayout(r.cx)
+				}
 			}
 			r.Listing.Set(&l)
 		})
@@ -134,9 +188,9 @@ func (r *Results) loadListing() {
 // loadLarge asks for the large files.
 func (r *Results) loadLarge() {
 	r.largeSeq++
-	seq := r.largeSeq
+	seq, scanID := r.largeSeq, r.scanID
 	r.largeStale = false
-	async.Do(r.cx, r.ctx, func(context.Context) ([]app.SpaceEntry, error) { return r.svc.LargeFiles(r.scanID) },
+	async.Do(r.cx, r.ctx, func(context.Context) ([]app.SpaceEntry, error) { return r.svc.LargeFiles(scanID) },
 		func(files []app.SpaceEntry, err error) {
 			if seq != r.largeSeq {
 				return
@@ -163,8 +217,7 @@ func (r *Results) SetTab(t Tab) {
 func (r *Results) Open(e app.SpaceEntry) {
 	r.Notice.Set(Notice{})
 	r.SetTab(TabMap)
-	r.Folder.Set(e.ID)
-	r.loadListing()
+	r.open(e.ID)
 }
 
 // Reveal shows e in Finder or Explorer.
@@ -213,8 +266,9 @@ func (r *Results) trash(entry app.SpaceEntry) {
 	}
 	undo := r.moves.Undo != nil && r.moves.Undo()
 	r.Trashing.Set(true)
+	scanID := r.scanID
 	async.Do(r.cx, r.ctx, func(ctx context.Context) (app.SpaceTrashResult, error) {
-		return r.svc.Trash(ctx, r.scanID, []string{entry.Path})
+		return r.svc.Trash(ctx, scanID, []string{entry.Path})
 	}, func(res app.SpaceTrashResult, err error) {
 		r.Trashing.Set(false)
 		r.Confirming.Set(nil)
@@ -223,9 +277,9 @@ func (r *Results) trash(entry app.SpaceEntry) {
 			return
 		}
 		r.settle = true
-		r.page.trashed(r.scanID, res.Root)
+		r.page.trashed(scanID, res.Root)
 		r.page.Moved(res.RunID)
-		r.loadListing()
+		r.reload()
 		if r.Tab.GetUntracked() == TabLarge {
 			r.loadLarge()
 		} else {

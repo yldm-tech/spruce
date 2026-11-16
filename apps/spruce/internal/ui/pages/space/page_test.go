@@ -607,16 +607,26 @@ func TestChangeLocationAndReturn(t *testing.T) {
 	p.WaitFor(homeList, wait)
 }
 
+// TestRescanTheSameLocation: 重新扫描 keeps the results and the folder open while the scan runs, and 停止 leaves them as they were.
 func TestRescanTheSameLocation(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "Projects"`)
+	p.WaitFor(`role:group "Projects 的内容"`, wait)
 	p.Press("id:rescan")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
 	// The fake records the scan on async.Do's goroutine, which can run after the page already shows the scan.
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) > 0 })
 	if got := svc.Scans(); len(got) != 1 || got[0] != spacefake.Home {
 		t.Errorf("scans %v", got)
+	}
+	p.Find(`role:group "Projects 的内容"`)
+	p.Press("id:space-stop")
+	p.WaitFor("id:rescan", wait)
+	p.Find(`role:group "Projects 的内容"`)
+	if p.Exists("role:alert") {
+		t.Errorf("an alert shows: %v", p.Texts())
 	}
 }
 
@@ -628,7 +638,8 @@ func TestStaleFolderOffersRescan(t *testing.T) {
 		t.Errorf("error %q", got)
 	}
 	p.Press(`role:alert >> role:button "重新扫描"`)
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
+	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
 }
 
 // TestConfirmationFocus checks where the keyboard's focus goes (macOS): onto 移到废纸篓 as the confirmation opens, since a move can be undone, and back to the row's button as Escape closes it.

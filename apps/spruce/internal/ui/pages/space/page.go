@@ -93,7 +93,7 @@ func scanningView(s *State) core.Node {
 		}}
 }
 
-// resultsPhase is the page after a scan: why a scan failed, if one did, the scan's results (a new controller for every scan) and the action bar with 重新扫描.
+// resultsPhase is the page after a scan: why a scan failed, if one did, the scan's results and the action bar with 重新扫描. One controller shows the location's results while the page does; a newer scan of the location moves it onto that scan where it was (Results.Rescanned), and while that scan runs the results stay, dimmed, the action bar showing its progress and 停止.
 func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 	stores := store.Use(cx)
 	moves := Moves{Undo: func() bool { return stores.Overview.State().CanUndo }, Bump: stores.Trash.Bump, Toast: stores.Toasts.Show}
@@ -109,34 +109,67 @@ func resultsPhase(cx *core.Scope, s *State, files Files) core.Node {
 		}
 		return app.SpaceSummary{}
 	}
+	has := core.NewMemo(cx, func() bool { return scanID.Get() != "" })
 	return core.Group{
 		kit.ErrorLine{Text: s.Err.Get, TestID: "space-error"},
 		core.Dynamic(func(*core.Scope) core.Node {
-			if scanID.Get() == "" {
+			if !has.Get() {
 				return core.Group{}
 			}
 			return core.Func(func(cx *core.Scope) core.Node {
 				r := NewResults(cx, s, core.Untracked(cx, summary), files, moves)
+				cx.Effect(func() {
+					if id := scanID.Get(); id != r.scanID {
+						cx.Untrack(func() { r.Rescanned(summary()) })
+					}
+				})
 				return resultsView(cx, r, summary)
 			})
 		}),
 		// While the shell's toast shows, the action bar rises above it.
 		core.View{TestID: "space-action-bar", StyleFunc: func() core.Style {
 			return core.Style{AutoMargin: core.SideTop, Padding: core.Edges{Bottom: toastClearance(stores)}}
-		}, Children: []core.Node{kit.ActionBar{
-			Start: func() kit.Stat {
-				sum := summary()
-				return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
-			},
-			End: func() kit.Stat {
-				when := format.RelativeTime(summary().ScannedAt, time.Now())
-				if when == "" {
-					when = "刚刚"
-				}
-				return kit.Stat{Label: "上次扫描", Value: when}
-			},
-			Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
-		}}},
+		}, Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
+			if s.InPlace() {
+				return core.Func(func(*core.Scope) core.Node { return rescanningBar(s, summary) })
+			}
+			return core.Func(func(*core.Scope) core.Node { return resultsBar(s, summary) })
+		})}},
+	}
+}
+
+// resultsBar is the action bar under the results: the scanned location's size, 重新扫描 and when it was scanned.
+func resultsBar(s *State, summary func() app.SpaceSummary) core.Node {
+	return kit.ActionBar{
+		Start: func() kit.Stat {
+			sum := summary()
+			return kit.Stat{Label: sum.Name, Value: format.Bytes(sum.Root.Size)}
+		},
+		End: func() kit.Stat {
+			when := format.RelativeTime(summary().ScannedAt, time.Now())
+			if when == "" {
+				when = "刚刚"
+			}
+			return kit.Stat{Label: "上次扫描", Value: when}
+		},
+		Button: kit.ActionButton{Label: "重新扫描", TestID: "rescan", OnPress: s.Rescan},
+	}
+}
+
+// rescanningBar is the action bar while the location of the results is scanned again: what the scan counted, 停止 and how far it is against the last scan's size.
+func rescanningBar(s *State, summary func() app.SpaceSummary) core.Node {
+	return kit.ActionBar{
+		Start: func() kit.Stat {
+			counted := "正在准备…"
+			if p := s.Progress.Get(); p != nil {
+				counted = format.Bytes(p.Bytes)
+			}
+			return kit.Stat{Label: summary().Name, Value: counted}
+		},
+		End: func() kit.Stat {
+			return kit.Stat{Label: "正在重新扫描", Value: s.Percent()}
+		},
+		Button: kit.ActionButton{Label: "停止", TestID: "space-stop", OnPress: s.Stop},
 	}
 }
 
@@ -194,10 +227,19 @@ func resultsView(cx *core.Scope, r *Results, summary func() app.SpaceSummary) co
 			return "将把「" + EntryLabel(*e) + "」（" + format.Bytes(e.Size) + "）移到" + trash + "。需要时可以从" + trash + "放回原处。"
 		}}}
 
-	return core.View{TestID: "space-results", Busy: r.Trashing.Get, Style: core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14}, Children: []core.Node{
-		core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
-		tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
-	}}
+	// While the location is scanned again, the results that are about to change fade back.
+	return core.View{TestID: "space-results", Busy: func() bool { return r.Trashing.Get() || r.page.InPlace() },
+		StyleFunc: func() core.Style {
+			st := core.Style{FlexGrow: 1, FlexShrink: 0, Gap: 14, Transition: core.Transition{Duration: 200 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionOpacity}}
+			if r.page.InPlace() {
+				st.Opacity = core.Alpha(0.5)
+			}
+			return st
+		},
+		Children: []core.Node{
+			core.Show{When: func() bool { return summary().Denied > 0 }, Then: func(cx *core.Scope) core.Node { return deniedBanner(cx, summary, r.page.Rescan) }},
+			tabs, noticeErr, revealErr, mapPanel, largePanel, confirm,
+		}}
 }
 
 // mapView is the 空间分布 tab: the path to the open folder, then the folder's treemap beside the list of its children.

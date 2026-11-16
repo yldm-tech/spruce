@@ -39,13 +39,25 @@ func (p *page) undo(runID string) {
 	p.Settle()
 }
 
+// TestOneClickMoveOffersUndoAndScansAgainAfterIt: a move that can be undone happens at once with 撤销 in the toast; its undo scans the location again while the results stay, dimmed, with the scan's progress and 停止 in the action bar, and the newer scan opens at the folder that was open.
 func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	trashed(svc)
+	release := make(chan struct{})
+	svc.OnScan = func(ctx context.Context, path string, progress func(app.SpaceProgress)) (app.SpaceSummary, error) {
+		progress(app.SpaceProgress{Files: 900, Bytes: 5e9, Path: path})
+		<-release
+		sum := spacefake.Summary(time.Now())
+		sum.ScanID = "scan-2"
+		return sum, nil
+	}
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
+	p.Press(homeList + ` >> role:button "Projects"`)
+	projects := `role:group "Projects 的内容"`
+	p.WaitFor(projects, wait)
 	trashGen := p.stores.Trash.Generation()
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(projects + ` >> role:button "将 data.bin 移到废纸篓"`)
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
 	if p.Exists("id:trash-confirm") {
 		t.Error("asked before a move that can be undone")
@@ -67,13 +79,32 @@ func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 		t.Errorf("scanned after another run's undo: %v", svc.Scans())
 	}
 	p.undo("run-1")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
 	p.WaitUntil(wait, func() bool { return len(svc.Scans()) == 1 })
 	if got := svc.Scans(); got[0] != spacefake.Home {
 		t.Errorf("scans %v", got)
 	}
 	if _, _, _, undos, _ := p.fakes.Overview.Calls(); !slices.Equal(undos, []string{"elsewhere", "run-1"}) {
 		t.Errorf("undos %v", undos)
+	}
+	// The results stay while the scan runs: dimmed, the action bar with its progress against the 7 GB the folder came to after the move, and 停止.
+	p.waitTicking("text:5 GB")
+	p.Find(projects)
+	if p.Exists("id:space-scanning") {
+		t.Error("the scan took the results' place")
+	}
+	if o := p.Find("id:space-results").Style.Opacity; o == 0 || o >= 1 {
+		t.Errorf("the results are not dimmed: opacity %v", o)
+	}
+	p.Find("text:正在重新扫描")
+	p.Find("text:71%")
+	p.Find("id:space-stop")
+
+	close(release)
+	p.WaitFor("id:rescan", wait)
+	p.WaitUntil(wait, func() bool { return slices.Contains(svc.FolderCalls(), spacefake.Projects.Path) })
+	p.Find(projects)
+	if got := p.Find("id:space-path-current").Text; got != "Projects" {
+		t.Errorf("current %q", got)
 	}
 }
 
@@ -91,8 +122,10 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	if len(svc.Scans()) != 0 || !p.Exists("id:volume-/") {
 		t.Fatalf("scanned over the start screen: %v", svc.Scans())
 	}
+	// Back on the results, the scan runs under them.
 	p.Press("id:return-results")
-	p.WaitFor("text:正在分析「个人文件夹」…", wait)
+	p.WaitFor("id:space-stop", wait)
+	p.Find(homeList)
 }
 
 // TestActionBarRisesOverTheToast: the shell's toast sits at the bottom of the page area, 24 points up and at least 44 tall, so while it shows the figures and 重新扫描 stand above it, and come back down once it goes.
