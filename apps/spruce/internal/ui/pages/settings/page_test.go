@@ -492,6 +492,28 @@ func TestLongerRetentionSavesOnReturn(t *testing.T) {
 	}
 }
 
+// A click on another tab or page does not take the focus, so nothing submits 保留天数: more days still typed are saved as the field goes, since they delete nothing; fewer are dropped rather than deleting records without asking.
+func TestRetentionLeftTypedIsSavedOnlyWhenItKeepsMore(t *testing.T) {
+	p := start(t, options{})
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "365")
+	p.tab("about")
+	if got := p.updates(1).History.RetentionDays; got != 365 {
+		t.Fatalf("retention %d", got)
+	}
+
+	p.tab("history")
+	p.Clear("id:retention-days-field")
+	p.Type("id:retention-days-field", "30")
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("id:settings-page", wait)
+	p.Settle()
+	if n := len(p.svc.Updates()); n != 1 {
+		t.Fatalf("saved %d times, want 1", n)
+	}
+}
+
 // Fewer days that would delete records ask first, saying how many; 取消 shows the stored value again, 删除记录 saves.
 func TestShorterRetentionAsksFirst(t *testing.T) {
 	fakes := storefake.New(t.TempDir())

@@ -159,6 +159,8 @@ type numberSetting struct {
 	Unit string
 	// Confirm, when set, holds a valid number until Return or the field losing the focus, never saving it as the user types, and then decides what becomes of it: save stores it, revert shows the stored value again. A number that is the stored one is not handed to it.
 	Confirm func(n int, save, revert func())
+	// SaveOnLeave, with Confirm, reports whether a valid number still typed in the field as it goes (the user clicked another tab or page, which does not take the focus) may be saved without asking; one it refuses is dropped.
+	SaveOnLeave func(n int) bool
 	// Disabled, when set, turns the field off and dims its row while it reports true.
 	Disabled func() bool
 	TestID   string
@@ -223,6 +225,15 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 		field.OnChange = func(raw string) { text.Set(&raw) }
 		field.OnBlur = submit
 		field.OnSubmit = func(string) { submit() }
+		cx.Cleanup(func() {
+			t := text.GetUntracked()
+			if t == nil || c.SaveOnLeave == nil {
+				return
+			}
+			if n, ok := ParseWhole(*t); ok && InRange(n, c.Range) && c.SaveOnLeave(n) {
+				s.commit(n)
+			}
+		})
 	}
 	return row{Label: c.Label, Description: c.Description, Disabled: c.Disabled, TestID: c.TestID,
 		Error: func() string {

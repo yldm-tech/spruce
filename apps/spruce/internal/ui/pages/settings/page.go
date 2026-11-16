@@ -318,7 +318,7 @@ func historyTab(st *store.Settings, clearRef *core.Ref, onClear func()) []core.N
 	}
 }
 
-// retentionSetting is 保留天数. Fewer days delete the records older than that at once, which cannot be undone, so the number is saved only on Return or as the field loses the focus, and only after a question when it would delete records the history holds.
+// retentionSetting is 保留天数. Fewer days delete the records older than that at once, which cannot be undone, so the number is saved only on Return or as the field loses the focus, and only after a question when it would delete records the history holds; more days left typed in the field are also saved as it goes.
 type retentionSetting struct {
 	Range app.SettingRange
 }
@@ -368,7 +368,7 @@ func (c retentionSetting) Render(cx *core.Scope) core.Node {
 	}
 	return core.Group{
 		numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: c.Range, Unit: "天", Confirm: confirm,
-			TestID: "retention-days"},
+			SaveOnLeave: func(n int) bool { return n > core.Untracked(cx, stores.Settings.Value).History.RetentionDays }, TestID: "retention-days"},
 		kit.ConfirmDialog{Open: func() bool { return ask.Get() != nil }, Title: "缩短保留天数？", ConfirmLabel: "删除记录", Danger: true, TestID: "retention-dialog",
 			Message: core.Text{ContentFunc: func() string {
 				if a := ask.Get(); a != nil {
