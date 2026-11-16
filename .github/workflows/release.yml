@@ -75,6 +75,16 @@ jobs:
             echo "::error::apps/spruce/nsgo.yaml's id is ${identifier:-missing}; set the app's real one before releasing."
             exit 1
           fi
+      # Publish attests the packages' provenance, which this organization's plan offers public repositories only, so a release from a private one would fail at the end, after the version commit, the tag and the draft exist. Checked before anything is committed or tagged.
+      - name: Check the repository is public
+        if: steps.version.outputs.version != ''
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$PRIVATE" = true ]; then
+            echo "::error::Not released: artifact attestations need a public repository."
+            exit 1
+          fi
       # Checked before anything is committed or tagged, so a missing secret fails here in seconds instead of leaving a tag whose packages could not be signed.
       - name: Check the signing secrets
         if: steps.version.outputs.version != ''

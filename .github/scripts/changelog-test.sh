@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # changelog-test.sh
 #
-# Checks changelog.sh on a repository of its own, made in a temporary folder: the section add writes from the commits since the previous version tag (pull requests by their titles, scopes that are not the app left out, reverts settled), that it puts a section above those of older versions and keeps one already there, the line it writes for a version with nothing to list, that notes prints a section the way the release reads it, and that next-version.sh releases nothing for the scopes changelog.sh leaves out.
+# Checks changelog.sh on a repository of its own, made in a temporary folder: the section add writes from the commits since the previous version tag (pull requests by their titles, scopes that are not the app left out, reverts settled), that it puts a section above those of older versions and keeps one already there, the line it writes for a version with nothing to list, that notes prints a section the way the release reads it, and that next-version.sh releases nothing for the website scope, which changelog.sh leaves out too, while a dependency bump releases.
 set -euo pipefail
 
 scripts=$(cd "$(dirname "$0")" && pwd)
@@ -86,7 +86,7 @@ want=$(
   cat <<'END'
 # Changelog
 
-What changed in each version of Spruce, newest first. The app shows the section of a new version when it offers the update.
+What changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.
 
 ## 0.2.0 - 2026-01-02
 
@@ -153,8 +153,17 @@ if "$script" add 1.2 2>/dev/null; then
   fail "add accepted 1.2 as a version"
 fi
 
-# next-version.sh, on a repository of its own: the scopes changelog.sh leaves out of the notes release nothing, breaking or not, while a change to the app still does.
-expect "the same skipped scopes" "$(grep '^skip_scopes=' "$scripts/changelog.sh")" "$(grep '^skip_scopes=' "$scripts/next-version.sh")"
+# next-version.sh, on a repository of its own: the website's scope releases nothing, breaking or not, while a dependency bump and a change to the app do. Each scope it skips is one changelog.sh leaves out of the notes.
+skipped_notes=$(sed -nE 's/^skip_scopes="(.*)"$/\1/p' "$scripts/changelog.sh")
+skipped_release=$(sed -nE 's/^skip_scopes="(.*)"$/\1/p' "$scripts/next-version.sh")
+if [ -z "$skipped_release" ]; then
+  fail "next-version.sh has no skip_scopes"
+fi
+for scope in $skipped_release; do
+  if [[ " $skipped_notes " != *" $scope "* ]]; then
+    fail "next-version.sh skips the scope $scope, which changelog.sh lists in the notes"
+  fi
+done
 mkdir "$work/next"
 cd "$work/next"
 git init -q
@@ -167,14 +176,15 @@ git tag -a v0.1.0 -m v0.1.0
 commit "feat(site): redesign the landing page"
 commit "feat(site)!: move the landing page to its own domain"
 commit "fix(site): fix a link" "BREAKING CHANGE: the old address is gone"
-commit "fix(deps): bump a library"
 branch landing "feat(site): add a download section" "docs: explain the site"
 merge landing "Merge pull request #4 from example/landing" "feat(site): add a download section"
-expect "website and dependencies only" "" "$("$scripts/next-version.sh" HEAD)"
+expect "website only" "" "$("$scripts/next-version.sh" HEAD)"
+commit "fix(deps): bump a library"
+expect "a dependency bump" "v0.1.1" "$("$scripts/next-version.sh" HEAD)"
 commit "fix(cleanup): keep the selection"
 expect "a fix to the app" "v0.1.1" "$("$scripts/next-version.sh" HEAD)"
 commit "feat(deps)!: drop an old library"
-expect "a breaking dependency bump" "v0.1.1" "$("$scripts/next-version.sh" HEAD)"
+expect "a breaking dependency bump" "v0.2.0" "$("$scripts/next-version.sh" HEAD)"
 commit "feat: add a filter"
 expect "a feature of the app" "v0.2.0" "$("$scripts/next-version.sh" HEAD)"
 commit "feat(space)!: rework the treemap"

@@ -54,7 +54,7 @@ section() {
   ' "$file"
 }
 
-# Scopes of changes that are not the app's, left out of its notes: the website and dependency bumps. next-version.sh releases nothing for the same scopes, and changelog-test.sh checks that the two lists match.
+# Scopes of changes left out of the app's notes: the website and dependency bumps. next-version.sh releases nothing for the website's, but a dependency bump does release, so a release of bumps alone gets the line that says nothing worth listing changed; changelog-test.sh checks that next-version.sh's list is part of this one.
 skip_scopes=" site deps "
 
 # classify <subject> <body> prints the "<group>\t<text>" line of a Conventional Commit subject worth listing, and fails for one that is not: another type, a skipped scope or no Conventional Commit at all. The group is breaking, feat, fix, perf or revert, and the text is the subject without its type; a revert's is the subject it reverts, without that one's type.
@@ -189,7 +189,7 @@ add() {
     return
   fi
   if [ ! -f "$file" ]; then
-    printf '# Changelog\n\nWhat changed in each version of Spruce, newest first. The app shows the section of a new version when it offers the update.\n' >"$file"
+    printf '# Changelog\n\nWhat changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.\n' >"$file"
   fi
   write "$version" "$commit" >"$new"
   awk -v new="$new" -v want="$version" '

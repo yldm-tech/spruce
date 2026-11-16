@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each version of Spruce, newest first. The app shows the section of a new version when it offers the update.
+What changed in each version of Spruce, newest first. Each section is also the notes of the GitHub release of that version.
 
 ## 0.1.0 - 2026-11-16
 

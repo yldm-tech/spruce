@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # next-version.sh <commit> [major|minor|patch]
 #
-# Prints the version tag the commit should get, or nothing when it should get none. Without a bump given, the bump follows the Conventional Commits since the last version tag before the commit: a breaking change (a type ending in "!" or a "BREAKING CHANGE:" footer) is a major bump, feat a minor one, fix, perf and revert a patch one; other types (docs, test, ci, chore, refactor, style, build) release nothing. Commits whose scope is not the app (skip_scopes, the same list as changelog.sh's: the website and dependency bumps) release nothing either, breaking or not, so a change to the website alone never releases the app. While the major version is 0, a breaking change bumps the minor version, as SemVer leaves 0.x free to break. Merge commits are skipped, as the commits they bring are counted themselves. Spruce merges pull requests with merge commits, so the bump follows the Conventional Commits the pull requests bring.
+# Prints the version tag the commit should get, or nothing when it should get none. Without a bump given, the bump follows the Conventional Commits since the last version tag before the commit: a breaking change (a type ending in "!" or a "BREAKING CHANGE:" footer) is a major bump, feat a minor one, fix, perf and revert a patch one; other types (docs, test, ci, chore, refactor, style, build) release nothing. Commits scoped to the website (skip_scopes, part of changelog.sh's list) release nothing either, breaking or not, so a change to the website alone never releases the app. Dependency bumps (deps) do release, as they change the binary, security fixes among them; changelog.sh leaves them out of the notes. While the major version is 0, a breaking change bumps the minor version, as SemVer leaves 0.x free to break. Merge commits are skipped, as the commits they bring are counted themselves. Spruce merges pull requests with merge commits, so the bump follows the Conventional Commits the pull requests bring.
 #
 # Nothing is printed when the commit already has a version tag, or when it is not after the newest version tag (CI on an older push of main that finished late).
 set -euo pipefail
 
-# Scopes of changes that are not the app's, which release nothing: the website and dependency bumps. changelog.sh leaves the same scopes out of the notes, and changelog-test.sh checks that the two lists match.
-skip_scopes=" site deps "
+# Scopes of changes that are not the app's, which release nothing: the website. changelog.sh leaves these scopes out of the notes too, and changelog-test.sh checks that each of them is in its list.
+skip_scopes=" site "
 
 sha=$(git rev-parse "$1^{commit}")
 forced=${2:-}
