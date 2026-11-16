@@ -823,7 +823,11 @@ func TestDoneCardOffersUndoForWhatMoved(t *testing.T) {
 			Trashed: 100_000_000, Removed: 1, Failed: []cleanup.Failure{{Path: "/Users/me/Library/Caches/cache", Reason: "被占用"}}})}, nil
 	}
 	p := start(t, svc, uninstall.PlatformMac)
-	p.overview.OnUndo = func(context.Context, string) (app.RestoreOutcome, error) { return app.RestoreOutcome{Restored: 1}, nil }
+	restored := make(chan struct{})
+	p.overview.OnUndo = func(context.Context, string) (app.RestoreOutcome, error) {
+		<-restored
+		return app.RestoreOutcome{Restored: 1}, nil
+	}
 	p.waitList()
 	p.pick("Foo")
 	p.WaitFor("id:leftovers", wait)
@@ -832,6 +836,11 @@ func TestDoneCardOffersUndoForWhatMoved(t *testing.T) {
 	p.WaitFor("id:done", wait)
 	p.Press("id:done-undo")
 	p.WaitForGone("id:done", wait)
+	// The card is gone before the files are back: the toast says it goes on.
+	if text, _ := p.toast(); text != "正在放回…" {
+		t.Errorf("toast %q while putting back", text)
+	}
+	close(restored)
 	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text == "已放回原处 1 项" })
 	if _, _, _, undos, _ := p.overview.Calls(); !slices.Equal(undos, []string{"run-2"}) {
 		t.Errorf("undos %v", undos)

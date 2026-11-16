@@ -684,7 +684,7 @@ func (s *State) remove(target app.UninstallApp, req app.UninstallRequest) {
 // UndoRun is the run the done card's 撤销 puts back, "" when it has none.
 func (s *State) UndoRun() string { return s.undoRun }
 
-// Undo closes the done card and puts back what its removal moved to the Trash; the toast says how it went, and the list is read again once the app is back.
+// Undo closes the done card and puts back what its removal moved to the Trash; the toast says it goes on, then how it went, and the list is read again once the app is back.
 func (s *State) Undo() {
 	run := s.undoRun
 	if run == "" || s.Step.GetUntracked() != StepDone {
@@ -692,6 +692,7 @@ func (s *State) Undo() {
 	}
 	s.Close()
 	stores := s.stores
+	stores.Toasts.Show(store.Toast{Text: "正在放回…"})
 	stores.Overview.Undo(s.cx, run, nil, func(out app.RestoreOutcome, err error) {
 		stores.Trash.Bump()
 		stores.Locations.Bump()
