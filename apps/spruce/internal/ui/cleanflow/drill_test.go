@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/cleanflow"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
+	"spruce/apps/spruce/internal/ui/kit"
 	"spruce/apps/spruce/internal/ui/nav"
 	"spruce/apps/spruce/internal/ui/store"
 	"spruce/apps/spruce/internal/ui/store/storefake"
@@ -108,6 +109,7 @@ func startSized(t *testing.T, st app.OverviewState, size nsgotest.Option, before
 	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
 		p.stores = storefake.Provide(cx, fakes.Deps())
 		cleanflow.Provide(cx)
+		kit.ToastShownKey.Provide(cx, func() bool { return p.stores.Toasts.Current() != nil })
 		p.nav = nav.NewNavigator(cx, nav.Overview)
 		nav.Key.Provide(cx, p.nav)
 		for _, f := range before {
@@ -668,20 +670,22 @@ func TestTrashWithMovesAsksAsDanger(t *testing.T) {
 	p.WaitForGone("id:clean-overlay", wait)
 }
 
+// inWindow is where v ends in the window: its frame's bottom, less what the scroll views around it scrolled.
+func inWindow(v *nsgotest.View) float32 {
+	y := float32(v.Frame.Size.Height)
+	for ; v != nil; v = v.Parent {
+		y += float32(v.Frame.Origin.Y)
+		if v.Parent != nil {
+			y -= float32(v.Parent.Offset.Y)
+		}
+	}
+	return y
+}
+
 // While the shell's toast shows at the bottom of the page area (24 points up, at least 44 tall), 清理 stands above it, and comes back down once it goes.
 func TestActionBarRisesOverTheToast(t *testing.T) {
 	p := start(t, ready())
-	bottom := func() float32 {
-		v := p.Find("id:clean")
-		y := float32(v.Frame.Size.Height)
-		for ; v != nil; v = v.Parent {
-			y += float32(v.Frame.Origin.Y)
-			if v.Props.TestID == "drill-system-junk" {
-				y -= float32(v.Offset.Y)
-			}
-		}
-		return y
-	}
+	bottom := func() float32 { return inWindow(p.Find("id:clean")) }
 	without := bottom()
 	p.undoToast()
 	p.Settle()
@@ -695,33 +699,25 @@ func TestActionBarRisesOverTheToast(t *testing.T) {
 	}
 }
 
-// On a long list scrolled to its end, as after pressing 清理, the bar that rises over the toast stays in view above it; a page scrolled away from the bar is left where it is.
-func TestActionBarStaysInViewOverTheToast(t *testing.T) {
+// On a long list the bar is pinned under the page: in view at its top and at its end, above the toast when it comes, which scrolls nothing.
+func TestActionBarStaysPinned(t *testing.T) {
 	const height = 600
 	p := startSized(t, stateOf(many(20)...), nsgotest.Size(1052, height))
 	p.WaitFor("id:clean", wait)
+	bottom := func() float32 { return inWindow(p.Find("id:clean")) }
+	if got := bottom(); got > height {
+		t.Fatalf("清理 ends at %v at the top of the page, below the window", got)
+	}
 	p.Scroll("id:drill-system-junk", 100000)
 	p.Settle()
-	page := func() *nsgotest.View { return p.Find("id:drill-system-junk") }
-	// bottom is where 清理 ends in the window.
-	bottom := func() float32 {
-		pg := page()
-		return float32(pg.Frame.Origin.Y) + inPage(pg, p.Find("id:clean")) + float32(p.Find("id:clean").Frame.Size.Height) - float32(pg.Offset.Y)
-	}
 	if got := bottom(); got > height {
 		t.Fatalf("清理 ends at %v at the end of the page, below the window", got)
 	}
+	offset := p.Find("id:drill-system-junk").Offset.Y
 	p.undoToast()
 	p.WaitUntil(wait, func() bool { return bottom() <= height-24-44-12 })
-
-	p.Post(p.stores.Toasts.Dismiss)
-	p.Settle()
-	p.Scroll("id:drill-system-junk", -100000)
-	p.Settle()
-	p.undoToast()
-	p.Settle()
-	if y := page().Offset.Y; y != 0 {
-		t.Errorf("the page scrolled to %v for a toast while its bar was out of view", y)
+	if y := p.Find("id:drill-system-junk").Offset.Y; y != offset {
+		t.Errorf("the page scrolled from %v to %v for the toast", offset, y)
 	}
 }
 

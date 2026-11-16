@@ -17,23 +17,16 @@ import (
 	"spruce/apps/spruce/internal/ui/store"
 )
 
-// projectsTab is 项目: the filters, the projects largest first with 全选 and 全不选 (which leave held projects alone), and 清理; or why there are none.
-func projectsTab(cx *core.Scope, d *cleanflow.Drill, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
+// projectsTab is 项目: the filters and the projects largest first with 全选 and 全不选 (which leave held projects alone), whose 清理 is in the pinned bar (projectsBar); or why there are none.
+func projectsTab(cx *core.Scope, d *cleanflow.Drill, l *lists, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
 	set := store.Use(cx).Settings
-	projects := core.NewMemoFunc(cx, func() []engdev.Project {
-		if r := d.Result(); r != nil {
-			return r.Projects
-		}
-		return nil
-	}, nil)
-	artifacts := core.NewMemoFunc(cx, func() []cleanup.Category { _, a := SplitGroups(d.Categories()); return a }, nil)
-	none := core.NewMemo(cx, func() bool { return len(projects.Get()) == 0 })
+	none := core.NewMemo(cx, func() bool { return len(l.projects.Get()) == 0 })
 	return core.Dynamic(func(*core.Scope) core.Node {
 		if none.Get() {
 			return core.Func(func(cx *core.Scope) core.Node { return noProjects(cx, d, set) })
 		}
 		return core.Func(func(cx *core.Scope) core.Node {
-			return projectList(cx, d, set, filter, projects.Get, artifacts.Get, rev)
+			return projectList(cx, d, set, l, filter, rev)
 		})
 	})
 }
@@ -71,11 +64,9 @@ func noProjects(cx *core.Scope, d *cleanflow.Drill, set *store.Settings) core.No
 }
 
 // projectList is the 项目 tab with projects, under filter.
-func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter *core.Signal[ProjectFilter], projects func() []engdev.Project, artifacts func() []cleanup.Category, rev reveal) core.Node {
+func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, l *lists, filter *core.Signal[ProjectFilter], rev reveal) core.Node {
 	days := func() int { return set.Value().Cleanup.DevArtifactMinAgeDays }
-	now := timeNow()
-	shown := core.NewMemoFunc(cx, func() []engdev.Project { return FilterProjects(projects(), filter.Get(), days(), now) }, nil)
-	cleanRef := new(core.Ref)
+	shown, artifacts := l.shown, l.artifacts.Get
 	ctx := cx.Context()
 	revealErr := core.NewSignal(cx, "")
 	revealPath := func(path string) {
@@ -130,21 +121,7 @@ func projectList(cx *core.Scope, d *cleanflow.Drill, set *store.Settings, filter
 	list := kit.Card{Clip: true, TestID: "projects", Style: core.Style{FlexShrink: 0}, Children: []core.Node{
 		core.View{Role: core.RoleGroup, Label: "项目", Children: []core.Node{rows}},
 	}}
-	// What the bar counts and cleans is what the filter shows.
-	shownArtifacts := core.NewMemoFunc(cx, func() []cleanup.Category { return ArtifactsOf(shown.Get(), artifacts()) }, nil)
-	plan := func() Plan { return CleanPlan(shownArtifacts.Get(), d.Selection.Get()) }
-	names := func(sel cleanflow.Selection) string { return ProjectNames(shown.GetUntracked(), sel) }
-	bar := cleanflow.DrillBar(d,
-		func() kit.Stat {
-			return kit.Stat{Label: "已选择", Value: strconv.Itoa(SelectedProjects(shown.Get(), d.Selection.Get())) + " 个项目"}
-		},
-		func() kit.Stat { return kit.Stat{Label: "已选大小", Value: format.Bytes(plan().Bytes)} },
-		func() int { return plan().Count },
-		func() {
-			cats := shownArtifacts.GetUntracked()
-			d.RequestClean(cats, confirmation(names), OverlaySub(CleanPlan(cats, d.Selection.GetUntracked())), cleanRef)
-		}, cleanRef)
-	return core.Group{toolbar, tools, list, bar}
+	return core.Group{toolbar, tools, list}
 }
 
 // projectRow is one project: its checkbox (disabled, with the reason as its tooltip, for a held project), name, path and kinds of build output, Git status, last activity, size, and its build output once expanded.
