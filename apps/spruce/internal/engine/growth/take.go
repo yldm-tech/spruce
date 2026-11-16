@@ -30,9 +30,13 @@ func Take(ctx context.Context, watches []Watch, opts TakeOptions) (Snapshot, err
 	if opts.Budget <= 0 {
 		opts.Budget = defaultBudget
 	}
-	run, cancel := context.WithTimeoutCause(ctx, opts.Budget, ErrBudget)
+	start := opts.start
+	if start.IsZero() {
+		start = time.Now()
+	}
+	run, cancel := context.WithDeadlineCause(ctx, start.Add(opts.Budget), ErrBudget)
 	defer cancel()
-	snap := Snapshot{Version: Version, At: time.Now(), Locations: []Location{}}
+	snap := Snapshot{Version: Version, At: start, Locations: []Location{}}
 	usageAt := ""
 	for _, w := range watches {
 		loc, ok := measure(run, w, opts)

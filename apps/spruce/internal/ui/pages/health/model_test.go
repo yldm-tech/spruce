@@ -143,6 +143,8 @@ func TestLevelsAndPlatformWording(t *testing.T) {
 	check(t, "cores label", CoresLabel([]float64{10, 40, 5, 38.6}), "各核心占用：10%、40%、5%、39%")
 	check(t, "swap darwin", SwapLabel("darwin"), "交换内存")
 	check(t, "swap windows", SwapLabel("windows"), "页面文件")
+	check(t, "footnote darwin", ProcessFootnote("darwin"),
+		"CPU 按单个处理器核心计算，100% 即占满一个核心，与活动监视器一致。其他用户和系统的进程（如 WindowServer）无法读取，不在列表中。Spruce 只显示进程，不会结束进程。")
 	check(t, "footnote windows", ProcessFootnote("windows"),
 		"CPU 按单个处理器核心计算，100% 即占满一个核心；任务管理器按全部核心显示，数值会更低。受保护的系统进程读不到 CPU 占用。Spruce 只显示进程，不会结束进程。")
 	check(t, "process cpu unknown", ProcessCPU(sysinfo.ProcessUsage{}), "—")

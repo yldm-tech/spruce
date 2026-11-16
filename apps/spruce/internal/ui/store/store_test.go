@@ -367,3 +367,42 @@ func TestPermissionLocationsAndBlock(t *testing.T) {
 		t.Error("still blocked after its scope went")
 	}
 }
+
+// heldPermissions answers FullDiskAccess with Denied once release receives, marking answered; the guide grants at once.
+type heldPermissions struct {
+	release  chan struct{}
+	answered *answer
+}
+
+func (f heldPermissions) FullDiskAccess() (maintenance.PermissionState, error) {
+	<-f.release
+	f.answered.mark()
+	return maintenance.PermissionDenied, nil
+}
+func (f heldPermissions) GuideFullDiskAccess(context.Context) (maintenance.PermissionState, error) {
+	return maintenance.PermissionGranted, nil
+}
+
+// A check that started before the guide and answers after it read the state the guide has since changed: it does not undo the guide's answer.
+func TestPermissionKeepsTheNewerAnswer(t *testing.T) {
+	h := newHost(t)
+	perms := heldPermissions{release: make(chan struct{}), answered: &answer{}}
+	block := make(chan struct{})
+	close(block)
+	st := New(h.root, t.Context(), Deps{Settings: &fakeSettings{}, SettingsFeed: fakeFeed{make(chan settings.AppSettings)}, History: fakeHistory{make(chan history.Run)},
+		Alerts: fakeAlerts{ch: make(chan []health.Alert), block: block}, Permissions: perms, Locations: fakeLocations{}})
+	var guided maintenance.PermissionState
+	st.Permission.Guide(func(s maintenance.PermissionState, err error) { guided = s })
+	h.until(t, func() bool { return guided != "" })
+	if got := st.Permission.FullDiskAccess(); got != maintenance.PermissionGranted {
+		t.Fatalf("after the guide: %q", got)
+	}
+	close(perms.release)
+	h.delivered(t, perms.answered)
+	if got := st.Permission.FullDiskAccess(); got != maintenance.PermissionGranted {
+		t.Errorf("the older check's answer replaced the guide's: %q", got)
+	}
+	if !st.Permission.Checked() {
+		t.Error("not checked")
+	}
+}

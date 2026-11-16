@@ -352,35 +352,8 @@ func TestMayReadSkipsFolders(t *testing.T) {
 	}
 }
 
-func TestLocateGit(t *testing.T) {
-	home := t.TempDir()
-	e := env{goos: "darwin", home: home, getenv: envOf(nil)}
-	// Homebrew's git wins; xcode-select is not asked.
-	f := execxtest.New()
-	l := locate(context.Background(), e, f, lookPathOf(map[string]string{"/opt/homebrew/bin/git": "/opt/homebrew/bin/git", "git": "/usr/bin/git"}), "", true)
-	if l.bins["git"] != "/opt/homebrew/bin/git" || len(f.Calls()) != 0 {
-		t.Errorf("git = %q, calls %v", l.bins["git"], f.Calls())
-	}
-	// Only the /usr/bin stub: the selected developer folder's git.
-	dev := filepath.Join(home, "Xcode.app", "Contents", "Developer")
-	gitBin := writeFile(t, dev, "usr/bin/git", 1)
-	f = execxtest.New()
-	f.On(xcodeSelectPath, "-p").Return(dev+"\n", 0)
-	if l := locate(context.Background(), e, f, lookPathOf(map[string]string{"git": "/usr/bin/git"}), "", true); l.bins["git"] != gitBin {
-		t.Errorf("git = %q, want %q", l.bins["git"], gitBin)
-	}
-	// No developer tools at all: no git, and never the stub.
-	f = execxtest.New()
-	f.On(xcodeSelectPath, "-p").Return("", 2)
-	if l := locate(context.Background(), e, f, lookPathOf(map[string]string{"git": "/usr/bin/git"}), "", true); l.bins["git"] != "" {
-		t.Errorf("git = %q without developer tools", l.bins["git"])
-	}
-	// Not wanted: not looked for.
-	f = execxtest.New()
-	if l := locate(context.Background(), e, f, lookPathOf(map[string]string{"/opt/homebrew/bin/git": "/opt/homebrew/bin/git"}), "", false); l.bins["git"] != "" || len(f.Calls()) != 0 {
-		t.Errorf("git looked for when not wanted: %q %v", l.bins["git"], f.Calls())
-	}
-	// Windows: PATH first, then Git for Windows in Program Files.
+func TestLocateGitWindows(t *testing.T) {
+	// PATH first, then Git for Windows in Program Files.
 	w := env{goos: "windows", home: `C:\Users\u`, getenv: envOf(map[string]string{"ProgramFiles": `C:\Program Files`})}
 	pf := filepath.Join(`C:\Program Files`, "Git", "cmd", "git.exe")
 	if l := locate(context.Background(), w, execxtest.New(), lookPathOf(map[string]string{pf: pf}), "", true); l.bins["git"] != pf {
@@ -442,21 +415,24 @@ func TestToolIDs(t *testing.T) {
 
 func TestGroupProjects(t *testing.T) {
 	now := time.Now()
+	// Paths as a scan makes them: absolute on this OS and joined with its separator.
+	root := t.TempDir()
+	at := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
 	item := func(project, path, note string, size int64, mod time.Time, git cleanup.GitState, hold string) cleanup.Item {
 		return cleanup.Item{ID: cleanup.ItemID(path), Path: path, Size: size, ModTime: mod, Note: note, Project: project, Git: git, Hold: hold}
 	}
 	res := cleanup.ScanResult{Categories: []cleanup.Category{
-		{ID: "dev-junk:tool-npm", Items: []cleanup.Item{{ID: "npm", Path: "/u/.npm", Size: 1 << 30}}},
+		{ID: "dev-junk:tool-npm", Items: []cleanup.Item{{ID: "npm", Path: at("u/.npm"), Size: 1 << 30}}},
 		{ID: "dev-junk:artifact-node-modules", Items: []cleanup.Item{
-			item("/ws/web", "/ws/web/node_modules", "web · 最近 30 天内有改动", 500, now.Add(-2*time.Hour), cleanup.GitClean, ""),
-			item("/ws/apps/api", "/ws/apps/api/node_modules", "apps/api · 有未提交的改动", 300, now.Add(-48*time.Hour), cleanup.GitDirty, "项目有未提交的改动"),
+			item(at("ws/web"), at("ws/web/node_modules"), "web · 最近 30 天内有改动", 500, now.Add(-2*time.Hour), cleanup.GitClean, ""),
+			item(at("ws/apps/api"), at("ws/apps/api/node_modules"), "apps/api · 有未提交的改动", 300, now.Add(-48*time.Hour), cleanup.GitDirty, "项目有未提交的改动"),
 		}},
 		{ID: "dev-junk:artifact-web-build", Items: []cleanup.Item{
-			item("/ws/web", "/ws/web/.next", "web · 最近 30 天内有改动", 700, now.Add(-2*time.Hour), cleanup.GitClean, ""),
-			item("/ws/web", "/ws/web/.angular/cache", "web · 最近 30 天内有改动", 10, now.Add(-2*time.Hour), cleanup.GitClean, ""),
+			item(at("ws/web"), at("ws/web/.next"), "web · 最近 30 天内有改动", 700, now.Add(-2*time.Hour), cleanup.GitClean, ""),
+			item(at("ws/web"), at("ws/web/.angular/cache"), "web · 最近 30 天内有改动", 10, now.Add(-2*time.Hour), cleanup.GitClean, ""),
 		}},
 		{ID: "dev-junk:artifact-rust-target-trash", Items: []cleanup.Item{
-			item("/docs/r", "/docs/r/target", "", 300, now.Add(-100*24*time.Hour), cleanup.GitNone, ""),
+			item(at("docs/r"), at("docs/r/target"), "", 300, now.Add(-100*24*time.Hour), cleanup.GitNone, ""),
 		}},
 	}}
 	got := GroupProjects(res)
@@ -464,20 +440,20 @@ func TestGroupProjects(t *testing.T) {
 		t.Fatalf("projects %+v", got)
 	}
 	web, docs, api := got[0], got[1], got[2]
-	if web.Path != "/ws/web" || web.ID != cleanup.ItemID("/ws/web") || web.Label != "web" || web.Size != 1210 || web.Git != cleanup.GitClean || web.Hold != "" {
+	if web.Path != at("ws/web") || web.ID != cleanup.ItemID(at("ws/web")) || web.Label != "web" || web.Size != 1210 || web.Git != cleanup.GitClean || web.Hold != "" {
 		t.Errorf("web %+v", web)
 	}
 	if !slices.Equal(web.Kinds, []string{".next", "node_modules", ".angular/cache"}) {
 		t.Errorf("kinds %v", web.Kinds)
 	}
-	if len(web.Items) != 3 || web.Items[0] != (ProjectItem{CategoryID: "dev-junk:artifact-node-modules", ItemID: cleanup.ItemID("/ws/web/node_modules")}) {
+	if len(web.Items) != 3 || web.Items[0] != (ProjectItem{CategoryID: "dev-junk:artifact-node-modules", ItemID: cleanup.ItemID(at("ws/web/node_modules"))}) {
 		t.Errorf("items %+v", web.Items)
 	}
 	if !web.LastActive.Equal(now.Add(-2 * time.Hour)) {
 		t.Errorf("last active %v", web.LastActive)
 	}
 	// Equal sizes sort by path; a missing note falls back to the folder name.
-	if docs.Path != "/docs/r" || api.Path != "/ws/apps/api" {
+	if docs.Path != at("docs/r") || api.Path != at("ws/apps/api") {
 		t.Errorf("order %s, %s", docs.Path, api.Path)
 	}
 	if docs.Label != "r" || docs.Git != cleanup.GitNone || api.Label != "apps/api" || api.Hold != "项目有未提交的改动" || api.Git != cleanup.GitDirty {

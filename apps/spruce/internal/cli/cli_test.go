@@ -18,6 +18,7 @@ import (
 	"spruce/apps/spruce/internal/engine/schedule"
 	"spruce/apps/spruce/internal/engine/settings"
 	"spruce/apps/spruce/internal/engine/undo"
+	"spruce/apps/spruce/internal/ui/format"
 )
 
 const mb = 1_000_000
@@ -93,6 +94,9 @@ func (f *fakeEngine) Restore(_ context.Context, runID string) (app.RestoreOutcom
 var home = filepath.FromSlash("/Users/u")
 
 func path(rel string) string { return filepath.Join(home, filepath.FromSlash(rel)) }
+
+// tilde is how the commands print path(rel): under "~", with the platform's separator. Expected sizes come from size and the Trash from format.TrashName, as the commands print them: Windows counts in 1024s and has a 回收站.
+func tilde(rel string) string { return "~" + string(filepath.Separator) + filepath.FromSlash(rel) }
 
 // item is a scanned item: size in MB, last changed days ago.
 func item(rel string, sizeMB int64, days int, selected bool) cleanup.Item {
@@ -262,7 +266,7 @@ func TestScanText(t *testing.T) {
 	if len(h.sources) != 1 || h.sources[0] != nil {
 		t.Fatalf("sources %q, want all", h.sources)
 	}
-	for _, want := range []string{"类别", "system-junk:app-caches", "应用缓存", "500 MB", "dev-junk:artifact-node_modules", "1.1 GB", "共 2.4 GB，7 项"} {
+	for _, want := range []string{"类别", "system-junk:app-caches", "应用缓存", size(500 * mb), "dev-junk:artifact-node_modules", size(1_100 * mb), "共 " + size(2_350*mb) + "，7 项"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -388,7 +392,7 @@ func TestRecommendations(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("code %d", code)
 	}
-	for _, want := range []string{"可以放心释放", "条建议", "app-caches", "应用缓存", "直接删除", "projects-idle", "tool-pnpm", "运行 pnpm store prune", "installers", "移到废纸篓", "1 个有未提交改动的项目没有选入"} {
+	for _, want := range []string{"可以放心释放", "条建议", "app-caches", "应用缓存", "直接删除", "projects-idle", "tool-pnpm", "运行 pnpm store prune", "installers", "移到" + format.TrashName(), "1 个有未提交改动的项目没有选入"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -439,13 +443,13 @@ func TestCleanWithoutYesIsADryRun(t *testing.T) {
 	if !strings.Contains(errOut, "没有清理：加 --yes 才会执行") {
 		t.Errorf("stderr %q", errOut)
 	}
-	for _, want := range []string{"将清理", "应用缓存（system-junk:app-caches）· 直接删除，无法撤销", "~/Library/Caches/com.old", "未完成的下载（system-junk:incomplete-downloads）· 移到废纸篓", "~/code/web/node_modules"} {
+	for _, want := range []string{"将清理", "应用缓存（system-junk:app-caches）· 直接删除，无法撤销", tilde("Library/Caches/com.old"), "未完成的下载（system-junk:incomplete-downloads）· 移到" + format.TrashName(), tilde("code/web/node_modules")} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
 	}
 	// The default runs no command and never takes a held item.
-	for _, not := range []string{"pnpm", "code/api"} {
+	for _, not := range []string{"pnpm", filepath.FromSlash("code/api")} {
 		if strings.Contains(out, not) {
 			t.Errorf("stdout has %q:\n%s", not, out)
 		}
@@ -526,7 +530,7 @@ func TestCleanYes(t *testing.T) {
 	if opts := h.eng.opts[0]; opts.Detail != "命令行" || opts.Kind != "" || opts.Rule != "" {
 		t.Fatalf("options %+v", opts)
 	}
-	for _, want := range []string{"已清理 5 项，释放 800 MB，移到废纸篓 350 MB", "已记入操作历史：20261115T100000Z-abcd", "spruce restore 20261115T100000Z-abcd"} {
+	for _, want := range []string{"已清理 5 项，释放 " + size(800*mb) + "，移到" + format.TrashName() + " " + size(350*mb), "已记入操作历史：20261115T100000Z-abcd", "spruce restore 20261115T100000Z-abcd"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -536,7 +540,7 @@ func TestCleanYes(t *testing.T) {
 	}
 	// The plan, with how each category goes, is printed before the result.
 	planAt, doneAt := strings.Index(out, "将清理 5 项"), strings.Index(out, "已清理 5 项")
-	if planAt < 0 || doneAt < planAt || !strings.Contains(out, "移到废纸篓") || !strings.Contains(out, "~/Downloads/Tool.dmg") {
+	if planAt < 0 || doneAt < planAt || !strings.Contains(out, "移到"+format.TrashName()) || !strings.Contains(out, tilde("Downloads/Tool.dmg")) {
 		t.Errorf("stdout lacks the plan before the result:\n%s", out)
 	}
 }
@@ -571,7 +575,7 @@ func TestCleanNamed(t *testing.T) {
 		if !slices.Equal(req.ItemIDs, []string{cleanup.ItemID(path("code/web/node_modules"))}) {
 			t.Fatalf("items %q: the held item was asked for", req.ItemIDs)
 		}
-		if strings.Count(out, "1 项不会清理") != 1 || !strings.Contains(out, "~/code/api/node_modules：项目有未提交的改动") {
+		if strings.Count(out, "1 项不会清理") != 1 || !strings.Contains(out, tilde("code/api/node_modules")+"：项目有未提交的改动") {
 			t.Errorf("stdout:\n%s", out)
 		}
 	})
@@ -614,7 +618,7 @@ func TestCleanOutcomes(t *testing.T) {
 		h := newHarness()
 		h.eng.cleanRun = app.CleanRun{Result: cleanup.CleanResult{Removed: 4, Failed: []cleanup.Failure{{Path: path("Library/Caches/com.new"), Reason: "文件正在使用，已跳过"}}, Partial: true}, RunID: "r2"}
 		code, out, _ := h.run(t, "clean", "--yes")
-		if code != ExitPartial || !strings.Contains(out, "1 项未能处理") || !strings.Contains(out, "~/Library/Caches/com.new：文件正在使用，已跳过") {
+		if code != ExitPartial || !strings.Contains(out, "1 项未能处理") || !strings.Contains(out, tilde("Library/Caches/com.new")+"：文件正在使用，已跳过") {
 			t.Fatalf("code %d, stdout:\n%s", code, out)
 		}
 	})
@@ -694,7 +698,7 @@ func TestProjects(t *testing.T) {
 	if !slices.Equal(h.sources[0], []string{"dev-junk"}) {
 		t.Fatalf("sources %q, want only dev-junk", h.sources[0])
 	}
-	for _, want := range []string{"项目", "api", "有未提交的改动", "web", "干净", "600 MB", "node_modules"} {
+	for _, want := range []string{"项目", "api", "有未提交的改动", "web", "干净", size(600 * mb), "node_modules"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -750,7 +754,7 @@ func TestHistory(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("code %d", code)
 	}
-	for _, want := range []string{"放回原处", "20261115T090000Z-0001", "清理建议", "释放 800 MB，移到废纸篓 350 MB，5 项", "可以", "旧的应用缓存", "1 项未能处理", "0 项维护任务", "放回 3 项（30 MB）"} {
+	for _, want := range []string{"放回原处", "20261115T090000Z-0001", "清理建议", "释放 " + size(800*mb) + "，移到" + format.TrashName() + " " + size(350*mb) + "，5 项", "可以", "旧的应用缓存", "1 项未能处理", "0 项维护任务", "放回 3 项（" + size(30*mb) + "）"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
@@ -806,7 +810,7 @@ func TestRestoreDryRun(t *testing.T) {
 	if code != ExitOK || len(h.eng.restores) != 0 {
 		t.Fatalf("code %d, restores %d", code, len(h.eng.restores))
 	}
-	if !strings.Contains(out, "将放回原处 2 项，共 350 MB") || !strings.Contains(out, "~/Downloads/Tool.dmg") || strings.Contains(out, "back.dmg") {
+	if !strings.Contains(out, "将放回原处 2 项，共 "+size(350*mb)) || !strings.Contains(out, tilde("Downloads/Tool.dmg")) || strings.Contains(out, "back.dmg") {
 		t.Fatalf("stdout:\n%s", out)
 	}
 	if !strings.Contains(errOut, "没有放回：加 --yes 才会执行") {
@@ -869,7 +873,7 @@ func TestRestoreYes(t *testing.T) {
 	h.eng.entries = map[string]undo.Entry{"20261115T090000Z-0001": entry()}
 	h.eng.restoreOut = app.RestoreOutcome{RunID: "r9", Restored: 2, Bytes: 350 * mb}
 	code, out, _ := h.run(t, "restore", "20261115T090000Z-0001", "--yes")
-	if code != ExitOK || !slices.Equal(h.eng.restores, []string{"20261115T090000Z-0001"}) || !strings.Contains(out, "已放回原处 2 项（350 MB）") {
+	if code != ExitOK || !slices.Equal(h.eng.restores, []string{"20261115T090000Z-0001"}) || !strings.Contains(out, "已放回原处 2 项（"+size(350*mb)+"）") {
 		t.Fatalf("code %d, restores %q, stdout:\n%s", code, h.eng.restores, out)
 	}
 
