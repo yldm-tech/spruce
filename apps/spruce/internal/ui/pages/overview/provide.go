@@ -2,8 +2,11 @@ package overview
 
 import (
 	"maps"
+	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
+
+	"spruce/apps/spruce/internal/ui/store"
 )
 
 // kept is what 概览 keeps in the app's scope from one visit to the next, besides what is checked (cleanflow.Kept): the cards open, how many items each card's last clean could not handle, and whether every card shows.
@@ -19,8 +22,25 @@ var keptKey = core.NewKey[*kept]("spruce.overview.kept", nil)
 // Provide gives the page its Deps in cx, the app's own scope, which outlives every showing of the page: what the page keeps from one visit to the next is made here too.
 func Provide(cx *core.Scope, d Deps) {
 	DepsKey.Provide(cx, d)
-	keptKey.Provide(cx, &kept{open: core.NewSignalFunc(cx, map[string]bool{}, nil), failed: core.NewSignalFunc(cx, map[string]int{}, nil),
-		more: core.NewSignal(cx, false)})
+	k := &kept{open: core.NewSignalFunc(cx, map[string]bool{}, nil), failed: core.NewSignalFunc(cx, map[string]int{}, nil),
+		more: core.NewSignal(cx, false)}
+	// What a card's last clean could not handle is told of the check it cleaned: a newer check lists those items again or finds them gone, so the counts go with it.
+	ov := store.Use(cx).Overview
+	checked := core.NewMemoFunc(cx, func() time.Time {
+		if r := ov.State().Result; r != nil {
+			return r.CheckedAt
+		}
+		return time.Time{}
+	}, time.Time.Equal)
+	cx.Effect(func() {
+		checked.Get()
+		cx.Untrack(func() {
+			if len(k.failed.GetUntracked()) > 0 {
+				k.failed.Set(map[string]int{})
+			}
+		})
+	})
+	keptKey.Provide(cx, k)
 }
 
 // isOpen reports whether the card id shows its items; reading it subscribes.

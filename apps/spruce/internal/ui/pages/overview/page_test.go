@@ -728,6 +728,27 @@ func TestTrashCardPartlyFailed(t *testing.T) {
 	p.ticking(func() bool { return p.Exists("id:rec-incomplete-downloads") })
 }
 
+// How many items a card's clean could not handle stays while 概览 shows the check it cleaned, also after leaving 概览, and goes with a newer check.
+func TestFailedCountGoesWithANewerCheck(t *testing.T) {
+	p := open(t, ready())
+	p.ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		return app.OverviewOutcome{RunID: "r2", Undoable: true, Result: cleanup.CleanResult{Trashed: 200 * mb, Failed: []cleanup.Failure{{ItemID: "x", Reason: "没有权限"}}}}, nil
+	}
+	p.Press("id:rec-incomplete-downloads-act")
+	p.ticking(func() bool { return p.toast() != nil })
+	p.waitText("id:rec-incomplete-downloads-failed", "1 项未能处理")
+	p.Post(func() { p.nav.Go(nav.Space) })
+	p.WaitForGone("id:rec-incomplete-downloads", wait)
+	p.Post(func() { p.nav.Go(nav.Overview) })
+	p.waitText("id:rec-incomplete-downloads-failed", "1 项未能处理")
+
+	newer := ready()
+	newer.Result.CheckedAt = now
+	p.set(newer)
+	p.WaitFor("id:rec-incomplete-downloads", wait)
+	p.WaitForGone("id:rec-incomplete-downloads-failed", wait)
+}
+
 // Deleting for good always asks, naming what and how much; 取消 does nothing.
 func TestDeleteCard(t *testing.T) {
 	p := open(t, ready())
