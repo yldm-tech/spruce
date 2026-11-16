@@ -357,13 +357,14 @@ func TestQuitDuringACleanAsks(t *testing.T) {
 func TestSettingsComesBackAtTheTop(t *testing.T) {
 	a, _ := startShell(t, storefake.New(t.TempDir()), nav.Settings)
 	a.Resize(960, 420)
-	a.WaitFor("id:tab-auto", wait)
-	a.Press("id:tab-auto")
-	a.WaitFor("id:settings-tab-auto", wait)
+	// 清理 is long on every platform; 自动清理 is one note on Windows.
+	a.WaitFor("id:tab-cleanup", wait)
+	a.Press("id:tab-cleanup")
+	a.WaitFor("id:settings-tab-cleanup", wait)
 	page := func() *nsgotest.View { return a.Find("id:settings-page") }
 	end := page().Content.Height - page().Frame.Size.Height
 	if end < 40 {
-		t.Fatalf("自动清理 does not scroll at 960x420 (%v)", end)
+		t.Fatalf("清理 does not scroll at 960x420 (%v)", end)
 	}
 	a.Scroll("id:settings-page", end)
 	a.Advance(200 * time.Millisecond)
@@ -373,7 +374,7 @@ func TestSettingsComesBackAtTheTop(t *testing.T) {
 	a.WaitFor("id:settings-tab-general", wait)
 	a.Advance(time.Second)
 	if y := page().Offset.Y; y != 0 {
-		t.Errorf("通用 at %v, scrolled to where 自动清理 was left", y)
+		t.Errorf("通用 at %v, scrolled to where 清理 was left", y)
 	}
 }
 
