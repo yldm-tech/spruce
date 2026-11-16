@@ -47,7 +47,7 @@ func screenIcon(t *testing.T, c color.RGBA) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
-// TestScreensUninstall shows the 应用卸载 page with its list, an app picked with its leftovers, a running app, the confirmation, the removal and the done card, for comparison with the design.
+// TestScreensUninstall shows the 应用卸载 page with its list, an app picked with its leftovers, a running app, the confirmation, the removal, the done card of an uninstall that left a file, with 撤销, and the toast that ends a whole one, for comparison with the design.
 func TestScreensUninstall(t *testing.T) {
 	now := time.Now()
 	apps := []app.UninstallApp{
@@ -85,6 +85,7 @@ func TestScreensUninstall(t *testing.T) {
 			{ID: "state", Path: "/Users/me/Library/Saved Application State/org.blenderfoundation.blender.savedState", Kind: app.UninstallKindSavedState, Size: 81_000, Dir: true, Selected: true},
 		}}
 	release := make(chan struct{})
+	removals := 0
 	svc := &uninstallfake.Service{List: apps, Details: details,
 		OnLeftovers: func(_ context.Context, id string) (app.UninstallPlan, error) {
 			if id == "code" {
@@ -100,10 +101,18 @@ func TestScreensUninstall(t *testing.T) {
 			case <-release:
 			case <-ctx.Done():
 			}
-			return app.UninstallOutcome{App: "Blender", BundleRemoved: true, RunID: "screens-run", Undoable: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 1_306_885_000, Removed: 5,
+			// The first try leaves a file another app holds, the second takes the rest.
+			if removals++; removals == 1 {
+				return app.UninstallOutcome{App: "Blender", BundleRemoved: true, RunID: "screens-run-1", Undoable: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 1_306_804_000, Removed: 4,
+					Failed: []cleanup.Failure{{Path: "/Users/me/Library/Saved Application State/org.blenderfoundation.blender.savedState", Reason: "文件正在使用，已跳过"}},
+					Categories: []cleanup.CategoryOutcome{
+						{CategoryID: "app", Removed: 1, Trashed: 1_210_000_000},
+						{CategoryID: "support", Removed: 3, Trashed: 96_804_000},
+					}})}, nil
+			}
+			return app.UninstallOutcome{App: "Blender", BundleRemoved: true, RunID: "screens-run-2", Undoable: true, Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 81_000, Removed: 1,
 				Categories: []cleanup.CategoryOutcome{
-					{CategoryID: "app", Removed: 1, Trashed: 1_210_000_000},
-					{CategoryID: "support", Removed: 4, Trashed: 96_885_000},
+					{CategoryID: "support", Removed: 1, Trashed: 81_000},
 				}})}, nil
 		}}
 	fakes := storefake.New(t.TempDir())
@@ -141,13 +150,22 @@ func TestScreensUninstall(t *testing.T) {
 	})
 	a.Screenshot("uninstall-removing")
 
-	// A whole uninstall ends in the toast, with 撤销, and the selection lands on the row now where Blender was.
-	svc.SetList(apps[1:], nil)
+	// An uninstall that left a file ends in the done card, with 撤销.
 	close(release)
+	a.WaitFor("id:done-undo", 10*time.Second)
+	a.Screenshot("uninstall-done")
+
+	// Closed, the list lands on Blender again; a whole uninstall ends in the toast, with 撤销, and the selection lands on the row now where Blender was.
+	a.Press("id:done-close")
+	a.WaitForGone("id:done", 10*time.Second)
+	a.WaitUntil(10*time.Second, func() bool { return a.Enabled("id:uninstall") })
+	svc.SetList(apps[1:], nil)
+	a.Press("id:uninstall")
+	a.Press("id:confirm-ok")
 	a.WaitForGone("id:removing", 10*time.Second)
 	a.WaitFor("id:toast-undo", 10*time.Second)
 	a.WaitForGone("id:app-list >> role:option Blender", 10*time.Second)
-	a.Screenshot("uninstall-done")
+	a.Screenshot("uninstall-toast")
 }
 
 // rowsTop is where the list's first row starts.
