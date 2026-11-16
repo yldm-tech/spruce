@@ -427,6 +427,50 @@ func TestStopAndRefusal(t *testing.T) {
 	})
 }
 
+// What is checked follows a newer check, not each state the store publishes: a check's progress over the result leaves it as it is.
+func TestChoiceFollowsOnlyANewerCheck(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(ready())
+	fakes.Overview = ov
+	var changes atomic.Int32
+	var stores *store.Stores
+	a := nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		stores = storefake.Provide(cx, fakes.Deps())
+		cleanflow.Provide(cx)
+		k := cleanflow.UseKept(cx)
+		cx.Effect(func() {
+			k.Choice.Get()
+			changes.Add(1)
+		})
+		return core.Group{}
+	})
+	settled := func() {
+		a.WaitUntil(wait, func() bool { return reflect.DeepEqual(stores.Overview.State(), ov.State()) })
+		a.Settle()
+	}
+	settled()
+	before := changes.Load()
+	// The controller publishes a copy of its result with each state (app.Overview.stateLocked).
+	progress := func(done int) app.OverviewState {
+		st := ov.State()
+		r := *st.Result
+		st.Phase, st.Progress, st.Result = app.OverviewChecking, &cleanup.Progress{Phase: cleanup.PhaseScanning, Done: done, Total: 3}, &r
+		return st
+	}
+	ov.Set(progress(1))
+	settled()
+	ov.Set(progress(2))
+	settled()
+	if n := changes.Load(); n != before {
+		t.Errorf("the choice changed %d times while a check ran over the result", n-before)
+	}
+	ov.Set(ready())
+	settled()
+	if changes.Load() == before {
+		t.Error("the choice did not follow a newer check")
+	}
+}
+
 // While a check runs the view says so and 清理 waits; a result it may not act on says why, offers 重新检查 and was checked again as the view opened.
 func TestCheckingAndNotActionable(t *testing.T) {
 	st := ready()

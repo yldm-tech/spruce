@@ -5,7 +5,7 @@ import (
 
 	"github.com/nsgo-dev/nsgo/core"
 
-	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/ui/store"
 )
 
@@ -27,15 +27,34 @@ func UseKept(cx *core.Scope) *Kept { return keptKey.Use(cx) }
 func Provide(cx *core.Scope) {
 	ov := store.Use(cx).Overview
 	k := &Kept{Choice: core.NewSignalFunc(cx, Choice{Sel: NothingSelected}, nil), open: core.NewSignalFunc(cx, map[string]bool{}, nil)}
-	result := core.NewMemo(cx, func() *app.OverviewResult { return ov.State().Result })
+	// The store publishes a copy of the result with every state, a check's progress too; its categories are the same slice until a newer check or a clean replaces them, so the choice follows only those.
+	categories := core.NewMemoFunc(cx, func() []cleanup.Category {
+		r := ov.State().Result
+		switch {
+		case r == nil:
+			return nil
+		case r.Scan.Categories == nil:
+			// A result with nothing found is told apart from none.
+			return []cleanup.Category{}
+		}
+		return r.Scan.Categories
+	}, sameCategories)
 	cx.Effect(func() {
-		r := result.Get()
-		if r == nil {
+		cats := categories.Get()
+		if cats == nil {
 			return
 		}
-		cx.Untrack(func() { k.Choice.Set(k.Choice.GetUntracked().Reconcile(r.Scan.Categories)) })
+		cx.Untrack(func() { k.Choice.Set(k.Choice.GetUntracked().Reconcile(cats)) })
 	})
 	keptKey.Provide(cx, k)
+}
+
+// sameCategories reports whether a and b are the same slice of the same scan, not merely equal ones; nil (no result) is none.
+func sameCategories(a, b []cleanup.Category) bool {
+	if len(a) != len(b) || (a == nil) != (b == nil) {
+		return false
+	}
+	return len(a) == 0 || &a[0] == &b[0]
 }
 
 // ProjectKey is the key of the 开发者 project id among the open rows (Kept.Open), apart from the categories'.
