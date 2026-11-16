@@ -187,6 +187,8 @@ func listBox(cx *core.Scope, s *State, narrow func() bool) core.Node {
 			return i
 		},
 		Selection: s.Picked,
+		// A tap on a touch screen only picks the app; asking to uninstall it takes a second.
+		TapSelects: true,
 		OnActivate: func(i int) {
 			if id := id(i); id != "" {
 				s.UninstallApp(id)
