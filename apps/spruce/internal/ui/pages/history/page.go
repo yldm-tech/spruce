@@ -51,7 +51,7 @@ func Page(cx *core.Scope) core.Node {
 	}}
 
 	return core.Group{
-		kit.Page{Header: header, Children: []core.Node{loadErr, empty, content}},
+		kit.Page{ScrollKey: nav.History, Header: header, Children: []core.Node{loadErr, empty, content}},
 		shared.ClearHistoryDialog{Open: clearing.Get, Count: func() int { return len(s.Runs.Get()) }, OnClose: func() { clearing.Set(false) }, ReturnFocus: clearRef},
 	}
 }
@@ -123,20 +123,14 @@ func rowTitle(s string) core.Text {
 const enterRows = 12
 
 func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core.Node {
-	open := core.NewSignal(cx, run.ID == s.Opened.GetUntracked())
-	// GoHistory asking for this run opens it, also while the page is open.
-	cx.Effect(func() {
-		if s.Opened.Get() == run.ID {
-			cx.Untrack(func() { open.Set(true) })
-		}
-	})
+	open := func() bool { return s.IsOpen(run.ID) }
 	meta := KindMeta(run.Kind)
 	title := RunTitle(run)
 	summary := RunSummary(run)
 	reduce := cx.Env().ReduceMotion
 	head := core.View{Role: core.RoleButton, Label: title + "，" + summary + "，" + Clock(run.StartedAt, false), TestID: "run-" + run.ID + "-head",
-		Expanded: open.Get,
-		OnPress:  func(core.PressEvent) { open.Update(func(v bool) bool { return !v }) },
+		Expanded: open,
+		OnPress:  func(core.PressEvent) { s.SetOpen(run.ID, !s.open.GetUntracked()[run.ID]) },
 		Style: core.Style{Position: core.Absolute, Left: core.Pt(0), Top: core.Pt(0), Right: core.Pt(0), Bottom: core.Pt(0), Cursor: core.CursorPointer,
 			Hover:        &core.Style{Background: kit.SurfaceRowHover},
 			FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: -2, OutlineColor: kit.ColorText}}}
@@ -179,13 +173,13 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 				if !reduce() {
 					st.Transition = core.Transition{Duration: 150_000_000, Easing: core.Ease, Properties: core.TransitionTransform}
 				}
-				if open.Get() {
+				if open() {
 					st.Transform.Rotate = 90
 				}
 				return st
 			}, Children: []core.Node{kit.Glyph{Name: "chevron-right", Size: 16, Color: core.CurrentColor}}},
 		}}
-	details := core.Show{When: open.Get, Then: func(*core.Scope) core.Node {
+	details := core.Show{When: open, Then: func(*core.Scope) core.Node {
 		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{runDetails(s, run)}}
 	}}
 	// The first rows come in one after another; the ones further down, out of view, just show.

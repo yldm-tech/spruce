@@ -77,6 +77,8 @@ type page struct {
 type options struct {
 	overview *storefake.Overview
 	before   func(n *nav.Navigator)
+	// kept mounts the page as the shell does, with Provide, and only while the navigator is on 操作历史, so a test can leave it and come back.
+	kept bool
 }
 
 func start(t *testing.T, svc *historyfake.Service) *page { return startWith(t, svc, options{}) }
@@ -95,8 +97,17 @@ func startWith(t *testing.T, svc *historyfake.Service, o options) *page {
 			o.before(p.nav)
 		}
 		nav.Key.Provide(cx, p.nav)
-		history.DepsKey.Provide(cx, history.Deps{Catalog: catalog})
-		return history.Page(cx)
+		if !o.kept {
+			history.DepsKey.Provide(cx, history.Deps{Catalog: catalog})
+			return history.Page(cx)
+		}
+		history.Provide(cx, history.Deps{Catalog: catalog})
+		return core.Dynamic(func(*core.Scope) core.Node {
+			if p.nav.Current() != nav.History {
+				return core.Text{Content: "elsewhere"}
+			}
+			return core.Func(history.Page)
+		})
 	}, nsgotest.Size(1052, 820))
 	return p
 }
@@ -225,6 +236,36 @@ func TestFiltersByTheKindsPresent(t *testing.T) {
 	p.Find("id:history-total >> text:" + format.Bytes(1_500_000_000))
 	p.Press("id:chip-all")
 	p.WaitUntil(wait, func() bool { return len(p.rows("role:region")) == 3 })
+}
+
+// The filter and the runs shown open survive going to another page and back; a GoHistory request made meanwhile still wins.
+func TestFilterAndOpenRunsOutliveTheVisit(t *testing.T) {
+	p := startWith(t, historyfake.New(runs()...), options{kept: true})
+	p.WaitFor("id:chip-uninstall", wait)
+	p.Press("id:chip-uninstall")
+	p.Press("id:run-u1-head")
+	p.WaitFor("id:run-u1 >> id:run-details", wait)
+	away := func() {
+		p.Post(func() { p.nav.Go(nav.Space) })
+		p.WaitFor("text:elsewhere", wait)
+	}
+	away()
+	p.Post(func() { p.nav.Go(nav.History) })
+	p.WaitFor("id:run-u1 >> id:run-details", wait)
+	if got := p.rows("role:region"); !reflect.DeepEqual(got, []string{"u1"}) {
+		t.Errorf("rows %v after coming back", got)
+	}
+	if !p.Find("id:chip-uninstall").Props.Pressed {
+		t.Error("应用卸载 is not the pressed chip")
+	}
+
+	away()
+	p.Post(func() { p.nav.GoHistory("", "j1") })
+	p.WaitFor("id:run-j1 >> id:run-details", wait)
+	if got := p.rows("role:region"); len(got) != 3 {
+		t.Errorf("rows %v after a request for every kind", got)
+	}
+	p.Find("id:run-u1 >> id:run-details")
 }
 
 func TestRefreshesWhenARunIsRecorded(t *testing.T) {
