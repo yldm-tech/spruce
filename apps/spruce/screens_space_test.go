@@ -63,7 +63,17 @@ func TestScreensSpace(t *testing.T) {
 	})
 	a.Screenshot("space-scanning-disk")
 	a.Key("Escape")
+	// The stopped scan ends once the service returns; a location pressed before that, or while the start screen fades in, starts nothing.
+	a.WaitUntil(wait, func() bool {
+		if !a.Exists("id:space-scanning") {
+			return true
+		}
+		a.Advance(20 * time.Millisecond)
+		return false
+	})
 	a.WaitFor("id:target-home", wait)
+	a.Advance(time.Second)
+	a.Settle()
 
 	a.Press("id:target-home")
 	a.WaitUntil(wait, func() bool {
