@@ -7,11 +7,10 @@ import (
 	"github.com/nsgo-dev/nsgo/desktop"
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
-	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/kit"
 )
 
-// A right click on a row shows its menu where the pointer is; 拷贝路径 fills the clipboard and 在访达中显示 reveals the row.
+// A right click on a row shows its menu where the pointer is; 拷贝路径 fills the clipboard and the reveal item, named after the file manager it is given, reveals the row.
 func TestRowMenu(t *testing.T) {
 	const path = "/Users/demo/Library/Caches/com.example"
 	reveals := 0
@@ -19,7 +18,7 @@ func TestRowMenu(t *testing.T) {
 		return core.View{Style: core.Style{Width: core.Pt(400), Padding: core.All(20)}, Children: []core.Node{
 			core.View{TestID: "row", Style: core.Style{Height: core.Pt(40)},
 				OnContextMenu: kit.RowMenu(cx, func() []desktop.MenuItem {
-					return []desktop.MenuItem{kit.RevealItem(func() { reveals++ }), kit.CopyPathItem(cx, path)}
+					return []desktop.MenuItem{kit.RevealItem("资源管理器", func() { reveals++ }), kit.CopyPathItem(cx, path)}
 				})},
 			core.View{TestID: "empty", Style: core.Style{Height: core.Pt(40)},
 				OnContextMenu: kit.RowMenu(cx, func() []desktop.MenuItem { return nil })},
@@ -31,7 +30,7 @@ func TestRowMenu(t *testing.T) {
 	for _, it := range a.PopupMenu {
 		labels = append(labels, it.Label)
 	}
-	if len(labels) != 2 || labels[0] != "在"+format.FileManagerName()+"中显示" || labels[1] != "拷贝路径" {
+	if len(labels) != 2 || labels[0] != "在资源管理器中显示" || labels[1] != "拷贝路径" {
 		t.Fatalf("menu %q", labels)
 	}
 	if a.PopupAt.Y < 20 || a.PopupAt.Y > 60 {
@@ -42,7 +41,7 @@ func TestRowMenu(t *testing.T) {
 		t.Errorf("clipboard %q", a.Clipboard)
 	}
 	a.RightClick("id:row")
-	a.ChoosePopup("在" + format.FileManagerName() + "中显示")
+	a.ChoosePopup("在资源管理器中显示")
 	if reveals != 1 {
 		t.Errorf("reveals %d", reveals)
 	}
