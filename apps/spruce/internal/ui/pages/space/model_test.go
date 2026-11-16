@@ -3,12 +3,12 @@ package space
 import (
 	"encoding/json"
 	"os"
-	"runtime"
 	"testing"
 	"time"
 
 	"spruce/apps/spruce/internal/app"
 	"spruce/apps/spruce/internal/engine/growth"
+	"spruce/apps/spruce/internal/ui/pages/space/spacefake"
 	"spruce/apps/spruce/internal/ui/store"
 )
 
@@ -62,7 +62,7 @@ func TestVolumeUsageAndFileCount(t *testing.T) {
 	if u.Used != 380e9 || u.Share != 0.76 {
 		t.Errorf("usage %+v", u)
 	}
-	if runtime.GOOS != "windows" && u.Text != "可用 120 GB，共 500 GB" {
+	if want := "可用 " + spacefake.Size(120e9) + "，共 " + spacefake.Size(500e9); u.Text != want {
 		t.Errorf("usage text %q", u.Text)
 	}
 	if got := UsedText(u.Share); got != "已用 76%" {
@@ -199,27 +199,29 @@ func TestLayoutTreemapMatchesD3(t *testing.T) {
 
 func TestTrashToast(t *testing.T) {
 	moved := app.SpaceTrashResult{Trashed: 3.1e9, Items: 1, Failed: []app.SpaceFailure{}, RunID: "run-1", Undoable: true}
+	movedText := "已移到" + spacefake.Trash + " " + spacefake.Size(3.1e9)
+	restore := "，需要时可以在" + spacefake.Trash + "里还原"
 	cases := []struct {
 		name string
 		res  app.SpaceTrashResult
 		undo bool
 		want store.Toast
 	}{
-		{"undoable", moved, true, store.Toast{Text: "已移到废纸篓 3.1 GB", UndoRun: "run-1", Duration: 10 * time.Second}},
+		{"undoable", moved, true, store.Toast{Text: movedText, UndoRun: "run-1", Duration: 10 * time.Second}},
 		{"some not undoable", with(moved, func(r *app.SpaceTrashResult) { r.NotUndoable = 1 }), true,
-			store.Toast{Text: "已移到废纸篓 3.1 GB，其中 1 项不能撤销", UndoRun: "run-1", Duration: 10 * time.Second}},
+			store.Toast{Text: movedText + "，其中 1 项不能撤销", UndoRun: "run-1", Duration: 10 * time.Second}},
 		{"none undoable", with(moved, func(r *app.SpaceTrashResult) { r.NotUndoable, r.Undoable = 1, false }), true,
-			store.Toast{Text: "已移到废纸篓 3.1 GB，其中 1 项不能撤销", Duration: 10 * time.Second}},
+			store.Toast{Text: movedText + "，其中 1 项不能撤销", Duration: 10 * time.Second}},
 		{"some left", with(moved, func(r *app.SpaceTrashResult) {
 			r.Failed = []app.SpaceFailure{{Path: "/a", Reason: "x"}, {Path: "/b", Reason: "y"}}
 		}), true,
-			store.Toast{Text: "已移到废纸篓 3.1 GB，2 项未能处理", UndoRun: "run-1", ViewRun: "run-1", Duration: 10 * time.Second}},
+			store.Toast{Text: movedText + "，2 项未能处理", UndoRun: "run-1", ViewRun: "run-1", Duration: 10 * time.Second}},
 		{"recycle bin", with(moved, func(r *app.SpaceTrashResult) { r.Undoable = false }), false,
-			store.Toast{Text: "已移到废纸篓 3.1 GB，需要时可以在废纸篓里还原", Duration: 6 * time.Second}},
+			store.Toast{Text: movedText + restore, Duration: 6 * time.Second}},
 		{"recycle bin, some left", with(moved, func(r *app.SpaceTrashResult) {
 			r.Undoable, r.Failed = false, []app.SpaceFailure{{Path: "/a", Reason: "x"}}
 		}), false,
-			store.Toast{Text: "已移到废纸篓 3.1 GB，需要时可以在废纸篓里还原", ViewRun: "run-1", Duration: 6 * time.Second}},
+			store.Toast{Text: movedText + restore, ViewRun: "run-1", Duration: 6 * time.Second}},
 	}
 	for _, c := range cases {
 		if got := TrashToast(c.res, c.undo); got != c.want {
@@ -251,14 +253,14 @@ func TestGrowthText(t *testing.T) {
 		}
 	}
 	g := growth.Growth{Path: "/Users/me/Library/Caches/com.apple.Safari", Before: 1e9, After: 7e9, Since: now.Add(-5 * 24 * time.Hour)}
-	if got := GrowthSentence(g, now); got != "从周二到现在涨了 6 GB" {
+	if got := GrowthSentence(g, now); got != "从周二到现在涨了 "+spacefake.Size(6e9) {
 		t.Errorf("sentence %q", got)
 	}
 	g.AtLeast = true
-	if got := GrowthSentence(g, now); got != "从周二到现在至少涨了 6 GB" {
+	if got := GrowthSentence(g, now); got != "从周二到现在至少涨了 "+spacefake.Size(6e9) {
 		t.Errorf("sentence %q", got)
 	}
-	if got := GrowthName(g, "/Users/me"); got != "~/Library/Caches/com.apple.Safari" {
+	if got := GrowthName(g, "/Users/me"); got != spacefake.Native("~/Library/Caches/com.apple.Safari") {
 		t.Errorf("name %q", got)
 	}
 	if got := GrowthName(growth.Growth{Path: "/Users/me", Label: ""}, "/Users/me"); got != "~" {

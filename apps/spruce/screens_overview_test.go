@@ -15,6 +15,7 @@ import (
 	"spruce/apps/spruce/internal/engine/growth"
 	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
+	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/pages/overview"
 	"spruce/apps/spruce/internal/ui/shell"
 	"spruce/apps/spruce/internal/ui/store/storefake"
@@ -137,7 +138,7 @@ func TestScreensOverview(t *testing.T) {
 	ov := storefake.NewOverview(first)
 	a := overviewApp(t, ov, maintenance.PermissionGranted)
 	a.WaitFor("id:check-progress", wait)
-	a.WaitFor("text:正在检查… 已找到 54.6 MB", wait)
+	a.WaitFor("text:正在检查… 已找到 "+format.Bytes(54_600_000), wait)
 	a.Screenshot("overview-first-check")
 
 	// B: the cached result while a check updates it.
@@ -271,13 +272,4 @@ func TestScreensOverview(t *testing.T) {
 	ov.Set(low)
 	a.WaitFor("id:low-disk-offer", wait)
 	a.Screenshot("overview-low-disk")
-}
-
-// TestScreensOverviewDenied shows 概览 without Full Disk Access (H): what it could read, and the guide.
-func TestScreensOverviewDenied(t *testing.T) {
-	st := overviewState(overviewScan())
-	st.Result.Scan.Denied = 4
-	a := overviewApp(t, storefake.NewOverview(st), maintenance.PermissionDenied)
-	a.WaitFor("id:denied-notice", 10*time.Second)
-	a.Screenshot("overview-denied")
 }

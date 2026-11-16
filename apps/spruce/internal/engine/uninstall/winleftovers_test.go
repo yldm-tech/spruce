@@ -3,7 +3,9 @@ package uninstall
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -64,7 +66,10 @@ func TestWindowsLeftovers(t *testing.T) {
 
 	// Names that are not one specific folder match nothing; relative roots are ignored.
 	for _, name := range []string{"Microsoft", "Go", "Foo\\Editor", "..", "Packages", "Foo: Editor"} {
-		mkdir(t, filepath.Join(appData, "Bar", name))
+		// Windows refuses a colon in a folder name, so there that folder cannot exist; the name must match nothing all the same.
+		if runtime.GOOS != "windows" || !strings.Contains(name, ":") {
+			mkdir(t, filepath.Join(appData, "Bar", name))
+		}
 		if got := WindowsLeftovers(appData, local, Entry{DisplayName: name, Publisher: "Bar"}); len(got) != 0 {
 			t.Errorf("name %q: %+v", name, got)
 		}
