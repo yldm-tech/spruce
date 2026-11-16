@@ -253,20 +253,24 @@ func TestRestoreSummaryNoteAndToast(t *testing.T) {
 func TestDetailPath(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator)+"Users", "me")
 	abs := filepath.Join(string(filepath.Separator)+"Library", "Logs", "x.log")
-	for line, want := range map[string]string{
-		"~/Library/Caches/x：文件正在使用，已跳过": filepath.Join(home, "Library", "Caches", "x"),
-		abs + "：没有权限":                   abs,
-		"系统缓存：已清理 34 项":                 "",
-		"另有 3 项未能处理":                    "",
-		"~：奇怪":                          home,
-		"~other/x：不是家目录":                "",
-		"已移到废纸篓：~/Movies/a.mov":         filepath.Join(home, "Movies", "a.mov"),
+	type want struct {
+		path  string
+		moved bool
+	}
+	for line, w := range map[string]want{
+		"~/Library/Caches/x：文件正在使用，已跳过": {path: filepath.Join(home, "Library", "Caches", "x")},
+		abs + "：没有权限":                   {path: abs},
+		"系统缓存：已清理 34 项":                 {},
+		"另有 3 项未能处理":                    {},
+		"~：奇怪":                          {path: home},
+		"~other/x：不是家目录":                {},
+		"已移到废纸篓：~/Movies/a.mov":         {path: filepath.Join(home, "Movies", "a.mov"), moved: true},
 	} {
-		if got := DetailPath(line, home); got != want {
-			t.Errorf("DetailPath(%q) = %q, want %q", line, got, want)
+		if path, moved := DetailPath(line, home); path != w.path || moved != w.moved {
+			t.Errorf("DetailPath(%q) = %q, %v, want %q, %v", line, path, moved, w.path, w.moved)
 		}
 	}
-	if got := DetailPath("~/x：y", ""); got != "" {
+	if got, _ := DetailPath("~/x：y", ""); got != "" {
 		t.Errorf("without a home %q", got)
 	}
 }

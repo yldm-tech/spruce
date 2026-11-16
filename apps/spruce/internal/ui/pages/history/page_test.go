@@ -307,6 +307,40 @@ func TestDetailsSelectAndOfferTheirPaths(t *testing.T) {
 	}
 }
 
+// A line naming where an item was moved from offers only 拷贝路径 while the run can put the item back, since it is in the Trash; once it cannot, the item may be back in its place, so 在访达中显示 returns.
+func TestMovedItemsAreNotRevealedFromTheTrash(t *testing.T) {
+	moved := span("s1", enginehist.KindSpace, daysAgo(0, 8, 0, 0), 2)
+	moved.Summary = &enginehist.Totals{Trashed: 4_000_000_000, Items: 1}
+	moved.Details = []string{"已移到废纸篓：~/Movies/a.mov"}
+	svc := historyfake.New(moved)
+	svc.SetRestorable("s1")
+	p := startWith(t, svc, options{files: &historyfake.Files{}, mac: true})
+	p.WaitFor("id:run-s1-restore", wait)
+	p.Press("id:run-s1-head")
+	p.WaitFor("id:run-s1 >> id:run-details", wait)
+	menu := func() []string {
+		p.RightClick("id:run-line-0")
+		var labels []string
+		for _, it := range p.PopupMenu {
+			labels = append(labels, it.Label)
+		}
+		return labels
+	}
+	if got := menu(); !reflect.DeepEqual(got, []string{"拷贝路径"}) {
+		t.Errorf("menu while the run can put it back %q", got)
+	}
+	p.ChoosePopup("拷贝路径")
+	if p.Clipboard != "/Users/me/Movies/a.mov" {
+		t.Errorf("clipboard %q", p.Clipboard)
+	}
+	svc.SetRestorable()
+	p.Post(p.stores.History.Bump)
+	p.WaitForGone("id:run-s1-restore", wait)
+	if got := menu(); len(got) != 2 {
+		t.Errorf("menu once the run cannot put it back %q", got)
+	}
+}
+
 // A run 放回原处 can put back offers it on a right click too; another run has no menu.
 func TestRestoreFromTheRowMenu(t *testing.T) {
 	svc := historyfake.New(runs()...)

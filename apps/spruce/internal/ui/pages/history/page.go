@@ -220,7 +220,7 @@ func runDetails(cx *core.Scope, s *State, run enginehist.Run) core.Node {
 		deps := DepsKey.Use(cx)
 		lines := make([]core.Node, len(run.Details))
 		for i, line := range run.Details {
-			lines[i] = detailLine(cx, s, deps, line, "run-line-"+strconv.Itoa(i))
+			lines[i] = detailLine(cx, s, deps, run.ID, line, "run-line-"+strconv.Itoa(i))
 		}
 		body = core.View{Style: list, TestID: "run-lines", Children: lines}
 	}
@@ -232,11 +232,11 @@ func runDetails(cx *core.Scope, s *State, run enginehist.Run) core.Node {
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
 }
 
-// detailLine is one line of a run's details. One that names a path (DetailPath) reveals it or copies it from its right-click menu; a reveal that fails says so in the toast.
-func detailLine(cx *core.Scope, s *State, deps Deps, line, testID string) core.Node {
+// detailLine is one line of the details of the run with ID id. One that names a path (DetailPath) reveals it or copies it from its right-click menu; a reveal that fails says so in the toast. A path something was moved from is not revealed while the run can put it back, since the item is then in the Trash.
+func detailLine(cx *core.Scope, s *State, deps Deps, id, line, testID string) core.Node {
 	text := core.Text{Content: line, TestID: testID, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
 		Color: kit.ColorTextSecondary}}
-	path := DetailPath(line, deps.Home)
+	path, moved := DetailPath(line, deps.Home)
 	if path == "" {
 		return text
 	}
@@ -250,6 +250,9 @@ func detailLine(cx *core.Scope, s *State, deps Deps, line, testID string) core.N
 			})
 	}
 	return core.View{OnContextMenu: kit.RowMenu(cx, func() []desktop.MenuItem {
+		if moved && core.Untracked(cx, func() bool { return s.CanRestore(id) }) {
+			return []desktop.MenuItem{kit.CopyPathItem(cx, path)}
+		}
 		return []desktop.MenuItem{kit.RevealItem(format.FileManagerName(), reveal), kit.CopyPathItem(cx, path)}
 	}), Children: []core.Node{text}}
 }

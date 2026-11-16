@@ -218,16 +218,17 @@ func CountText(n, retentionDays int, known bool) string {
 	return "共 " + strconv.Itoa(n) + " 条记录，保留最近 " + strconv.Itoa(retentionDays) + " 天"
 }
 
-// DetailPath returns the file or folder a detail line names, as a whole path with ~ for home: the path a line starts with, such as 「~/Library/Caches/x：文件正在使用，已跳过」, or the one it ends with, such as 「已移到废纸篓：~/Movies/a.mov」; "" when it names none.
-func DetailPath(line, home string) string {
+// DetailPath returns the file or folder a detail line names, as a whole path with ~ for home: the path a line starts with, such as 「~/Library/Caches/x：文件正在使用，已跳过」, or the one it ends with, such as 「已移到废纸篓：~/Movies/a.mov」, where moved is set since the line names the place the item was moved from; "" when it names none.
+func DetailPath(line, home string) (path string, moved bool) {
 	before, after, ok := strings.Cut(line, "：")
 	if !ok {
-		return ""
+		return "", false
 	}
 	if p := wholePath(before, home); p != "" {
-		return p
+		return p, false
 	}
-	return wholePath(after, home)
+	p := wholePath(after, home)
+	return p, p != ""
 }
 
 // wholePath returns p, written with ~ for home, as a whole path; "" when p is not a path.
