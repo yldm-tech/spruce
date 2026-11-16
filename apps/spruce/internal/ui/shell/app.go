@@ -29,6 +29,7 @@ func App(d Deps) func(app *core.Scope) {
 		stores := store.New(app, ctx, d.Stores)
 		store.Key.Provide(app, stores)
 		kit.BlockerKey.Provide(app, stores.Block)
+		kit.ToastShownKey.Provide(app, func() bool { return stores.Toasts.Current() != nil })
 		providePages(app, d)
 		// The navigator lives with the app, not the window: the tray, the notifications and a window opened again all go through it.
 		navigator := nav.NewNavigator(app, cmp.Or(d.Start, nav.Start))
