@@ -1,0 +1,47 @@
+{
+  "og": {
+    "en": "c0edb902d2c54dc9da50d7d0ea6e986dca8b2b3c70f44506737a0a848ff2b7f4",
+    "zh-CN": "0c63877bc902975aea8a87adc9292d47e1ce7864972eb000216d31dc5e0b79a0",
+    "zh-TW": "dcdc1bda896a499c1fdce20e12c13858b8abf1d00c0f2b9e8926ab9d43d4d566",
+    "ja": "9e2dc5d4e45ffe913dbfd76423be1a7283cf75e94bd14ace38be897add5e4981",
+    "ko": "9d7f0dbe92221e4eae121d3b8682caa84b7d3184e781a744a5a69106797aa6f0"
+  },
+  "shots": {
+    "overview-ready": {
+      "avif": "b61d479d931c8a0c1062607398e780f683d593afa5c3114bd5a54f486eff555a",
+      "webp": "099cdc4fc6daac1fd20e0a9a2ccc11223354e27148d3a27d882b32a96987c593"
+    },
+    "overview-toast-undo": {
+      "avif": "2733c17442e6ecf86917b0ee3db93b0d14bc6fc41eec9a207f1177b00f821765",
+      "webp": "93b855c1615ee27b84a1759236377f7dda97a038d7b6e0480f756b1cff977dcd"
+    },
+    "history-restore": {
+      "avif": "ecb91a97ca77cf707e44c3b6c6ca319c3689c97daf4375d1370b739e82c741c8",
+      "webp": "8cd233780fdadb04d0840dc6240ddb179c75756caae68b6d855cff4357cc6cf9"
+    },
+    "space-results": {
+      "avif": "425e8704617a7dabf67b88dcb31b94be2988af6cd2f30e67fb20c8470e24e91e",
+      "webp": "43422b40a9519e96de9dbc7a9af3a6b3336bf7c25d6530aa7850c0a27d93d5a1"
+    },
+    "space-growth-7d": {
+      "avif": "c88c867ae68222a9d4302a486cd71bd0462c599b8d57967e2494b30ccbf11355",
+      "webp": "d13931e284ea6b8ee14acb1f1662b0882ed4235b90809b9ea0157e1d3c2ef62e"
+    },
+    "uninstall-detail": {
+      "avif": "85dc6624e4633dfc71f5222169b0ed2360debac311893ff907398b93a3a26298",
+      "webp": "ea1f43c3abe4110c13c60a55be6cf50ecf69cf6bc76cf9dd9de3ede003abd84e"
+    },
+    "settings-auto-on": {
+      "avif": "718a6a5882f9d2e7fe8bf8f59b59ee62ff27ee7c066b784b5eab763fc8bab96c",
+      "webp": "faef7aff0017387ade5a189edc53f89df619ad04f744b60e83659ca5a7d1cbad"
+    },
+    "dev-projects": {
+      "avif": "19c5cff60df26c790a6c5cb30253a1b385aaadcffb3d81d19e8b728921ff9996",
+      "webp": "6dae4fbc10e8146b25eac193024757854626ff485823798ad8fa9ea4bd4e3bd6"
+    },
+    "health-idle": {
+      "avif": "d39cef425de509b35fd58285709464d673923d22fa1512af49ef2a1deef9c1d2",
+      "webp": "415c8048a91984aa68424ba2fddb853cb7532238b0ab791590035e32f75ca83e"
+    }
+  }
+}
