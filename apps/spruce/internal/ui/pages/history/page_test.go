@@ -282,6 +282,7 @@ func TestFilterAndOpenRunsOutliveTheVisit(t *testing.T) {
 func TestDetailsSelectAndOfferTheirPaths(t *testing.T) {
 	files := &historyfake.Files{}
 	p := startWith(t, historyfake.New(runs()...), options{files: files, mac: true})
+	p.WaitFor("id:run-j1-head", wait)
 	p.Press("id:run-j1-head")
 	p.WaitFor("id:run-j1 >> id:run-details", wait)
 	if !p.Find("id:run-j1 >> id:run-details").Props.SelectionArea {
