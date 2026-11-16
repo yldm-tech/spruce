@@ -101,15 +101,6 @@ func categoryByID(res cleanup.ScanResult, id string) *cleanup.Category {
 	return nil
 }
 
-func itemByName(c *cleanup.Category, name string) *cleanup.Item {
-	for i := range c.Items {
-		if filepath.Base(c.Items[i].Path) == name || strings.HasSuffix(c.Items[i].Path, string(filepath.Separator)+name) {
-			return &c.Items[i]
-		}
-	}
-	return nil
-}
-
 func exists(p string) bool {
 	_, err := os.Lstat(p)
 	return err == nil
