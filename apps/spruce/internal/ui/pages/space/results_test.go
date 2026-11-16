@@ -254,7 +254,7 @@ func TestCarelessMovesAskFirst(t *testing.T) {
 	}
 }
 
-// TestChosenLargeFilesMoveTogether: rows of 大文件 are chosen with their checkboxes (or Cmd+A), the action bar says how many and how much, and its 移到废纸篓 moves them in one go with one toast.
+// TestChosenLargeFilesMoveTogether: rows of 大文件 are chosen with their checkboxes (or Cmd+A), the action bar says how many and how much, and its 移到废纸篓 moves them in one go with one toast, confirmed first since together they come to more than 1 GB.
 func TestChosenLargeFilesMoveTogether(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	trashed(svc)
@@ -272,6 +272,12 @@ func TestChosenLargeFilesMoveTogether(t *testing.T) {
 	p.Find(`id:page-footer >> text:"2 项"`)
 	p.Find(`id:page-footer >> text:"5 GB"`)
 	p.Press("id:trash-chosen")
+	p.WaitFor("id:trash-confirm", wait)
+	p.Find("id:trash-confirm >> text:将把 2 项（5 GB）移到废纸篓。移走后可以撤销。")
+	if len(svc.Trashes()) != 0 {
+		t.Fatalf("moved before the confirmation: %v", svc.Trashes())
+	}
+	p.Press("id:confirm-ok")
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
 	if got := svc.Trashes()[0]; !slices.Equal(got, []string{spacefake.ISO.Path, spacefake.Data.Path}) {
 		t.Errorf("trash %v", got)

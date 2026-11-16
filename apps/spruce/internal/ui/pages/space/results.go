@@ -43,7 +43,7 @@ type Notice struct {
 	Text string
 }
 
-// A move to the Trash that can be undone still asks first for what is easy to move by mistake: a folder from bigFolder up or right under the scanned location, and a file changed within recentFile, which may be in use.
+// A move to the Trash that can be undone still asks first for what is easy to move by mistake: a folder from bigFolder up or right under the scanned location, a file changed within recentFile, which may be in use, and several entries that come to bigFolder or more together.
 const (
 	bigFolder  = 1e9
 	recentFile = time.Hour
@@ -384,7 +384,7 @@ func (r *Results) RequestTrash(entries ...app.SpaceEntry) {
 	entries = slices.DeleteFunc(slices.Clone(entries), func(e app.SpaceEntry) bool { return e.Locked != "" || IsGroup(e) })
 	r.Notice.Set(Notice{})
 	now := time.Now()
-	if r.undoable() && !slices.ContainsFunc(entries, func(e app.SpaceEntry) bool { return r.needsCare(e, now) }) {
+	if r.undoable() && !bulky(entries) && !slices.ContainsFunc(entries, func(e app.SpaceEntry) bool { return r.needsCare(e, now) }) {
 		r.trash(entries)
 		return
 	}
@@ -403,6 +403,18 @@ func (r *Results) needsCare(e app.SpaceEntry, now time.Time) bool {
 		return !e.ModTime.IsZero() && now.Sub(e.ModTime) < recentFile
 	}
 	return false
+}
+
+// bulky reports whether entries are several that come to bigFolder or more together, as many large files chosen at once do.
+func bulky(entries []app.SpaceEntry) bool {
+	if len(entries) < 2 {
+		return false
+	}
+	var size int64
+	for _, e := range entries {
+		size += e.Size
+	}
+	return size >= bigFolder
 }
 
 // ConfirmMessage is what the confirmation says about entries: what moves and how much, a file changed lately, and how to get it back.
