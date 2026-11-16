@@ -188,3 +188,12 @@ func TestScanAndCleanDarwin(t *testing.T) {
 		t.Errorf("empty request = %v", err)
 	}
 }
+
+func itemByName(c *cleanup.Category, name string) *cleanup.Item {
+	for i := range c.Items {
+		if filepath.Base(c.Items[i].Path) == name || strings.HasSuffix(c.Items[i].Path, string(filepath.Separator)+name) {
+			return &c.Items[i]
+		}
+	}
+	return nil
+}
