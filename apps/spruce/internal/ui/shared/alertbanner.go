@@ -54,7 +54,7 @@ func (AlertBanner) Render(cx *core.Scope) core.Node {
 	failed := core.NewSignal(cx, false)
 	m := Monitor()
 	return core.Show{When: func() bool { return len(alerts.List()) > 0 }, Then: func(*core.Scope) core.Node {
-		// The texts update once more as the last alert goes, before the Show takes the banner away (NSGo issue pending: a Show's branch reruns its text functions after When turned false).
+		// The texts update once more as the last alert goes, before the Show takes the banner away (https://github.com/nsgo-dev/nsgo/issues/400: a Show's branch reruns its text functions after When turned false).
 		top := func() health.Alert {
 			if list := alerts.List(); len(list) > 0 {
 				return list[0]

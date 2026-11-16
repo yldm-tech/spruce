@@ -92,7 +92,7 @@ func (l layer) render(cx *core.Scope) core.Node {
 		// base.Dialog reports Escape here before it would close; NoCloseOnEscape keeps it open, so onClose decides.
 		OnCancel: l.onClose,
 		OnOpen: func() {
-			// On macOS Ref.Focus cannot move the keyboard to a button (NSGo issue pending: ItemFocus only focuses text fields on macOS), so a search field the user typed in would keep it under the layer.
+			// On macOS Ref.Focus cannot move the keyboard to a button (https://github.com/nsgo-dev/nsgo/issues/348: ItemFocus only focuses text fields on macOS), so a search field the user typed in would keep it under the layer.
 			cx.DismissKeyboard()
 			if l.initial != nil {
 				l.initial.Focus()
@@ -119,7 +119,7 @@ func (l layer) render(cx *core.Scope) core.Node {
 	}
 }
 
-// returnKey binds Return to fn while it is mounted, on macOS only. There Ref.Focus cannot put the keyboard's focus on a button (NSGo issue pending: ItemFocus only focuses text fields on macOS), so the button a dialog focuses as it opens never has it and Return would do nothing; a focused button the user tabbed to still takes Return itself, since macOS leaves Return to a focused pressable before the keymap. Windows focuses the button and gives the keymap Return first, even over a focused button, so binding it there would press the default when the user tabbed to 取消.
+// returnKey binds Return to fn while it is mounted, on macOS only. There Ref.Focus cannot put the keyboard's focus on a button (https://github.com/nsgo-dev/nsgo/issues/348: ItemFocus only focuses text fields on macOS), so the button a dialog focuses as it opens never has it and Return would do nothing; a focused button the user tabbed to still takes Return itself, since macOS leaves Return to a focused pressable before the keymap. Windows focuses the button and gives the keymap Return first, even over a focused button, so binding it there would press the default when the user tabbed to 取消.
 func returnKey(fn func()) core.Node {
 	return core.Func(func(cx *core.Scope) core.Node {
 		if cx.Env().OS() == core.OSMacOS {
