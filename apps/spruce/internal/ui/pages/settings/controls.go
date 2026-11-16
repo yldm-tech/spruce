@@ -163,7 +163,9 @@ type numberSetting struct {
 	SaveOnLeave func(n int) bool
 	// Disabled, when set, turns the field off and dims its row while it reports true.
 	Disabled func() bool
-	TestID   string
+	// Ref, when set, is the field's, for a dialog Confirm opens to give the focus back to.
+	Ref    *core.Ref
+	TestID string
 }
 
 // Render implements core.Node.
@@ -199,7 +201,7 @@ func (c numberSetting) Render(cx *core.Scope) core.Node {
 			text.Set(nil)
 		}, func() { text.Set(nil) })
 	}
-	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid, Disabled: c.Disabled,
+	field := kit.Field{Label: c.Label, Suffix: c.Unit, TestID: c.TestID + "-field", Invalid: invalid, Disabled: c.Disabled, Ref: c.Ref,
 		Value: func() string {
 			if t := text.Get(); t != nil {
 				return *t

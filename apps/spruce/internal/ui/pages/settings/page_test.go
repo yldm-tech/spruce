@@ -538,6 +538,8 @@ func TestShorterRetentionAsksFirst(t *testing.T) {
 	if got := p.field("retention-days"); got != "180" {
 		t.Errorf("after 取消 the field shows %q", got)
 	}
+	// The keyboard goes back to the field it came from.
+	p.WaitUntil(wait, func() bool { return p.Find("id:retention-days-field").Focused })
 	p.Settle()
 	if n := len(p.svc.Updates()); n != 0 {
 		t.Fatalf("saved %d times after 取消", n)

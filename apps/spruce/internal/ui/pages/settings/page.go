@@ -333,6 +333,7 @@ type retentionAsk struct {
 func (c retentionSetting) Render(cx *core.Scope) core.Node {
 	stores := store.Use(cx)
 	ask := core.NewSignal[*retentionAsk](cx, nil)
+	field := new(core.Ref)
 	// checking is set while the runs are counted, so the blur that follows a Return does not ask twice.
 	checking := false
 	confirm := func(n int, save, revert func()) {
@@ -368,8 +369,9 @@ func (c retentionSetting) Render(cx *core.Scope) core.Node {
 	}
 	return core.Group{
 		numberSetting{Field: FieldRetentionDays, Label: "保留天数", Description: "更早的操作记录会自动删除。", Range: c.Range, Unit: "天", Confirm: confirm,
-			SaveOnLeave: func(n int) bool { return n > core.Untracked(cx, stores.Settings.Value).History.RetentionDays }, TestID: "retention-days"},
-		kit.ConfirmDialog{Open: func() bool { return ask.Get() != nil }, Title: "缩短保留天数？", ConfirmLabel: "删除记录", Danger: true, TestID: "retention-dialog",
+			SaveOnLeave: func(n int) bool { return n > core.Untracked(cx, stores.Settings.Value).History.RetentionDays }, Ref: field, TestID: "retention-days"},
+		kit.ConfirmDialog{Open: func() bool { return ask.Get() != nil }, Title: "缩短保留天数？", ConfirmLabel: "删除记录", Danger: true, ReturnFocus: field,
+			TestID: "retention-dialog",
 			Message: core.Text{ContentFunc: func() string {
 				if a := ask.Get(); a != nil {
 					return RetentionText(a.days, a.drops, format.TrashName())
