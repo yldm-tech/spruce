@@ -88,6 +88,9 @@ type windows struct {
 	end    func()
 }
 
+// away reports whether the main window is out of sight: hidden in the menu bar, or not open.
+func (w *windows) away() bool { return w.hidden || w.host.Main() == nil }
+
 // active reports whether a run is active now (busy).
 func (w *windows) active() bool { return w.busy != nil && w.busy() }
 
@@ -143,19 +146,22 @@ func (w *windows) closing(cancel func()) {
 	}
 }
 
-// Notification IDs the controller posts (app.Notice.ID): low-disk alone, auto-summary followed by the ISO week.
+// Notification IDs: the controller's (app.Notice.ID), low-disk alone and auto-summary followed by the ISO week, and the shell's at the end of a check the menu bar icon started (trayCheck).
 const (
 	noticeLowDisk     = "low-disk"
 	noticeAutoSummary = "auto-summary:"
+	noticeCheck       = "check-done"
 )
 
-// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else, and also while an overlay holds the sidebar.
+// pressed opens what the notification id is about: 概览 for low space when it has something to free, else 空间透视; 概览 for the end of a check; 操作历史 on its 自动清理 filter for the weekly summary; just the window for anything else, and also while an overlay holds the sidebar.
 func (w *windows) pressed(id string, hasRecommendations bool) {
 	switch {
 	case id == noticeLowDisk && hasRecommendations:
 		w.show(nav.Overview)
 	case id == noticeLowDisk:
 		w.show(nav.Space)
+	case id == noticeCheck:
+		w.show(nav.Overview)
 	case strings.HasPrefix(id, noticeAutoSummary):
 		w.show("")
 		if !w.held() {

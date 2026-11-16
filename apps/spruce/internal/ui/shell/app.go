@@ -130,19 +130,20 @@ func openAtLaunch(app *core.Scope, launched func() (atLogin, known bool), stayIn
 	try()
 }
 
-// trayIcon adds the menu bar icon, which lives as long as the app: its tooltip and its icon follow the free space, and its menu (TrayMenu) is made each time it opens. Without the icons (tests) or a platform that has none (headless, and Windows, where NSGo's NewTray answers nil) there is none.
+// trayIcon adds the menu bar icon, which lives as long as the app: its tooltip follows the free space and says when a check runs, its icon the free space, and its menu (TrayMenu) is made each time it opens; its 立即检查 tells how the check ended while the window is hidden (trayCheck). Without the icons (tests) or a platform that has none (headless, and Windows, where NSGo's NewTray answers nil) there is none.
 func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 	if len(d.TrayIcon) == 0 {
 		return
 	}
-	tray := desktop.NewTray(app, desktop.TrayOptions{Icon: d.TrayIcon, Template: true, Tooltip: trayTooltip(nil), Menu: func() []desktop.MenuItem {
+	check := trayCheck(app, stores.Overview, w.away)
+	tray := desktop.NewTray(app, desktop.TrayOptions{Icon: d.TrayIcon, Template: true, Tooltip: trayTooltip(nil, false), Menu: func() []desktop.MenuItem {
 		st := core.Untracked(app, stores.Overview.State)
 		s := TrayState{Disk: st.Disk, Checking: st.Phase == spruceapp.OverviewChecking, HasResult: st.Result != nil,
 			Cleaning: w.active(),
 			RulesOn:  len(rules.Enabled(core.Untracked(app, stores.Settings.Value).Automation)),
 			Open:     func() { w.show("") },
 			Overview: func() { w.show(nav.Overview) },
-			Check:    func() { stores.Overview.CheckNow(nil) },
+			Check:    check,
 			Auto:     w.automation,
 			Quit:     w.quit,
 		}
@@ -155,10 +156,11 @@ func trayIcon(app *core.Scope, d Deps, stores *store.Stores, w *windows) {
 		return
 	}
 	// Each call makes a new NSImage, so only a change is sent.
-	tip, low := trayTooltip(nil), false
+	tip, low := trayTooltip(nil, false), false
 	app.Effect(func() {
-		disk := stores.Overview.State().Disk
-		if t := trayTooltip(disk); t != tip {
+		st := stores.Overview.State()
+		disk := st.Disk
+		if t := trayTooltip(disk, st.Phase == spruceapp.OverviewChecking); t != tip {
 			tip = t
 			tray.SetTooltip(t)
 		}

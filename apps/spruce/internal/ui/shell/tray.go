@@ -64,9 +64,11 @@ func TrayMenu(s TrayState) []desktop.MenuItem {
 	)
 }
 
-// trayTooltip is what shows as the pointer rests on the icon: the free space, or that it is low.
-func trayTooltip(d *app.DiskState) string {
+// trayTooltip is what shows as the pointer rests on the icon: that a check runs (checking), else the free space, or that it is low.
+func trayTooltip(d *app.DiskState, checking bool) string {
 	switch {
+	case checking:
+		return "Spruce · 正在检查…"
 	case d == nil:
 		return "Spruce"
 	case d.Low:

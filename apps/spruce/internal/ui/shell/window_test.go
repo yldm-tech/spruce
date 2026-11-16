@@ -163,6 +163,7 @@ func TestNotificationPressRoutes(t *testing.T) {
 		{"low-disk", true, nav.Overview, false},
 		{"low-disk", false, nav.Space, false},
 		{"auto-summary:2026-W46", true, nav.History, true},
+		{"check-done", false, nav.Overview, false},
 		{"something-else", true, nav.Maintenance, false},
 	} {
 		w, h := newWindows(t, nav.Maintenance, true)
