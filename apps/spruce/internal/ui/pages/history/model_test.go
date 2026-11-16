@@ -260,6 +260,7 @@ func TestDetailPath(t *testing.T) {
 		"另有 3 项未能处理":                    "",
 		"~：奇怪":                          home,
 		"~other/x：不是家目录":                "",
+		"已移到废纸篓：~/Movies/a.mov":         filepath.Join(home, "Movies", "a.mov"),
 	} {
 		if got := DetailPath(line, home); got != want {
 			t.Errorf("DetailPath(%q) = %q, want %q", line, got, want)
