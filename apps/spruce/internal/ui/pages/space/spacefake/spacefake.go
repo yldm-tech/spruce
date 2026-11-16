@@ -5,11 +5,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/ui/format"
 )
+
+// Trash and FileManager are what the page calls the Trash and the file manager on this system (format.TrashName, format.FileManagerName): 废纸篓 and 访达 on macOS, 回收站 and 资源管理器 on Windows. Tests build the texts they expect from them rather than from the macOS words.
+var (
+	Trash       = format.TrashName()
+	FileManager = format.FileManagerName()
+)
+
+// Size is the text the page shows for n bytes on this system (format.Bytes): 1000-based on macOS, so 500e6 is "500 MB", and 1024-based on Windows, where it is "476.8 MB".
+func Size(n int64) string { return format.Bytes(n) }
+
+// Native is a slash-separated fixture path with this system's separator, as the page shows a path it took through path/filepath (a growth row's ~/... name).
+func Native(path string) string { return filepath.FromSlash(path) }
 
 // Service is a fake *app.Space.
 type Service struct {

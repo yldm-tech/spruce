@@ -11,6 +11,7 @@ import (
 	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/engine/growth"
 	"spruce/apps/spruce/internal/engine/maintenance"
+	"spruce/apps/spruce/internal/ui/format"
 	"spruce/apps/spruce/internal/ui/pages/space"
 	"spruce/apps/spruce/internal/ui/pages/space/spacefake"
 	"spruce/apps/spruce/internal/ui/shell"
@@ -48,7 +49,7 @@ func TestScreensSpace(t *testing.T) {
 
 	a.Press("id:target-home")
 	a.WaitUntil(wait, func() bool {
-		if a.Exists("text:已扫描 182,406 个文件 · 61.7 GB") {
+		if a.Exists("text:已扫描 182,406 个文件 · " + format.Bytes(61.7e9)) {
 			return true
 		}
 		a.Advance(20 * time.Millisecond)
@@ -67,7 +68,7 @@ func TestScreensSpace(t *testing.T) {
 	a.Press("id:tab-map")
 	a.WaitFor("id:treemap", wait)
 
-	a.Press(`id:space-list >> role:button "将 archive-004.zip 移到废纸篓"`)
+	a.Press(`id:space-list >> role:button "将 archive-004.zip 移到` + format.TrashName() + `"`)
 	a.WaitFor("id:trash-confirm", wait)
 	a.Screenshot("space-confirm")
 	a.Press("id:confirm-cancel")
@@ -142,7 +143,7 @@ func TestScreensSpaceGrowth(t *testing.T) {
 	without.Children = slices.DeleteFunc(slices.Clone(listing.Children), func(e app.SpaceEntry) bool { return e.ID == spacefake.ISO.ID })
 	svc.SetListing(0, without)
 	svc.TrashResult = app.SpaceTrashResult{Trashed: 3e9, Items: 1, Failed: []app.SpaceFailure{}, Root: root, RunID: "run-1", Undoable: true}
-	a.Press(`id:space-list >> role:button "将 big.iso 移到废纸篓"`)
+	a.Press(`id:space-list >> role:button "将 big.iso 移到` + format.TrashName() + `"`)
 	a.WaitFor("id:toast-undo", wait)
 	a.WaitForGone(`id:space-list >> text:big.iso`, wait)
 	a.Screenshot("space-trash-toast")
