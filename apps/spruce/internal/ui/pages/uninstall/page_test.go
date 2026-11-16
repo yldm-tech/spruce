@@ -457,6 +457,69 @@ func TestUninstallsTheAppWithTheCheckedLeftovers(t *testing.T) {
 	p.WaitUntil(wait, func() bool { return slices.Contains(p.rows(), "Foo") })
 }
 
+// A finished uninstall keeps its target picked until the list comes back, so nothing may ask to uninstall it again meanwhile.
+func TestNothingAsksAgainBeforeTheListComesBack(t *testing.T) {
+	svc := macService()
+	svc.OnRemove = func(context.Context, app.UninstallRequest, func(cleanup.Progress)) (app.UninstallOutcome, error) {
+		return app.UninstallOutcome{App: "Foo", BundleRemoved: true, RunID: "run-1", Undoable: true,
+			Result: uninstallfake.Result(cleanup.CleanResult{Trashed: 100_000_000, Removed: 1})}, nil
+	}
+	p := start(t, svc, uninstall.PlatformMac)
+	p.waitList()
+	p.pick("Foo")
+	p.WaitFor("id:leftovers", wait)
+	release := make(chan struct{})
+	svc.OnApps = func(context.Context) ([]app.UninstallApp, error) {
+		<-release
+		return slices.DeleteFunc(macApps(), func(a app.UninstallApp) bool { return a.ID == "foo" }), nil
+	}
+	p.Key("mod+backspace")
+	p.Press("id:confirm-ok")
+	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text != "" })
+	if p.Enabled("id:uninstall") {
+		t.Error("卸载 is on for the app just uninstalled")
+	}
+	p.Key("mod+backspace")
+	p.Key("enter")
+	if p.Exists("id:confirm") {
+		t.Fatal("asked to uninstall the app just uninstalled")
+	}
+	close(release)
+	p.WaitUntil(wait, func() bool { return slices.Equal(p.rows(), []string{"Bar", "Runner"}) })
+	if got := p.selected(); got != "Runner" {
+		t.Errorf("selected %q", got)
+	}
+}
+
+func TestWindowsAsksNothingBeforeTheListComesBack(t *testing.T) {
+	svc := windowsService()
+	svc.OnRunUninstaller = func(context.Context, string, func(app.UninstallerStatus)) (app.UninstallerOutcome, error) {
+		return app.UninstallerOutcome{Removed: true, Waited: true}, nil
+	}
+	p := start(t, svc, uninstall.PlatformWindows)
+	p.waitList()
+	p.pick("Foo")
+	release := make(chan struct{})
+	svc.OnApps = func(context.Context) ([]app.UninstallApp, error) {
+		<-release
+		return []app.UninstallApp{}, nil
+	}
+	p.Press("id:uninstall")
+	p.Press("id:confirm-ok")
+	p.WaitFor("id:done", wait)
+	p.Press("id:done-close")
+	p.WaitForGone("id:done", wait)
+	if p.Enabled("id:uninstall") {
+		t.Error("卸载 is on for the program just uninstalled")
+	}
+	p.Key("mod+backspace")
+	if p.Exists("id:confirm") {
+		t.Fatal("asked to uninstall the program just uninstalled")
+	}
+	close(release)
+	p.WaitFor("id:apps-empty", wait)
+}
+
 func TestStopEndsTheRemoval(t *testing.T) {
 	svc := macService()
 	svc.OnRemove = func(ctx context.Context, _ app.UninstallRequest, _ func(cleanup.Progress)) (app.UninstallOutcome, error) {

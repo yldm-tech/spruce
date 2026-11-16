@@ -108,9 +108,9 @@ type State struct {
 	touched string
 	// startOnPlan is the app UninstallApp asks about once its leftovers are found, "" for none.
 	startOnPlan string
-	// targetIndex is the target's row when the uninstall started; landing, set as the done card or the toast ends it, is where the next list puts the selection.
+	// targetIndex is the target's row when the uninstall started; landing, set as the done card or the toast ends it, is where the next list puts the selection. Until that list comes the target stays picked though it may be gone, so nothing asks to uninstall it.
 	targetIndex int
-	landing     *place
+	landing     *core.Signal[*place]
 	// undoRun is the run the done card's 撤销 puts back, "" for none; undoable are the runs this page offered 撤销 for, so putting one back reads the list again.
 	undoRun  string
 	undoable map[string]bool
@@ -134,6 +134,7 @@ func NewState(cx *core.Scope, d Deps, stores *store.Stores) *State {
 		Picked:       base.NewSelection(cx, false),
 		order:        core.NewSignalFunc[[]string](cx, nil, slices.Equal),
 		reveals:      core.NewSignal(cx, 0),
+		landing:      core.NewSignalFunc[*place](cx, nil, nil),
 		Plan:         core.NewSignalFunc[*app.UninstallPlan](cx, nil, nil),
 		PlanLoading:  core.NewSignal(cx, false),
 		PlanErr:      core.NewSignal(cx, ""),
@@ -217,7 +218,7 @@ func (s *State) syncPicked(id string) {
 // keepPickedVisible picks the first of visible, or none, when the picked app is not among them.
 func (s *State) keepPickedVisible(visible []app.UninstallApp) {
 	id := s.Selected.GetUntracked()
-	if id == "" || s.Step.GetUntracked() != StepIdle || s.landing != nil || slices.ContainsFunc(visible, func(a app.UninstallApp) bool { return a.ID == id }) {
+	if id == "" || s.Step.GetUntracked() != StepIdle || s.landing.GetUntracked() != nil || slices.ContainsFunc(visible, func(a app.UninstallApp) bool { return a.ID == id }) {
 		return
 	}
 	if len(visible) == 0 {
@@ -328,7 +329,11 @@ func (s *State) LoadApps() {
 		s.Loaded.Set(true)
 		if err != nil {
 			s.AppsErr.Set(err.Error())
-			s.landing = nil
+			if s.landing.GetUntracked() != nil {
+				// The target stays picked: its leftovers, dropped as the uninstall ended, are looked up again.
+				s.landing.Set(nil)
+				s.LoadPlan()
+			}
 			return
 		}
 		if apps == nil {
@@ -352,11 +357,11 @@ func (s *State) LoadApps() {
 
 // land puts the selection where an uninstall left the list, visible being the new list's rows: on the target when it is still installed, its leftovers looked up again; else on the row now where it was.
 func (s *State) land(visible []app.UninstallApp) {
-	l := s.landing
+	l := s.landing.GetUntracked()
 	if l == nil {
 		return
 	}
-	s.landing = nil
+	s.landing.Set(nil)
 	switch {
 	case slices.ContainsFunc(visible, func(a app.UninstallApp) bool { return a.ID == l.id }):
 		s.Select(l.id)
@@ -537,9 +542,9 @@ func (s *State) Totals() (int, int64) {
 	return CheckedTotals(p.Leftovers, s.Checked.Get())
 }
 
-// CanUninstall reports whether 卸载 may start: an app is picked and, on macOS, its leftovers are found and it does not run.
+// CanUninstall reports whether 卸载 may start: an app is picked, the list an uninstall reads again has come and, on macOS, the app's leftovers are found and it does not run.
 func (s *State) CanUninstall() bool {
-	if _, ok := s.App(); !ok {
+	if _, ok := s.App(); !ok || s.landing.Get() != nil {
 		return false
 	}
 	return s.windows || s.Plan.Get() != nil && !s.PlanLoading.Get() && !s.Running()
@@ -796,7 +801,10 @@ func (s *State) RemoveFound() {
 func (s *State) Close() {
 	s.Step.Set(StepIdle)
 	s.undoRun = ""
-	s.landing = &place{id: s.Target.GetUntracked().ID, index: s.targetIndex}
+	s.landing.Set(&place{id: s.Target.GetUntracked().ID, index: s.targetIndex})
+	// The target's leftovers are no longer what they were; land looks them up again when it is still installed.
+	s.stopPlan()
+	s.Plan.Set(nil)
 	s.LoadApps()
 }
 
