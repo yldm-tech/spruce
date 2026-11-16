@@ -745,10 +745,12 @@ func TestWindowsWithoutLocalAppData(t *testing.T) {
 }
 
 func TestTempDirsWindows(t *testing.T) {
-	home := filepath.Join(string(filepath.Separator), "Users", "me")
+	// The paths need a root that is absolute on this OS: on Windows one without a drive letter is not, and is dropped like "relative".
+	root := t.TempDir()
+	home := filepath.Join(root, "Users", "me")
 	local := filepath.Join(home, "AppData", "Local")
 	vars := map[string]string{
-		"TEMP": filepath.Join(string(filepath.Separator), "Windows", "Temp"),
+		"TEMP": filepath.Join(root, "Windows", "Temp"),
 		"TMP":  "relative",
 	}
 	got := tempDirsWindows(Env{Home: home, Getenv: func(k string) string { return vars[k] }}, local)

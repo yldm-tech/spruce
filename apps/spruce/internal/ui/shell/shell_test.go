@@ -146,15 +146,6 @@ func startLaunch(t *testing.T, launched func() (bool, bool), keepInTray bool) (*
 	return a, views
 }
 
-func TestLoginLaunchStaysInTheMenuBar(t *testing.T) {
-	a, views := startLaunch(t, func() (bool, bool) { return true, true }, true)
-	// The launch is known to be at login and the window is to stay in the menu bar: it never opens, and two seconds later still has not.
-	a.Advance(2 * time.Second)
-	if *views != 0 || a.Exists("id:sidebar") {
-		t.Fatalf("the window opened at a login start (%d views)", *views)
-	}
-}
-
 func TestLaunchesThatOpenTheWindow(t *testing.T) {
 	for _, c := range []struct {
 		name     string

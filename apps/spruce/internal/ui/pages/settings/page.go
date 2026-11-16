@@ -4,7 +4,6 @@ package settings
 import (
 	"context"
 	"errors"
-	"runtime"
 	"strconv"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -188,7 +187,7 @@ func generalTab(stores *store.Stores, notify *notifyPermission, windows bool, re
 			numberSetting{Field: FieldLowDiskGB, Label: "提醒阈值", Range: limits.LowDiskGB, Unit: "GB", TestID: "low-disk-threshold",
 				Disabled: func() bool { return !st.Value().General.LowDiskAlert }},
 		),
-		permissionsGroup(stores.Permission),
+		permissionsGroup(stores.Permission, windows),
 		group("", "section-reset",
 			row{Label: "恢复默认设置", Description: resetText, TestID: "reset-row",
 				Control: []core.Node{kit.Button{Text: "恢复默认设置…", Label: "恢复默认设置", Variant: kit.ButtonGhost, Ref: resetRef, TestID: "reset", OnPress: onReset}}},
@@ -392,10 +391,10 @@ func (c retentionSetting) Render(cx *core.Scope) core.Node {
 }
 
 // permissionsGroup shows Full Disk Access on macOS, with the guide the 维护 page uses; it reads the state again as it shows, and says 正在检查… until the store first answers. Windows has no such permission, so it shows nothing there.
-func permissionsGroup(perm *store.Permission) core.Node {
+func permissionsGroup(perm *store.Permission, windows bool) core.Node {
 	perm.Recheck()
 	return core.Show{When: func() bool {
-		return runtime.GOOS != "windows" && perm.FullDiskAccess() != maintenance.PermissionNotRequired
+		return !windows && perm.FullDiskAccess() != maintenance.PermissionNotRequired
 	},
 		Then: func(cx *core.Scope) core.Node {
 			failed := core.NewSignal(cx, false)

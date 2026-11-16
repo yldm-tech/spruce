@@ -1001,9 +1001,16 @@ func TestGeneralTabOnMacOS(t *testing.T) {
 }
 
 func TestGeneralTabOnWindows(t *testing.T) {
-	p := start(t, options{goos: "windows"})
+	fakes := storefake.New(t.TempDir())
+	fakes.Permission = maintenance.PermissionDenied
+	p := start(t, options{goos: "windows", fakes: fakes})
 	if p.Exists("id:close-to-tray") {
 		t.Error("Windows shows 关闭窗口后继续在菜单栏运行")
+	}
+	// Full Disk Access is macOS's; Windows has no such permission.
+	p.Settle()
+	if p.Exists("id:section-permissions") {
+		t.Error("Windows shows 完全磁盘访问权限")
 	}
 	p.Find("id:launch-at-login >> text:登录系统后自动打开 Spruce。")
 	p.Find("id:section-background >> text:Spruce 打开时每隔几小时检查一次可以释放的空间。只在接通电源、电脑不忙时进行，只读取，不会删除任何东西。")
@@ -1069,7 +1076,9 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 	fakes.Overview = ov
 	p := start(t, options{fakes: fakes})
 	p.tab("auto")
-	p.Find("id:settings-tab-auto >> text:自动清理只会把文件移到废纸篓，不会运行命令，也不会直接删除。每次运行都会记在操作历史里，在清空废纸篓之前可以放回原处。只在接通电源、电脑不忙时运行。你放回原处的项目不会再被自动清理。")
+	// The rules move to the system's Trash, by the name the app gives it on the system the test runs on.
+	trash := format.TrashName()
+	p.Find("id:settings-tab-auto >> text:自动清理只会把文件移到" + trash + "，不会运行命令，也不会直接删除。每次运行都会记在操作历史里，在清空" + trash + "之前可以放回原处。只在接通电源、电脑不忙时运行。你放回原处的项目不会再被自动清理。")
 	for _, r := range []struct{ id, title string }{
 		{"app-caches", "旧的应用缓存"}, {"installers", "旧安装包"}, {"build-output", "闲置项目的构建产物"}, {"incomplete-downloads", "未完成的下载"},
 	} {
@@ -1081,7 +1090,7 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 			t.Errorf("%s status %q without a result", r.id, got)
 		}
 	}
-	p.Find("id:rule-installers >> text:每天把「下载」里超过 7 天、对应的应用已经装好的安装包和磁盘映像（.dmg、.pkg）移到废纸篓。压缩包、系统映像和其他文件夹里的不会处理，正在挂载或无法确认是否挂载的也不会处理。")
+	p.Find("id:rule-installers >> text:每天把「下载」里超过 7 天、对应的应用已经装好的安装包和磁盘映像（.dmg、.pkg）移到" + trash + "。压缩包、系统映像和其他文件夹里的不会处理，正在挂载或无法确认是否挂载的也不会处理。")
 	if !p.checked("每周汇总") {
 		t.Error("每周汇总 is off by default")
 	}
@@ -1105,7 +1114,7 @@ func TestAutoTabRulesAndTheirStatus(t *testing.T) {
 
 	p.Press("role:switch 旧安装包")
 	p.updates(2)
-	want := "上次运行：" + format.RelativeTime(wallClock.Add(-3*time.Hour), wallClock) + "，移到废纸篓 " + format.Bytes(1<<30)
+	want := "上次运行：" + format.RelativeTime(wallClock.Add(-3*time.Hour), wallClock) + "，移到" + trash + " " + format.Bytes(1<<30)
 	p.WaitUntil(wait, func() bool { return p.text("rule-installers-status") == want })
 
 	// Without a result (at startup, or with no readable cache) a rule that is on still shows its last run, and a rule that is off waits for a check.

@@ -42,7 +42,7 @@ func (c Command) String() string {
 type Output struct {
 	Stdout []byte
 	Stderr []byte
-	// ExitCode is the program's exit status, or -1 when it did not start or was killed by a signal (including a timeout).
+	// ExitCode is the program's exit status, or -1 when it did not start, was killed by a signal, or was stopped by the context or Command.Timeout (on every platform: Windows has no signals and a program it terminates reports exit status 1, which is not the program's own answer).
 	ExitCode int
 }
 
@@ -106,6 +106,7 @@ func (OSRunner) Run(ctx context.Context, c Command) (Output, error) {
 		return out, nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
+		out.ExitCode = -1
 		return out, fmt.Errorf("%s: %w", c.String(), ctxErr)
 	}
 	var exitErr *exec.ExitError

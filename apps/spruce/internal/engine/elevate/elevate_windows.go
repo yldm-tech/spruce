@@ -191,9 +191,9 @@ func platformChildEnv() childEnv {
 }
 
 // trustedInstallerSID is the service SID of TrustedInstaller (NT SERVICE\TrustedInstaller), which owns most of the Windows directory.
-const trustedInstallerSID = "S-1-5-80-956008885-3425701886-2022237836-3622500891-2224575489"
+const trustedInstallerSID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 
-// dirOwnedByUnprivilegedAccount accepts the exchange directory only when its owner is not a privileged account. The non-elevated parent creates it with os.MkdirTemp, so its owner is the requesting user, both with same-user consent and with over-the-shoulder elevation; objects created by an elevated administrator token are owned by the Administrators group, and system directories by SYSTEM or TrustedInstaller. So the elevated child only writes where the requesting user could already write.
+// dirOwnedByUnprivilegedAccount accepts the exchange directory only when its owner is not a privileged account. The non-elevated parent creates it with os.MkdirTemp, so its owner is the requesting user, both with same-user consent and with over-the-shoulder elevation; objects created by an elevated administrator token are owned by the Administrators group (by default; with the policy set to the object creator, and for the built-in Administrator account, which UAC does not split, they are owned by the administrator itself, who is then the requesting user), and system directories by SYSTEM or TrustedInstaller. So the elevated child only writes where the requesting user could already write.
 func dirOwnedByUnprivilegedAccount(dir string) error {
 	sd, err := windows.GetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
