@@ -14,8 +14,6 @@ func r(id string, o taskresult.Outcome, msg string) taskresult.Result {
 	return taskresult.Result{TaskID: id, Outcome: o, Message: msg}
 }
 
-var testCatalog = []app.TaskView{{ID: "a", Title: "甲"}, {ID: "b", Title: "乙"}, {ID: "c", Title: "丙"}}
-
 func TestFormatEstimate(t *testing.T) {
 	for s, want := range map[int]string{0: "0 分钟", 59: "不到 1 分钟", 60: "约 1 分钟", 89: "约 1 分钟", 90: "约 2 分钟"} {
 		if got := FormatEstimate(s); got != want {
