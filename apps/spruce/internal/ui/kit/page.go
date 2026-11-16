@@ -1,6 +1,7 @@
 package kit
 
 import (
+	"math"
 	"time"
 
 	"github.com/nsgo-dev/nsgo/core"
@@ -30,7 +31,7 @@ const (
 	footerRaise = 24 + 44 + 12
 )
 
-// Restoring an offset waits for the content to grow tall enough, as a page's data can arrive a moment after it mounts: it measures every restoreWait, restoreTries times at most, then scrolls as far as the content allows.
+// Restoring an offset follows the content as it grows, as a page's data can arrive a moment after it mounts: it measures every restoreWait, restoreTries times at most, and each time scrolls as far toward the offset as the content allows.
 const (
 	restoreWait  = 100 * time.Millisecond
 	restoreTries = 10
@@ -45,7 +46,6 @@ func (p Page) Render(cx *core.Scope) core.Node {
 		ref = new(core.Ref)
 	}
 	scrolled := core.NewSignal(cx, false)
-	record, laidOut := keepOffset(cx, nav.Use(cx), p.ScrollKey, ref)
 	pad := core.Edges{Left: pageMargin, Right: pageMargin, Bottom: pageBottom}
 	if p.Header != nil {
 		pad.Top = 4
@@ -53,6 +53,7 @@ func (p Page) Render(cx *core.Scope) core.Node {
 	if p.Footer != nil {
 		pad.Bottom = 12
 	}
+	record, laidOut := keepOffset(cx, nav.Use(cx), p.ScrollKey, ref, pad.Bottom)
 	scroll := core.Scroll{Ref: ref, TestID: p.TestID, ScrollEventThrottle: scrollThrottle,
 		OnScroll: func(e core.ScrollEvent) {
 			scrolled.Set(e.Offset.Y > 0)
@@ -92,14 +93,16 @@ func (p Page) Render(cx *core.Scope) core.Node {
 	return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)}, Children: children}
 }
 
-// keepOffset lands the scroll view ref where navigator last recorded page key, starting at its first layout (laidOut), and returns what records the offset as it scrolls. Without a key or a navigator it does nothing. The offset is restored once the content is tall enough for it (restoreTries at most); the user scrolling first, or the page going, cancels it, and nothing is recorded until then, so a page that goes before it lands keeps the offset it had.
-func keepOffset(cx *core.Scope, navigator *nav.Navigator, key nav.Route, ref *core.Ref) (record func(y core.Points), laidOut func()) {
+// keepOffset lands the scroll view ref, whose content ends bottom points above its end, where navigator last recorded page key, starting at its first layout (laidOut), and returns what records the offset as it scrolls. Without a key or a navigator it does nothing. Each measurement scrolls as far toward the offset as the content allows, so content that came back shorter (sections now closed, items gone) lands at its end at once, in the page's entrance, rather than after the wait; content still growing is followed until it is tall enough (restoreTries at most). The user scrolling first, or the page going, cancels it, and nothing is recorded until then, so a page that goes before it lands keeps the offset it had.
+func keepOffset(cx *core.Scope, navigator *nav.Navigator, key nav.Route, ref *core.Ref, bottom core.Points) (record func(y core.Points), laidOut func()) {
 	if key == "" || navigator == nil {
 		return func(core.Points) {}, func() {}
 	}
 	saved := navigator.ScrollOffset(key)
 	restoring := saved > 0
 	cx.Cleanup(func() { restoring = false })
+	// landed is where restoring scrolled to last; a scroll elsewhere is the user's.
+	var landed core.Points
 	var try func(left int)
 	try = func(left int) {
 		ref.Measure(func(frame, page core.Bounds, ok bool) {
@@ -107,13 +110,16 @@ func keepOffset(cx *core.Scope, navigator *nav.Navigator, key nav.Route, ref *co
 				return
 			}
 			content, _ := ref.ContentBounds()
-			room := content.Origin.Y + content.Size.Height + pageBottom - page.Origin.Y - frame.Size.Height
-			if left > 0 && room < saved {
-				cx.AfterFunc(restoreWait, func() { try(left - 1) })
+			room := content.Origin.Y + content.Size.Height + bottom - page.Origin.Y - frame.Size.Height
+			if y := min(saved, room); y > landed {
+				landed = y
+				ref.ScrollTo(core.Point{Y: y}, false)
+			}
+			if room >= saved || left == 0 {
+				restoring = false
 				return
 			}
-			restoring = false
-			ref.ScrollTo(core.Point{Y: saved}, false)
+			cx.AfterFunc(restoreWait, func() { try(left - 1) })
 		})
 	}
 	started := false
@@ -124,7 +130,7 @@ func keepOffset(cx *core.Scope, navigator *nav.Navigator, key nav.Route, ref *co
 		}
 	}
 	record = func(y core.Points) {
-		if restoring && y > 0 {
+		if restoring && math.Abs(float64(y-landed)) > 1 {
 			restoring = false
 		}
 		if !restoring {

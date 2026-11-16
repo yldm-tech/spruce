@@ -129,3 +129,29 @@ func TestPageWithoutAKeyOpensAtTheTop(t *testing.T) {
 		t.Errorf("offset %v without a ScrollKey", y)
 	}
 }
+
+// Content that came back shorter than the offset (sections closed, items gone) lands at its end at once and stays there, rather than sitting at the top and jumping later.
+func TestPageThatCameBackShorterLandsAtItsEndAtOnce(t *testing.T) {
+	p := startPage(t, nav.Overview, 30)
+	p.Scroll("id:page", 2000)
+	p.Advance(200 * time.Millisecond)
+	p.set(p.shown, false)
+	p.Post(func() { p.rows.Set(8) })
+	p.set(p.shown, true)
+	page := p.Find("id:page")
+	end := page.Content.Height - page.Frame.Size.Height
+	if end <= 0 || end >= 2000 {
+		t.Fatalf("eight rows end at %v", end)
+	}
+	if y := page.Offset.Y; y != end {
+		t.Errorf("offset %v as the page shows, want its end %v", y, end)
+	}
+	p.Advance(2 * time.Second)
+	if y := p.Find("id:page").Offset.Y; y != end {
+		t.Errorf("offset %v after the wait, want it to stay at %v", y, end)
+	}
+	// It kept the offset it had for the next showing, until the user scrolls.
+	if got := p.nav.ScrollOffset(nav.Overview); got != 2000 {
+		t.Errorf("recorded offset %v, want 2000 kept", got)
+	}
+}
