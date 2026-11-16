@@ -108,16 +108,31 @@ func (p *page) cellLabels() []string {
 
 const homeList = `role:group "个人文件夹 的内容"`
 
+// moveButton and revealButton select the buttons of name's row in list, 将 … 移到废纸篓 and 在访达中显示 …, in this system's words (spacefake.Trash, spacefake.FileManager).
+func moveButton(list, name string) string {
+	return list + ` >> role:button "将 ` + name + ` 移到` + spacefake.Trash + `"`
+}
+
+func revealButton(list, name string) string {
+	return list + ` >> role:button "在` + spacefake.FileManager + `中显示 ` + name + `"`
+}
+
+// movedText is a move's toast for n bytes, 已移到废纸篓 3 GB, and restoreText what it adds where Spruce cannot undo the move.
+func movedText(n int64) string { return "已移到" + spacefake.Trash + " " + spacefake.Size(n) }
+
+var restoreText = "，需要时可以在" + spacefake.Trash + "里还原"
+
 func TestStartListsDisksAndFolders(t *testing.T) {
 	p := start(t, &spacefake.Service{Listings: spacefake.Listings()}, newFakes(t))
 	p.WaitFor("id:volume-/", wait)
 	p.Find(`text:"空间透视"`)
 	p.Find("text:看看磁盘空间都被什么占用了")
 	disk := p.Find("id:volume-/")
-	if disk.Props.Label != "Macintosh HD，可用 120 GB，共 500 GB，已用 76%" {
+	usage := "可用 " + spacefake.Size(120e9) + "，共 " + spacefake.Size(500e9)
+	if disk.Props.Label != "Macintosh HD，"+usage+"，已用 76%" {
 		t.Errorf("disk label %q", disk.Props.Label)
 	}
-	p.Find("id:volume-/ >> text:可用 120 GB，共 500 GB")
+	p.Find("id:volume-/ >> text:" + usage)
 	p.Find("id:volume-/Volumes/Archive >> text:Archive")
 	for _, id := range []string{"home", "downloads", "applications"} {
 		p.Find("id:target-" + id)
@@ -189,7 +204,7 @@ func TestScanShowsProgressThenResults(t *testing.T) {
 	p.Find("text:正在准备…")
 
 	progress <- app.SpaceProgress{Files: 1204, Dirs: 80, Bytes: 2.5e9, Path: spacefake.Home + "/Library/Caches"}
-	p.waitTicking("text:已扫描 1,204 个文件 · 2.5 GB")
+	p.waitTicking("text:已扫描 1,204 个文件 · " + spacefake.Size(2.5e9))
 	if got := p.Find("id:space-scan-path").Text; got != spacefake.Home+"/Library/Caches" {
 		t.Errorf("path %q", got)
 	}
@@ -201,7 +216,7 @@ func TestScanShowsProgressThenResults(t *testing.T) {
 	p.Find(homeList + " >> text:30 个小文件")
 	p.Find(homeList + " >> text:60% · 4,000 个文件")
 	// The bottom bar: the scanned size, 重新扫描 and when.
-	if l, v := p.actionStat(true); l != "个人文件夹" || v != "10 GB" {
+	if l, v := p.actionStat(true); l != "个人文件夹" || v != spacefake.Size(10e9) {
 		t.Errorf("start stat %q %q", l, v)
 	}
 	if l, v := p.actionStat(false); l != "上次扫描" || v != "刚刚" {
@@ -268,7 +283,7 @@ func TestLeavingKeepsTheScanGoing(t *testing.T) {
 	p.leave()
 	p.back()
 	// The page comes back to the scan that went on meanwhile, with its progress.
-	p.waitTicking("text:已扫描 1,200 个文件 · 3 GB")
+	p.waitTicking("text:已扫描 1,200 个文件 · " + spacefake.Size(3e9))
 	p.Find("text:正在分析「个人文件夹」…")
 	select {
 	case <-ended:
@@ -367,7 +382,7 @@ func TestResultsOpenFoldersFromTheListTheMapAndThePath(t *testing.T) {
 	p.Find(`role:group "个人文件夹 的空间分布图"`)
 	// The treemap draws one cell per child with a size; folders are buttons.
 	p.WaitUntil(wait, func() bool { return len(p.cellLabels()) == 2 })
-	if got := p.cellLabels(); !slices.Equal(got, []string{"打开 Projects，6 GB", "打开 Movies，500 MB"}) {
+	if got := p.cellLabels(); !slices.Equal(got, []string{"打开 Projects，" + spacefake.Size(6e9), "打开 Movies，" + spacefake.Size(500e6)}) {
 		t.Errorf("cells %v", got)
 	}
 
@@ -389,7 +404,7 @@ func TestResultsOpenFoldersFromTheListTheMapAndThePath(t *testing.T) {
 	p.WaitFor(homeList, wait)
 
 	p.WaitUntil(wait, func() bool { return len(p.cellLabels()) == 2 })
-	p.Press(`id:treemap >> role:button "打开 Projects，6 GB"`)
+	p.Press(`id:treemap >> role:button "打开 Projects，` + spacefake.Size(6e9) + `"`)
 	p.WaitFor(`role:group "Projects 的内容"`, wait)
 }
 
@@ -402,9 +417,9 @@ func TestTrashAfterConfirming(t *testing.T) {
 	p := start(t, svc, fakes)
 	p.WaitFor(homeList, wait)
 	trashGen := p.stores.Trash.Generation()
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
-	p.Find("id:trash-confirm >> text:将把「big.iso」（3 GB）移到废纸篓。需要时可以从废纸篓放回原处。")
+	p.Find("id:trash-confirm >> text:将把「big.iso」（" + spacefake.Size(3e9) + "）移到" + spacefake.Trash + "。需要时可以从" + spacefake.Trash + "放回原处。")
 	if !p.stores.Block.Blocked() {
 		t.Error("the shell is not blocked while the confirmation shows")
 	}
@@ -414,13 +429,13 @@ func TestTrashAfterConfirming(t *testing.T) {
 		t.Errorf("trashes %v", got)
 	}
 	// Without 概览's controller nothing can be undone from Spruce: the toast says where the item went, without 撤销.
-	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，需要时可以在废纸篓里还原" || got.UndoRun != "" || got.ViewRun != "" || got.Duration != 6*time.Second {
+	if got := p.waitToast(); got.Text != movedText(3e9)+restoreText || got.UndoRun != "" || got.ViewRun != "" || got.Duration != 6*time.Second {
 		t.Errorf("toast %+v", got)
 	}
 	if p.Exists("id:space-notice") {
 		t.Error("a notice shows beside the toast")
 	}
-	if _, v := p.actionStat(true); v != "7 GB" {
+	if _, v := p.actionStat(true); v != spacefake.Size(7e9) {
 		t.Errorf("stat %q", v)
 	}
 	// The folder is asked for again, so its sizes follow; the Trash's size is measured again.
@@ -448,7 +463,7 @@ func TestEscapeWhileMovingKeepsTheConfirmation(t *testing.T) {
 	svc.TrashRelease = release
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
 	p.Press("id:confirm-ok")
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
@@ -459,7 +474,7 @@ func TestEscapeWhileMovingKeepsTheConfirmation(t *testing.T) {
 	}
 	close(release)
 	p.WaitForGone("id:trash-confirm", wait)
-	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，需要时可以在废纸篓里还原" {
+	if got := p.waitToast(); got.Text != movedText(3e9)+restoreText {
 		t.Errorf("toast %+v", got)
 	}
 	if p.stores.Block.Blocked() {
@@ -471,7 +486,7 @@ func TestCancelledConfirmationMovesNothing(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
 	p.Key("Escape")
 	p.WaitForGone("id:trash-confirm", wait)
@@ -484,11 +499,11 @@ func TestLockedEntrySaysWhy(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
-	trash := p.Find(homeList + ` >> role:button "将 Movies 移到废纸篓"`)
+	trash := p.Find(moveButton(homeList, "Movies"))
 	if trash.Style.Opacity == 0 || trash.Style.Opacity >= 1 {
 		t.Errorf("the locked button is not dimmed: opacity %v", trash.Style.Opacity)
 	}
-	p.Press(homeList + ` >> role:button "将 Movies 移到废纸篓"`)
+	p.Press(moveButton(homeList, "Movies"))
 	if got := p.WaitFor("id:space-notice-error", wait).Text; got != "「Movies」不能移走：个人文件夹和磁盘最上一层的项目请在访达中处理" {
 		t.Errorf("alert %q", got)
 	}
@@ -506,7 +521,7 @@ func TestEntryLeftInPlaceSaysWhy(t *testing.T) {
 	svc.TrashResult = app.SpaceTrashResult{Failed: []app.SpaceFailure{{Path: spacefake.ISO.Path, Reason: "没有权限移动这个项目"}}, Root: spacefake.Root}
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
 	p.Press("id:confirm-ok")
 	if got := p.WaitFor("id:space-notice-error", wait).Text; got != "「big.iso」没有移走：没有权限移动这个项目" {
@@ -518,13 +533,13 @@ func TestRevealInFinder(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "在访达中显示 big.iso"`)
+	p.Press(revealButton(homeList, "big.iso"))
 	p.WaitUntil(wait, func() bool { return len(p.files.Reveals()) == 1 })
 	if got := p.files.Reveals(); got[0] != spacefake.ISO.Path {
 		t.Errorf("reveals %v", got)
 	}
 	p.files.Err = errors.New("无法在访达中显示")
-	p.Press(homeList + ` >> role:button "在访达中显示 big.iso"`)
+	p.Press(revealButton(homeList, "big.iso"))
 	if got := p.WaitFor("id:space-reveal-error", wait).Text; got != "无法在访达中显示" {
 		t.Errorf("reveal error %q", got)
 	}
@@ -547,7 +562,7 @@ func TestLargeFilesTab(t *testing.T) {
 	}
 	p.Find(`role:group "大文件" >> text:big.iso`)
 	p.Find(`role:group "大文件" >> text:"` + spacefake.Home + `/Projects"`)
-	p.Find("id:space-large-note >> text:「个人文件夹」中 500 MB 以上的文件，最多列出 200 个。可以在")
+	p.Find("id:space-large-note >> text:「个人文件夹」中 " + spacefake.Size(500e6) + " 以上的文件，最多列出 200 个。可以在")
 	p.Find("id:space-large-settings >> text:设置")
 	if p.Exists("id:treemap") {
 		t.Error("the map shows on the 大文件 tab")
@@ -651,7 +666,7 @@ func TestConfirmationFocus(t *testing.T) {
 	svc := spacefake.New(time.Now())
 	p := start(t, svc, newFakes(t), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
 	p.WaitFor(homeList, wait)
-	opener := homeList + ` >> role:button "将 big.iso 移到废纸篓"`
+	opener := moveButton(homeList, "big.iso")
 	p.Press(opener)
 	p.WaitFor("id:trash-confirm", wait)
 	p.WaitUntil(wait, func() bool { return p.Find("id:confirm-ok").Focused })

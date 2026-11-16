@@ -50,12 +50,11 @@ jobs:
       - name: Check
         run: apps/spruce/scripts/check.sh
 
-  # The app's tests on Windows, which check.sh only vets: without the race detector, which needs cgo there. The job does not fail the run yet, so that a Windows-only failure cannot hold up a release before these tests have a record on CI.
+  # The app's tests on Windows, which check.sh only vets: without the race detector, which needs cgo there.
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
     timeout-minutes: 30
-    continue-on-error: true
     env:
       GOFLAGS: -trimpath
     defaults:

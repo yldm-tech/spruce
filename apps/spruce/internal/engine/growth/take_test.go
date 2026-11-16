@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,9 @@ func TestTakeCountsWhatItCannotRead(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads everything")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod only sets the read-only attribute on Windows, so it cannot make a folder unreadable")
+	}
 	root := t.TempDir()
 	locked := filepath.Join(root, "Trash")
 	write(t, filepath.Join(locked, "x"), 100)
@@ -150,7 +154,8 @@ func TestTakeCountsWhatItCannotRead(t *testing.T) {
 func TestTakePastItsBudgetSavesNothing(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "a", "b"), 100)
-	snap, err := Take(context.Background(), []Watch{{ID: "a", Path: filepath.Join(root, "a"), Children: true}}, TakeOptions{Budget: time.Nanosecond})
+	// A budget that ended an hour ago has certainly run out before the first read, however coarse the clock (a 1 ns budget sometimes had not).
+	snap, err := Take(context.Background(), []Watch{{ID: "a", Path: filepath.Join(root, "a"), Children: true}}, TakeOptions{Budget: time.Minute, start: time.Now().Add(-time.Hour)})
 	if !errors.Is(err, ErrBudget) || len(snap.Locations) != 0 {
 		t.Errorf("snapshot %+v, err %v", snap, err)
 	}

@@ -58,15 +58,15 @@ func TestOneClickMoveOffersUndoAndScansAgainAfterIt(t *testing.T) {
 	projects := `role:group "Projects 的内容"`
 	p.WaitFor(projects, wait)
 	trashGen := p.stores.Trash.Generation()
-	p.Press(projects + ` >> role:button "将 data.bin 移到废纸篓"`)
+	p.Press(moveButton(projects, "data.bin"))
 	p.WaitUntil(wait, func() bool { return len(svc.Trashes()) == 1 })
 	if p.Exists("id:trash-confirm") {
 		t.Error("asked before a move that can be undone")
 	}
-	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB" || got.UndoRun != "run-1" || got.ViewRun != "" || got.Duration != 10*time.Second {
+	if got := p.waitToast(); got.Text != movedText(3e9) || got.UndoRun != "run-1" || got.ViewRun != "" || got.Duration != 10*time.Second {
 		t.Errorf("toast %+v", got)
 	}
-	if _, v := p.actionStat(true); v != "7 GB" {
+	if _, v := p.actionStat(true); v != spacefake.Size(7e9) {
 		t.Errorf("stat %q", v)
 	}
 	if p.stores.Trash.Generation() == trashGen {
@@ -114,7 +114,7 @@ func TestUndoOverTheStartScreenScansOnReturn(t *testing.T) {
 	trashed(svc)
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.waitToast()
 	p.Press("id:change-location")
 	p.WaitFor("id:volume-/", wait)
@@ -148,7 +148,7 @@ func TestActionBarRisesOverTheToast(t *testing.T) {
 		return y
 	}
 	without := bottom()
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.waitToast()
 	p.Settle()
 	if got := bottom(); got > 820-24-44-12 || got >= without {
@@ -172,7 +172,7 @@ func TestUndoWhileAwayScansOnReturn(t *testing.T) {
 	svc.OnScan = func(context.Context, string, func(app.SpaceProgress)) (app.SpaceSummary, error) { return kept, nil }
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.waitToast()
 	p.Post(func() { p.shown.Set(false) })
 	p.WaitForGone("id:space-page", wait)
@@ -201,7 +201,7 @@ func TestUndoAfterLeavingAndComingBack(t *testing.T) {
 	trashed(svc)
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.waitToast()
 	p.Post(func() { p.shown.Set(false) })
 	p.WaitForGone("id:space-page", wait)
@@ -220,8 +220,8 @@ func TestOneClickMoveSaysWhatCouldNotBeUndone(t *testing.T) {
 	svc.TrashResult.Undoable, svc.TrashResult.NotUndoable = false, 1
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
-	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，其中 1 项不能撤销" || got.UndoRun != "" {
+	p.Press(moveButton(homeList, "big.iso"))
+	if got := p.waitToast(); got.Text != movedText(3e9)+"，其中 1 项不能撤销" || got.UndoRun != "" {
 		t.Errorf("toast %+v", got)
 	}
 }
@@ -235,13 +235,13 @@ func TestMoveConfirmsWhereItCannotBeUndone(t *testing.T) {
 	fakes.Overview = storefake.NewOverview(app.OverviewState{Phase: app.OverviewIdle, CanUndo: false})
 	p := start(t, svc, fakes)
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	p.WaitFor("id:trash-confirm", wait)
 	if len(svc.Trashes()) != 0 {
 		t.Fatal("moved before the confirmation")
 	}
 	p.Press("id:confirm-ok")
-	if got := p.waitToast(); got.Text != "已移到废纸篓 3 GB，需要时可以在废纸篓里还原" || got.UndoRun != "" {
+	if got := p.waitToast(); got.Text != movedText(3e9)+restoreText || got.UndoRun != "" {
 		t.Errorf("toast %+v", got)
 	}
 }
@@ -251,7 +251,7 @@ func TestOneClickMoveThatMovedNothingSaysWhy(t *testing.T) {
 	svc.TrashResult = app.SpaceTrashResult{Failed: []app.SpaceFailure{{Path: spacefake.ISO.Path, Reason: "没有权限移动这个项目"}}, Root: spacefake.Root, RunID: "run-2"}
 	p := start(t, svc, undoable(t))
 	p.WaitFor(homeList, wait)
-	p.Press(homeList + ` >> role:button "将 big.iso 移到废纸篓"`)
+	p.Press(moveButton(homeList, "big.iso"))
 	if got := p.WaitFor("id:space-notice-error", wait).Text; got != "「big.iso」没有移走：没有权限移动这个项目" {
 		t.Errorf("alert %q", got)
 	}
@@ -307,13 +307,13 @@ func TestGrowthRowsAndTabs(t *testing.T) {
 		t.Error("7 天 is not the first tab shown")
 	}
 	p.Find("id:space-growth >> text:每天记录一次，保留 90 天。")
-	if got := p.Find("id:growth-row-0-text").Text; got != "从"+weekdays[now.Add(-3*24*time.Hour).Weekday()]+"到现在涨了 6 GB" {
+	if got := p.Find("id:growth-row-0-text").Text; got != "从"+weekdays[now.Add(-3*24*time.Hour).Weekday()]+"到现在涨了 "+spacefake.Size(6e9) {
 		t.Errorf("row 0 %q", got)
 	}
-	p.Find("id:growth-row-0 >> text:~/Library/Caches/com.spotify.client")
-	p.Find("id:growth-row-0 >> text:+6 GB")
-	p.Find("id:growth-row-0 >> text:1 GB → 7 GB")
-	if got := p.Find("id:growth-row-1-text").Text; got != "从6 小时前到现在至少涨了 2 GB" {
+	p.Find("id:growth-row-0 >> text:" + spacefake.Native("~/Library/Caches/com.spotify.client"))
+	p.Find("id:growth-row-0 >> text:+" + spacefake.Size(6e9))
+	p.Find("id:growth-row-0 >> text:" + spacefake.Size(1e9) + " → " + spacefake.Size(7e9))
+	if got := p.Find("id:growth-row-1-text").Text; got != "从6 小时前到现在至少涨了 "+spacefake.Size(2e9) {
 		t.Errorf("row 1 %q", got)
 	}
 	p.Find("id:growth-row-1 >> text:影片")
@@ -353,7 +353,7 @@ func TestGrowthRowActions(t *testing.T) {
 	if got := p.files.Reveals()[0]; got != spacefake.Home+"/Movies" {
 		t.Errorf("reveal %q", got)
 	}
-	if got := p.Find("id:growth-row-1-reveal").Props.Label; got != "在访达中显示 影片" {
+	if got := p.Find("id:growth-row-1-reveal").Props.Label; got != "在"+spacefake.FileManager+"中显示 影片" {
 		t.Errorf("reveal label %q", got)
 	}
 
