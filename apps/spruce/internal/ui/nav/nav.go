@@ -4,6 +4,8 @@
 package nav
 
 import (
+	"slices"
+
 	"github.com/nsgo-dev/nsgo/core"
 
 	"spruce/apps/spruce/internal/engine/history"
@@ -106,11 +108,17 @@ type Navigator struct {
 	settingsAsked *core.Signal[int]
 	// shown counts the times the main window came back after it was hidden, so 概览, which stayed mounted, checks again as it does when it opens.
 	shown *core.Signal[int]
+
+	// offsets are where each page was scrolled to when it was last shown (kit.Page with a ScrollKey), so going back to it lands there; a link that asks the page to show something (GoDrill with a category, GoOverviewCard, ...) drops its offset, since the page scrolls to that instead.
+	offsets map[Route]core.Points
+	// commands are the page commands registered with UseCommands, newest last; the newest is what the menu's 重新检查 and 查找 run.
+	commands *core.Signal[[]*Commands]
 }
 
 // NewNavigator returns a navigator on start.
 func NewNavigator(cx *core.Scope, start Route) *Navigator {
-	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0), settingsAsked: core.NewSignal(cx, 0), shown: core.NewSignal(cx, 0)}
+	return &Navigator{current: core.NewSignal(cx, start), histAsked: core.NewSignal(cx, 0), settingsAsked: core.NewSignal(cx, 0), shown: core.NewSignal(cx, 0),
+		offsets: map[Route]core.Points{}, commands: core.NewSignalFunc[[]*Commands](cx, nil, slices.Equal)}
 }
 
 // Current returns the page shown; reading it subscribes.
@@ -153,6 +161,9 @@ func (r Route) InSidebar() bool {
 // GoDrill opens the drill-down view r with categoryID expanded and scrolled to ("" for none).
 func (n *Navigator) GoDrill(r Route, categoryID string) {
 	n.reveal = categoryID
+	if categoryID != "" {
+		delete(n.offsets, r)
+	}
 	n.Go(r)
 }
 
@@ -166,6 +177,7 @@ func (n *Navigator) TakeReveal() string {
 // GoHistory opens 操作历史 with the filter of kind selected ("" for all) and the run runID expanded ("" for none).
 func (n *Navigator) GoHistory(kind history.Kind, runID string) {
 	n.histKind, n.histRun = kind, runID
+	delete(n.offsets, History)
 	n.histAsked.Set(n.histAsked.GetUntracked() + 1)
 	n.Go(History)
 }
@@ -183,6 +195,7 @@ func (n *Navigator) TakeHistoryFilter() (history.Kind, string) {
 // GoDevTab opens the 开发者 view on tab.
 func (n *Navigator) GoDevTab(tab DevTab) {
 	n.devTab = tab
+	delete(n.offsets, DevJunk)
 	n.Go(DevJunk)
 }
 
@@ -196,6 +209,7 @@ func (n *Navigator) TakeDevTab() DevTab {
 // GoOverviewCard opens 概览 scrolled to the card recID, expanded (空间变化's 去清理).
 func (n *Navigator) GoOverviewCard(recID string) {
 	n.card = recID
+	delete(n.offsets, Overview)
 	n.Go(Overview)
 }
 
@@ -209,6 +223,7 @@ func (n *Navigator) TakeOverviewCard() string {
 // GoSpace opens 空间透视 and starts its scan of path (空间变化's 在空间透视中查看).
 func (n *Navigator) GoSpace(path string) {
 	n.spacePath = path
+	delete(n.offsets, Space)
 	n.Go(Space)
 }
 
@@ -222,6 +237,9 @@ func (n *Navigator) TakeSpacePath() string {
 // GoSettings shows 设置 on tab, as a link that names the setting it is about does (开发者垃圾's 更改文件夹 opens 清理).
 func (n *Navigator) GoSettings(tab SettingsTab) {
 	n.settingsTab = tab
+	if tab != "" {
+		delete(n.offsets, Settings)
+	}
 	n.settingsAsked.Set(n.settingsAsked.GetUntracked() + 1)
 	n.current.Set(Settings)
 }
@@ -240,6 +258,48 @@ func (n *Navigator) TakeSettingsTab() SettingsTab {
 	t := n.settingsTab
 	n.settingsTab = ""
 	return t
+}
+
+// ScrollOffset returns where page r was scrolled to when it was last shown, 0 for its top.
+func (n *Navigator) ScrollOffset(r Route) core.Points { return n.offsets[r] }
+
+// SetScrollOffset records where page r is scrolled to, for ScrollOffset.
+func (n *Navigator) SetScrollOffset(r Route, y core.Points) {
+	if y <= 0 {
+		delete(n.offsets, r)
+		return
+	}
+	n.offsets[r] = y
+}
+
+// Commands are what the page shown does for the app's own commands, the menu's 重新检查 (Refresh, Cmd+R) and 查找 (Find, Cmd+F); either may be nil for a page without it. Busy, when set, reports that Refresh cannot run now (a check or a clean runs); reading it subscribes.
+type Commands struct {
+	Refresh, Find func()
+	Busy          func() bool
+}
+
+// UseCommands registers c as the page's commands while cx lives; a page calls it as it is made, and the commands go with the page.
+func UseCommands(cx *core.Scope, c Commands) {
+	n := Use(cx)
+	if n == nil {
+		return
+	}
+	entry := &c
+	n.commands.Update(func(all []*Commands) []*Commands { return append(slices.Clone(all), entry) })
+	cx.Cleanup(func() {
+		n.commands.Update(func(all []*Commands) []*Commands {
+			return slices.DeleteFunc(slices.Clone(all), func(e *Commands) bool { return e == entry })
+		})
+	})
+}
+
+// Commands returns the commands the newest page registered with UseCommands, the zero Commands when none did; reading it subscribes.
+func (n *Navigator) Commands() Commands {
+	all := n.commands.Get()
+	if len(all) == 0 {
+		return Commands{}
+	}
+	return *all[len(all)-1]
 }
 
 // Key provides the shell's Navigator to the pages.
