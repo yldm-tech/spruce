@@ -424,11 +424,12 @@ func largeView(r *Results, actions EntryActions, summary func() app.SpaceSummary
 			return kit.EmptyState{Title: "没有找到大文件", Description: "这里没有达到这个大小的文件", Tone: kit.ToneCyan, TestID: "space-large-empty"}
 		}},
 		core.Show{When: func() bool { return len(large()) > 0 }, Then: func(*core.Scope) core.Node {
-			// The list takes the height the page leaves it, never less than 340 points, and scrolls inside it (a height of 0 to grow from, as the map's row).
-			return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, FlexBasis: core.Pt(0), Height: core.Pt(0), MinHeight: core.Pt(340), CornerRadius: kit.RadiusCard,
-				Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Overflow: core.Hidden},
-				Children: []core.Node{EntryList{Label: func() string { return "大文件" }, Entries: large, Detail: DetailLocation,
-					Actions: actions, Selection: r.Chosen, Checks: true, Busy: r.Trashing.Get, TestID: "space-large"}}}
+			// The list's card is as tall as its rows, up to the height the page leaves it (a height of 0 to grow from, as the map's row), where it scrolls.
+			return core.View{Style: core.Style{FlexGrow: 1, FlexShrink: 0, FlexBasis: core.Pt(0), Height: core.Pt(0), MinHeight: core.Pt(340)},
+				Children: []core.Node{core.View{Style: core.Style{MaxHeight: core.Pct(100), CornerRadius: kit.RadiusCard,
+					Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Overflow: core.Hidden},
+					Children: []core.Node{EntryList{Label: func() string { return "大文件" }, Entries: large, Detail: DetailLocation,
+						Actions: actions, Selection: r.Chosen, Checks: true, Busy: r.Trashing.Get, TestID: "space-large"}}}}}
 		}},
 	}}
 }

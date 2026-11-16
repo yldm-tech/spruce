@@ -3,6 +3,7 @@ package space_test
 import (
 	"context"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -381,5 +382,35 @@ func TestBrowserFillsTheWindow(t *testing.T) {
 	}
 	if page := p.Find("id:space-page"); page.Content.Height > page.Frame.Size.Height+1 {
 		t.Errorf("the page scrolls: content %v in %v", page.Content.Height, page.Frame.Size.Height)
+	}
+}
+
+// TestLargeListFits: the 大文件 card is as tall as its few rows, and a long list scrolls inside the height the page leaves it.
+func TestLargeListFits(t *testing.T) {
+	svc := spacefake.New(time.Now())
+	p := start(t, svc, newFakes(t))
+	p.WaitFor(homeList, wait)
+	p.Press("id:tab-large")
+	p.WaitFor(`role:group "大文件"`, wait)
+	p.Settle()
+	if h := p.bottom("id:space-large") - p.top("id:space-large"); h > 200 {
+		t.Errorf("two rows take %v", h)
+	}
+
+	many := spacefake.New(time.Now())
+	for i := range 120 {
+		e := spacefake.Entry(100+i, app.SpaceFile, "file-"+strconv.Itoa(i)+".bin", int64(200-i)*1e7)
+		many.Large = append(many.Large, e)
+	}
+	q := start(t, many, newFakes(t))
+	q.WaitFor(homeList, wait)
+	q.Press("id:tab-large")
+	q.WaitFor(`role:group "大文件"`, wait)
+	q.Settle()
+	if page := q.Find("id:space-page"); page.Content.Height > page.Frame.Size.Height+1 {
+		t.Errorf("the page scrolls: content %v in %v", page.Content.Height, page.Frame.Size.Height)
+	}
+	if bottom, footer := q.bottom("id:space-large"), q.top("id:page-footer"); bottom > footer {
+		t.Errorf("the list ends at %v, under the action bar at %v", bottom, footer)
 	}
 }
