@@ -833,10 +833,10 @@ func TestWindowsRunsTheUninstallerThenOffersWhatItLeft(t *testing.T) {
 	p.Find("id:remove-found >> text:移到回收站（3 KB）")
 	p.Press("id:remove-found")
 	p.WaitForGone("id:leftovers-dialog", wait)
+	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text == "已卸载「Foo」，3 KB 已移到回收站" })
 	if got := svc.Removes(); len(got) != 1 || !slices.Equal(got[0].LeftoverIDs, []string{"roaming"}) {
 		t.Fatalf("removes %+v", got)
 	}
-	p.WaitUntil(wait, func() bool { text, _ := p.toast(); return text == "已卸载「Foo」，3 KB 已移到回收站" })
 	if p.Exists("id:done") {
 		t.Error("a done card for a whole uninstall")
 	}
