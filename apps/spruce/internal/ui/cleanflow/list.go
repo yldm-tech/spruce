@@ -244,7 +244,7 @@ func itemList(cx *core.Scope, c func() cleanup.Category, l CategoryList, disable
 		}}
 }
 
-// ItemRow is one item of a list: its checkbox, name, folder (and note, the whole path as its tooltip), age, size and 在访达中显示. Checked and OnChange are its checkbox, which a press anywhere on the row toggles too, and its context menu offers with 在访达中显示 and 拷贝路径; Disabled disables it (nil for never), and a held item (Item.Hold) is always disabled, with the reason as the checkbox's tooltip; Reveal shows the item in Finder or Explorer (nil shows nothing). OnRange, when set, takes a Shift-press on the row, for the list to check or uncheck a range up to it. 概览's cards and the drill-down views list items with it.
+// ItemRow is one item of a list: its checkbox, name, folder (and note, the whole path as its tooltip), age, size and 在访达中显示. Checked and OnChange are its checkbox, which a press anywhere on the row toggles too, and its context menu offers with 在访达中显示 and 拷贝路径; Disabled disables it (nil for never), and a held item (Item.Hold) is always disabled, with the reason as the checkbox's tooltip; Reveal shows the item in Finder or Explorer (nil shows nothing). OnRange, when set, takes a Shift-press on the row or its checkbox, for the list to check or uncheck a range up to it. 概览's cards and the drill-down views list items with it.
 type ItemRow struct {
 	Item     cleanup.Item
 	Checked  func() bool
@@ -296,7 +296,7 @@ func (r ItemRow) Render(cx *core.Scope) core.Node {
 		t.MaxLines, t.EllipsizeMode = 1, core.EllipsizeTail
 		return t
 	}
-	var check core.Node = kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: r.Disabled, Checked: r.Checked, OnChange: r.OnChange}
+	var check core.Node = kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: r.Disabled, Checked: r.Checked, OnChange: r.OnChange, OnShift: r.OnRange}
 	if it.Hold != "" {
 		check = core.View{Tooltip: kit.Tooltip(it.Hold), Style: core.Style{FlexShrink: 0}, Children: []core.Node{
 			kit.Checkbox{Label: name, TestID: "item-" + it.ID, Disabled: func() bool { return true }, Checked: r.Checked, OnChange: r.OnChange},
