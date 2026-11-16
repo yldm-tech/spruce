@@ -85,7 +85,8 @@ func Page(cx *core.Scope) core.Node {
 				default:
 					groups = generalTab(stores, notify, windows, resetRef, func() { resetErr.Set(""); resetting.Set(true) })
 				}
-				return core.View{TestID: "settings-tab-" + string(t), Style: core.Style{Gap: 22}, Children: groups}
+				// Each tab fades in as it shows.
+				return core.View{TestID: "settings-tab-" + string(t), Style: core.Style{Gap: 22, Animated: kit.Enter(cx, kit.EnterFade, 0)}, Children: groups}
 			})
 		})
 	}}

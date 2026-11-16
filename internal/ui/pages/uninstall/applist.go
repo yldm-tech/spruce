@@ -67,7 +67,13 @@ func appList(cx *core.Scope, s *State, listRef *core.Ref, narrow func() bool) co
 	for i, o := range options {
 		buttons[i] = core.View{Role: core.RoleButton, Label: o.label, TestID: o.id,
 			Pressed: func() bool { return s.Sort.Get() == o.key },
-			OnPress: func(core.PressEvent) { s.Sort.Set(o.key) },
+			OnPress: func(core.PressEvent) {
+				if s.Sort.GetUntracked() != o.key {
+					// The rows slide into the new order.
+					kit.SettleLayout(cx)
+					s.Sort.Set(o.key)
+				}
+			},
 			Style: core.Style{MinHeight: core.Pt(28), Padding: core.Symmetric(0, 12), CornerRadius: 14, JustifyContent: core.JustifyCenter,
 				FontFamily: kit.FontSans, FontSize: kit.FontSmall, Color: kit.ColorTextSecondary, Cursor: core.CursorPointer, FocusVisible: focusRing(1),
 				Pressed: &core.Style{Background: kit.SurfaceButtonGhost, Color: kit.ColorText, FontFamily: kit.FontFace(kit.Semibold),
@@ -236,7 +242,8 @@ func appRow(cx *core.Scope, s *State, row core.ListRow, narrow func() bool, focu
 				st.Background, st.BorderColor, st.Hover = rowSelected, rowSelectedBorder, nil
 				st.GroupStyle = &core.GroupStyle{Name: listGroup, FocusVisible: focusRing(-2)}
 			}
-			return st
+			// The selection fades from row to row.
+			return kit.Pressable(st, 0.99)
 		},
 		Children: []core.Node{
 			appIcon(cx, func() string { return details().Icon }, 36),

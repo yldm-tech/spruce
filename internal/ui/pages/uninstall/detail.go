@@ -53,7 +53,11 @@ func detail(cx *core.Scope, s *State) core.Node {
 						Glyph: "app", TestID: "detail-empty"}
 				})
 			}
-			return core.Func(func(cx *core.Scope) core.Node { return appDetail(cx, s) })
+			// Each app picked fades in.
+			return core.Func(func(cx *core.Scope) core.Node {
+				return kit.Appear{Entrance: kit.EnterFade, Style: core.Style{FlexGrow: 1, FlexShrink: 1, MinHeight: core.Pt(0)},
+					Children: []core.Node{appDetail(cx, s)}}
+			})
 		}),
 	}}
 }

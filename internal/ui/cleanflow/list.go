@@ -77,14 +77,24 @@ func (l CategoryList) Render(cx *core.Scope) core.Node {
 			OnPress: func() { l.OnChange(NothingSelected) }},
 		core.View{Style: core.Style{FlexBasis: core.Pct(100)}, Children: []core.Node{kit.ErrorLine{Text: revealErr.Get, TestID: "reveal-error"}}},
 	}}
-	cards := core.Each(l.Categories, func(c cleanup.Category) string { return c.ID }, func(cx *core.Scope, c func() cleanup.Category, _ func() int) core.Node {
-		return categoryCard(cx, c, l, disabled, reveal)
+	cards := core.Each(l.Categories, func(c cleanup.Category) string { return c.ID }, func(cx *core.Scope, c func() cleanup.Category, index func() int) core.Node {
+		return categoryCard(cx, c, l, disabled, reveal, core.Untracked(cx, index))
+	})
+	// A newer result (after a clean, a check) moves the cards into place: categories that went leave a gap that closes.
+	first := true
+	cx.Effect(func() {
+		l.Categories()
+		if first {
+			first = false
+			return
+		}
+		cx.Untrack(func() { kit.SettleLayout(cx) })
 	})
 	return core.View{Role: core.RoleRegion, Label: l.Label, TestID: l.TestID, Style: core.Style{Gap: 12}, Children: []core.Node{toolbar, cards}}
 }
 
 // categoryCard is one category: its head and, once expanded, its items.
-func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string)) core.Node {
+func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, disabled func() bool, reveal func(string), index int) core.Node {
 	id := core.Untracked(cx, c).ID
 	expand := id == l.Expand && len(core.Untracked(cx, c).Items) > 0
 	open := core.NewSignal(cx, expand)
@@ -136,8 +146,11 @@ func categoryCard(cx *core.Scope, c func() cleanup.Category, l CategoryList, dis
 		}},
 		expandButton(id, title, open, empty),
 	}}
-	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node { return itemList(cx, c, l, disabled, reveal) }}
-	return core.View{Ref: ref, Style: core.Style{FlexShrink: 0}, Children: []core.Node{
+	items := core.Show{When: open.Get, Then: func(cx *core.Scope) core.Node {
+		return kit.Appear{Entrance: kit.EnterFade, Children: []core.Node{itemList(cx, c, l, disabled, reveal)}}
+	}}
+	// The cards come in one after another as the view shows them.
+	return core.View{Ref: ref, Style: core.Style{FlexShrink: 0, Animated: kit.Enter(cx, kit.EnterRise, kit.StaggerDelay(index))}, Children: []core.Node{
 		kit.Card{Clip: true, TestID: "category-" + id, Children: []core.Node{head, items}},
 	}}
 }
@@ -161,13 +174,7 @@ func expandButton(id string, title func() string, open *core.Signal[bool], empty
 				open.Set(!open.GetUntracked())
 			}
 		},
-		Children: []core.Node{core.Dynamic(func(*core.Scope) core.Node {
-			glyph := "chevron-down"
-			if open.Get() {
-				glyph = "chevron-up"
-			}
-			return core.Func(func(*core.Scope) core.Node { return kit.Glyph{Name: glyph, Size: 16, Color: core.CurrentColor} })
-		})},
+		Children: []core.Node{kit.Chevron{Open: open.Get}},
 	}
 }
 

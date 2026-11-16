@@ -23,11 +23,15 @@ var targetGlyphs = map[string]struct {
 	"programFiles": {kit.ToneBlue, "apps"},
 }
 
-// cardGrid lays cards out as the design's grid of 250-point columns.
-func cardGrid(label string, cards []core.Node) core.Node {
+// cardGrid lays cards out as the design's grid of 250-point columns, the cards coming in one after another from first, the grid's place among the page's sections.
+func cardGrid(label string, first int, cards []core.Node) core.Node {
+	items := make([]core.Node, len(cards))
+	for i, c := range cards {
+		items[i] = kit.Appear{Entrance: kit.EnterRise, Delay: kit.StaggerDelay(first + i), Style: core.Style{MinWidth: core.Pt(0)}, Children: []core.Node{c}}
+	}
 	return core.View{Role: core.RoleGroup, Label: label,
 		Style:    core.Style{Display: core.DisplayGrid, GridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", Gap: 14},
-		Children: cards}
+		Children: items}
 }
 
 // startView is the page before a scan: the disks with how full they are, the quick folders, 选择其他文件夹 and 最近变化. Choosing any of them starts a scan. The disks are read again each time it shows, since their free space changes outside the app.
@@ -50,14 +54,14 @@ func startView(cx *core.Scope, s *State, files Files) core.Node {
 					for i, vol := range v.Volumes {
 						cards[i] = volumeCard(vol, s)
 					}
-					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("磁盘"), cardGrid("磁盘", cards)}})
+					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("磁盘"), cardGrid("磁盘", 0, cards)}})
 				}
 				if len(v.Targets) > 0 {
 					cards := make([]core.Node, len(v.Targets))
 					for i, t := range v.Targets {
 						cards[i] = targetCard(t, s)
 					}
-					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("常用位置"), cardGrid("常用位置", cards)}})
+					sections = append(sections, core.View{Style: core.Style{Gap: 10}, Children: []core.Node{kit.SectionTitle("常用位置"), cardGrid("常用位置", len(v.Volumes), cards)}})
 				}
 				return core.Group(sections)
 			}),
@@ -76,11 +80,10 @@ func startView(cx *core.Scope, s *State, files Files) core.Node {
 
 // cardStyle is a start card's look (.space-card): the glass card as a button.
 func cardStyle() core.Style {
-	return core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(18, 20), CornerRadius: kit.RadiusCard,
+	return kit.Pressable(core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 14, Padding: core.Symmetric(18, 20), CornerRadius: kit.RadiusCard,
 		Background: kit.SurfaceCard, BorderWidth: 1, BorderColor: kit.BorderCard, Color: kit.ColorText, Cursor: core.CursorPointer,
-		Transition:   core.Transition{Duration: 150_000_000, Easing: core.Ease, Properties: core.TransitionBackground},
 		Hover:        &core.Style{Background: cardHover},
-		FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}}
+		FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}}, 0.98)
 }
 
 // cardText is the column beside a card's tile: its title, the line under it and what follows.

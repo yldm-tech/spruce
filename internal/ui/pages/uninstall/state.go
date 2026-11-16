@@ -9,6 +9,7 @@ import (
 	"github.com/yldm-tech/spruce/internal/app"
 	"github.com/yldm-tech/spruce/internal/engine/cleanup"
 	"github.com/yldm-tech/spruce/internal/ui/async"
+	"github.com/yldm-tech/spruce/internal/ui/kit"
 )
 
 // Step is where the page is in an uninstall.
@@ -162,6 +163,10 @@ func (s *State) LoadApps() {
 			apps = []app.UninstallApp{}
 		}
 		s.AppsErr.Set("")
+		if s.Apps.GetUntracked() != nil {
+			// A list read again (after an uninstall, 刷新) closes over the apps that went.
+			kit.SettleLayout(s.cx)
+		}
 		s.Apps.Set(apps)
 		s.measure()
 	})
@@ -178,6 +183,8 @@ func (s *State) measure() {
 	seq := s.measureSeq
 	s.Measuring.Set(true)
 	batch := async.NewBatch(s.cx, detailsEvery, func(updates []app.UninstallAppDetails) {
+		// Rows slide into the order the new sizes and times give, instead of jumping.
+		kit.SettleLayout(s.cx)
 		s.Details.Set(MergeDetails(s.Details.GetUntracked(), updates))
 	})
 	async.Do(s.cx, ctx, func(ctx context.Context) (struct{}, error) {
