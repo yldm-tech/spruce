@@ -240,13 +240,18 @@ func TestRunShowsProgressThenTheSummary(t *testing.T) {
 // 停止 ends the run: the overlay says 正在停止… until the run returns, then the done card says it was stopped.
 func TestStopEndsTheRun(t *testing.T) {
 	stopped := make(chan struct{})
+	first := true
 	svc := &maintenancefake.Service{Tasks: maintenancefake.MacCatalog(),
 		OnRun: func(ctx context.Context, ids []string, progress func(app.ProgressEvent)) (app.RunSummary, error) {
+			if !first {
+				return maintenancefake.Summary(maintenancefake.Result("quicklook", taskresult.Applied, "已刷新 QuickLook")), nil
+			}
+			first = false
 			progress(app.ProgressEvent{Kind: app.ProgressStarted, TaskID: "dns", Done: 0, Total: len(ids)})
 			<-ctx.Done()
 			<-stopped
 			sum := maintenancefake.Summary(
-				maintenancefake.Result("dns", taskresult.Skipped, "已停止，无法确认是否执行"),
+				maintenancefake.Result("dns", taskresult.Skipped, enginemaint.StoppedUncertain),
 				maintenancefake.Result("quicklook", taskresult.Skipped, "维护已中断，未执行"),
 			)
 			sum.Interrupted = true
@@ -265,6 +270,13 @@ func TestStopEndsTheRun(t *testing.T) {
 	close(stopped)
 	p.WaitFor("id:done", wait)
 	p.Find("id:done >> role:header 维护已中断")
+
+	// The admin batch may still be running as root, so running again leaves its task out.
+	p.Press("id:rerun")
+	p.WaitUntil(wait, func() bool { return len(svc.Runs()) == 2 })
+	if got := strings.Join(svc.Runs()[1], ","); got != "quicklook" {
+		t.Errorf("ran again %q", got)
+	}
 }
 
 // runWith starts a run that answers summary at once and waits for its done card titled title.

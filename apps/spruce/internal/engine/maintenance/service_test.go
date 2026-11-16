@@ -302,7 +302,7 @@ func TestStoppingEndsTheElevatedBatch(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	if got[0].Outcome != taskresult.Skipped || got[0].Message != "已停止，无法确认是否执行" {
+	if got[0].Outcome != taskresult.Skipped || !MayStillRun(got[0]) {
 		t.Errorf("admin result %+v", got[0])
 	}
 	if got[1].Outcome != taskresult.Skipped || len(r.ran) != 0 {

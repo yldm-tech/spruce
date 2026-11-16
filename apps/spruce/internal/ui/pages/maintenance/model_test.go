@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"spruce/apps/spruce/internal/app"
+	enginemaint "spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/taskresult"
 )
 
@@ -60,7 +61,7 @@ func TestUnfinished(t *testing.T) {
 	partial := r("b", taskresult.Applied, "另有 2 个未能清除")
 	partial.Partial = true
 	got := Unfinished([]taskresult.Result{r("a", taskresult.Applied, "好"), partial, r("c", taskresult.Unchanged, ""), r("d", taskresult.Skipped, "取消"),
-		r("e", taskresult.Unavailable, "没有"), r("f", taskresult.Failed, "坏")})
+		r("e", taskresult.Unavailable, "没有"), r("f", taskresult.Failed, "坏"), r("g", taskresult.Skipped, enginemaint.StoppedUncertain)})
 	if !reflect.DeepEqual(got, []string{"b", "d", "f"}) {
 		t.Errorf("Unfinished = %q", got)
 	}

@@ -242,7 +242,7 @@ func (r *run) runElevated(tasks []TaskImpl) {
 	switch {
 	case err != nil && r.ctx.Err() != nil:
 		for _, t := range tasks {
-			r.finished(t, taskresult.Result{Outcome: taskresult.Skipped, Message: "已停止，无法确认是否执行", Detail: err.Error()}, 0)
+			r.finished(t, taskresult.Result{Outcome: taskresult.Skipped, Message: StoppedUncertain, Detail: err.Error()}, 0)
 		}
 		return
 	case errors.Is(err, elevate.ErrCancelled):
@@ -261,6 +261,14 @@ func (r *run) runElevated(tasks []TaskImpl) {
 	for i, t := range tasks {
 		r.finished(t, results[i], 0)
 	}
+}
+
+// StoppedUncertain is the message of an admin task whose batch was stopped once the system prompt may have been answered: its root child may have run it, or may still be running it.
+const StoppedUncertain = "已停止，无法确认是否执行"
+
+// MayStillRun reports whether r is an admin task stopped while its batch may still be running as root, so running it again at once could run it twice side by side.
+func MayStillRun(r taskresult.Result) bool {
+	return r.Outcome == taskresult.Skipped && r.Message == StoppedUncertain
 }
 
 func interrupted() taskresult.Result {

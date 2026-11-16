@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/maintenance"
 	"spruce/apps/spruce/internal/engine/taskresult"
 )
 
@@ -40,11 +41,11 @@ func IsIssue(r taskresult.Result) bool {
 	return true
 }
 
-// Unfinished returns the IDs of the tasks a run did not finish and that running again may finish: those needing attention, but for a task this computer does not have.
+// Unfinished returns the IDs of the tasks a run did not finish and that running again may finish: those needing attention, but for a task this computer does not have and for an admin task stopped while it may still be running as root.
 func Unfinished(results []taskresult.Result) []string {
 	var ids []string
 	for _, r := range results {
-		if IsIssue(r) && r.Outcome != taskresult.Unavailable {
+		if IsIssue(r) && r.Outcome != taskresult.Unavailable && !maintenance.MayStillRun(r) {
 			ids = append(ids, r.TaskID)
 		}
 	}
