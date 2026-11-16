@@ -207,7 +207,7 @@ func runRow(cx *core.Scope, s *State, run enginehist.Run, index func() int) core
 	}, Children: []core.Node{core.View{Children: []core.Node{head, line}}, details}}
 }
 
-// runDetails is what a run's row shows when open: a maintenance run's tasks with how each ended, another run's detail lines, and the run's start, end and duration, all selectable to copy. A line that starts with a path offers 在访达中显示 and 拷贝路径 on a right click.
+// runDetails is what a run's row shows when open: a maintenance run's tasks with how each ended, another run's detail lines, and the run's start, end and duration, all selectable to copy. A line that names a path offers 在访达中显示 and 拷贝路径 on a right click.
 func runDetails(cx *core.Scope, s *State, run enginehist.Run) core.Node {
 	list := core.Style{Gap: 8, Padding: core.Edges{Top: 8}}
 	var body core.Node = core.Group{}
@@ -232,7 +232,7 @@ func runDetails(cx *core.Scope, s *State, run enginehist.Run) core.Node {
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: []core.Node{body, times}}
 }
 
-// detailLine is one line of a run's details. One that starts with a path (DetailPath) reveals it or copies it from its right-click menu; a reveal that fails says so in the toast.
+// detailLine is one line of a run's details. One that names a path (DetailPath) reveals it or copies it from its right-click menu; a reveal that fails says so in the toast.
 func detailLine(cx *core.Scope, s *State, deps Deps, line, testID string) core.Node {
 	text := core.Text{Content: line, TestID: testID, Style: core.Style{FontFamily: kit.FontSans, FontSize: kit.FontBody, LineHeightMultiple: 1.5,
 		Color: kit.ColorTextSecondary}}
