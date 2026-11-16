@@ -32,7 +32,7 @@ type State struct {
 
 	// Catalog is the platform's tasks in display order, nil until loaded.
 	Catalog *core.Signal[[]app.TaskView]
-	// overrides are the user's choices; a task without one keeps its DefaultOn.
+	// overrides are the user's choices; a task without one keeps its DefaultOn. Provide keeps them in the app's scope, so they outlive the page.
 	overrides *core.Signal[map[string]bool]
 	Phase     *core.Signal[Phase]
 	Progress  *core.Signal[RunProgress]
@@ -53,11 +53,15 @@ type State struct {
 	onSettled func()
 }
 
-// NewState makes the controller in cx, the page's scope, and loads the catalog.
+// NewState makes the controller in cx, the page's scope, and loads the catalog. The choices are the ones Provide keeps, or the page's own when it is mounted without Provide.
 func NewState(cx *core.Scope, svc Service, onSettled func()) *State {
+	overrides := choicesKey.Use(cx)
+	if overrides == nil {
+		overrides = core.NewSignalFunc(cx, map[string]bool{}, nil)
+	}
 	s := &State{cx: cx, ctx: cx.Context(), svc: svc, onSettled: onSettled,
 		Catalog:   core.NewSignalFunc[[]app.TaskView](cx, nil, nil),
-		overrides: core.NewSignalFunc(cx, map[string]bool{}, nil),
+		overrides: overrides,
 		Phase:     core.NewSignal(cx, PhaseIdle),
 		Progress:  core.NewSignalFunc(cx, RunProgress{}, nil),
 		RunTasks:  core.NewSignalFunc[[]app.TaskView](cx, nil, nil),

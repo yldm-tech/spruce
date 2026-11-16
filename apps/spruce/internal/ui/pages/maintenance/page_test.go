@@ -45,6 +45,20 @@ func start(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services
 	return p
 }
 
+// startKept mounts the page as the shell does, with Provide, so what it keeps outlives a showing.
+func startKept(t *testing.T, svc *maintenancefake.Service, fakes *storefake.Services) *page {
+	t.Helper()
+	p := &page{svc: svc, fakes: fakes}
+	p.App = nsgotest.Start(t, func(cx *core.Scope) core.Node {
+		p.stores = storefake.Provide(cx, fakes.Deps())
+		maintenance.Provide(cx, maintenance.Deps{Maintenance: svc})
+		p.shown = core.NewSignal(cx, true)
+		return core.Show{When: p.shown.Get, Then: maintenance.Page}
+	}, nsgotest.Size(1052, 820))
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) > 0 })
+	return p
+}
+
 // waitTicking settles until selector matches one view, moving the manual clock so throttled progress (async.Batch) comes through.
 func (p *page) waitTicking(selector string) {
 	p.WaitUntil(wait, func() bool {
@@ -92,6 +106,21 @@ func TestIdle(t *testing.T) {
 	}
 	// 5 + 5 + 20 + 30 seconds.
 	p.Find("text:约 1 分钟")
+}
+
+// The choices on the cards survive leaving the page and coming back.
+func TestChoicesOutliveTheVisit(t *testing.T) {
+	p := startKept(t, &maintenancefake.Service{Tasks: maintenancefake.MacCatalog()}, newFakes(t))
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) == 6 })
+	p.Press("role:switch 刷新 DNS 缓存")
+	p.Press("role:switch 校验 Spotlight 索引")
+	p.Post(func() { p.shown.Set(false) })
+	p.WaitForGone("role:switch", wait)
+	p.Post(func() { p.shown.Set(true) })
+	p.WaitUntil(wait, func() bool { return len(p.Query("role:switch")) == 6 })
+	if p.checked("刷新 DNS 缓存") || !p.checked("校验 Spotlight 索引") {
+		t.Errorf("DNS %v, Spotlight %v after coming back", p.checked("刷新 DNS 缓存"), p.checked("校验 Spotlight 索引"))
+	}
 }
 
 func TestSwitchesCountAndDisableRun(t *testing.T) {
