@@ -9,6 +9,7 @@ import (
 	"github.com/nsgo-dev/nsgo/nsgotest"
 
 	"spruce/apps/spruce/internal/app"
+	"spruce/apps/spruce/internal/engine/cleanup"
 	"spruce/apps/spruce/internal/engine/schedule"
 	"spruce/apps/spruce/internal/ui/cleanflow/cleanflowfake"
 	"spruce/apps/spruce/internal/ui/nav"
@@ -210,6 +211,70 @@ func TestEscapeLeavesADrillDownView(t *testing.T) {
 	// On a sidebar page Escape does nothing.
 	a.Key("escape")
 	a.Find("role:header 概览")
+}
+
+// drillState is a finished check whose 系统垃圾 holds one selected category that goes to the Trash, so 清理 asks a question that is not a danger one.
+func drillState() app.OverviewState {
+	logs := cleanup.Category{ID: "system-junk:logs", Source: "system-junk", Title: "日志", Kind: cleanup.KindCache, Deletion: cleanup.DeleteTrash, Selected: true,
+		Items: []cleanup.Item{{ID: "/Users/me/Library/Logs/a.log", Path: "/Users/me/Library/Logs/a.log", Size: 24_000_000, Selected: true}}, Size: 24_000_000}
+	res := cleanflowfake.Result(logs)
+	res.Sources = []cleanup.SourceState{{ID: "system-junk", Status: cleanup.SourceDone}}
+	return app.OverviewState{Phase: app.OverviewIdle, Result: &app.OverviewResult{CheckedAt: time.Now(), Mode: app.CheckForeground, Actionable: true, Scan: res}}
+}
+
+// On a drill-down view with a dialog open, Escape answers the dialog and leaves the view only once it is gone; the menu's 返回 waits for it too.
+func TestEscapeClosesADialogBeforeLeavingADrillDown(t *testing.T) {
+	fakes := storefake.New(t.TempDir())
+	fakes.Overview = storefake.NewOverview(drillState())
+	a, _ := startShell(t, fakes, nav.SystemJunk)
+	a.WaitFor("id:clean", wait)
+	a.Press("id:clean")
+	a.WaitFor("id:confirm", wait)
+	for _, m := range a.Menu {
+		if m.Label == "前往" && !m.Items[len(m.Items)-1].Disabled {
+			t.Error("返回 is enabled under the dialog")
+		}
+	}
+	a.Key("escape")
+	a.WaitForGone("id:confirm", wait)
+	if !a.Exists("id:clean") {
+		t.Fatal("Escape left 系统垃圾 along with its dialog")
+	}
+	a.Key("escape")
+	a.WaitFor("role:header 概览", wait)
+}
+
+// The question before quitting, opened over a page's confirmation, takes Return: it must not start the clean under it.
+func TestReturnUnderTheQuitQuestionLeavesThePageDialogAlone(t *testing.T) {
+	activity := schedule.NewActivity(nil)
+	_, end, err := activity.BeginClean(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer end()
+	fakes := storefake.New(t.TempDir())
+	ov := storefake.NewOverview(drillState())
+	cleans := 0
+	ov.OnClean = func(context.Context, cleanup.CleanRequest, app.CleanOrigin, func(cleanup.Progress)) (app.OverviewOutcome, error) {
+		cleans++
+		return app.OverviewOutcome{}, nil
+	}
+	fakes.Overview = ov
+	d := shell.Deps{Stores: fakes.Deps(), Start: nav.SystemJunk, Activity: activity, SystemJunk: systemjunk.Deps{Files: &cleanflowfake.Files{}}}
+	a := nsgotest.Start(t, core.AppRoot(shell.App(d)), nsgotest.Size(1280, 820), nsgotest.Environment(core.Environment{OS: core.OSMacOS, Idiom: core.IdiomDesktop}))
+	a.WaitFor("id:clean", wait)
+	a.Press("id:clean")
+	a.WaitFor("id:confirm", wait)
+	a.ChooseMenu("Spruce", "退出 Spruce")
+	a.WaitFor("id:quit-confirm", wait)
+	a.Key("enter")
+	a.Advance(time.Second)
+	if cleans != 0 || !a.Exists("id:confirm >> id:confirm-ok") {
+		t.Errorf("Return under the question confirmed the page's dialog (%d cleans)", cleans)
+	}
+	if a.Quits != 0 {
+		t.Errorf("Return quit %d times", a.Quits)
+	}
 }
 
 func TestMenuGoesToPages(t *testing.T) {

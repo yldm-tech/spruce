@@ -17,7 +17,7 @@ type Blocker interface {
 // BlockerKey provides the shell's Blocker to dialogs and overlays.
 var BlockerKey = core.NewKey[Blocker]("spruce.blocker", nil)
 
-// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. As it opens it takes the keyboard from a text field of the page, which would otherwise keep it on macOS and with it Return, Escape and the typing; initial then takes the keyboard's focus, and returnFocus takes it as the layer goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey). sidebarTip, when set, is what the sidebar says under the pointer while the layer keeps it out of reach (an overlay's work).
+// layer is what every dialog and overlay shares, on base.Dialog: a modal layer over the window whose scrim (Scrim over a 16-point backdrop blur) covers only the main area, the sidebar staying clear but out of reach, the popup centered in the main area. Escape calls onClose, when set, and does nothing else: base.Dialog never closes the layer itself, since a layer it closed stays hidden while open still holds (its userClosed), so only open, the app's own state, takes it away; the scrim never closes it. As it opens it takes the keyboard from a text field of the page, which would otherwise keep it on macOS and with it Return, Escape and the typing; initial then takes the keyboard's focus, and returnFocus takes it as the layer goes. onReturn, when set, is what Return does on macOS while the layer is open (see returnKey); without it Return does nothing there, rather than reach a layer under this one. sidebarTip, when set, is what the sidebar says under the pointer while the layer keeps it out of reach (an overlay's work).
 type layer struct {
 	open        func() bool
 	onClose     func()
@@ -78,10 +78,12 @@ func (l layer) render(cx *core.Scope) core.Node {
 		}
 		return core.Group{}
 	})
-	children := []core.Node{hold}
-	if l.onReturn != nil {
-		children = append(children, returnKey(l.onReturn))
+	// The newest binding of a key wins, so the top layer takes Return even when it has nothing to do with it: a question opened over a dialog (退出 during a run over a page's confirmation) must not let Return confirm the dialog under it.
+	onReturn := l.onReturn
+	if onReturn == nil {
+		onReturn = func() {}
 	}
+	children := []core.Node{hold, returnKey(onReturn)}
 	return base.Dialog{
 		Open:                   l.open,
 		Animation:              core.ModalNone,
@@ -190,7 +192,7 @@ func (d Dialog) Render(cx *core.Scope) core.Node {
 		popup: cardStyle(core.Symmetric(32, 40)), children: children}.render(cx)
 }
 
-// ConfirmDialog asks before an action: a title, the message (Lines, one per line, or Message) and 取消 and the confirmation. Return is the confirmation, except that Danger draws it red, focuses 取消 first and leaves Return unbound, for what cannot be undone. Busy disables both buttons, Escape and Return while the action starts; Escape is 取消 otherwise.
+// ConfirmDialog asks before an action: a title, the message (Lines, one per line, or Message) and 取消 and the confirmation. Return is the confirmation, except that Danger draws it red, focuses 取消 first and has Return do nothing, for what cannot be undone. Busy disables both buttons, Escape and Return while the action starts; Escape is 取消 otherwise.
 type ConfirmDialog struct {
 	Open                      func() bool
 	Title                     string

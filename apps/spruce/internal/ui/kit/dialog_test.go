@@ -61,9 +61,6 @@ func TestReturnNeverConfirmsADangerDialog(t *testing.T) {
 	a := dialogApp(t, "id:confirm-ok", func(open *core.Signal[bool]) core.Node {
 		return kit.ConfirmDialog{Open: open.Get, Title: "清空历史", Danger: true, ConfirmLabel: "清空", OnConfirm: func() { confirms++ }, OnCancel: func() {}}
 	})
-	if bindsReturn(a) {
-		t.Error("a danger dialog binds Return")
-	}
 	a.Key("enter")
 	if confirms != 0 {
 		t.Errorf("Return confirmed a danger dialog %d times", confirms)
@@ -105,8 +102,9 @@ func TestReturnPressesTheInitialActionOfADialog(t *testing.T) {
 
 	removes = 0
 	d := dialogApp(t, "id:remove", actions(true))
-	if bindsReturn(d) {
-		t.Error("a danger dialog binds Return")
+	d.Key("enter")
+	if removes != 0 {
+		t.Errorf("Return pressed the action of a danger dialog %d times", removes)
 	}
 }
 
@@ -141,5 +139,36 @@ func TestOpeningADialogTakesTheKeyboardFromThePage(t *testing.T) {
 	a.WaitFor("id:dialog-close", 5*time.Second)
 	if a.Find("id:search").Focused {
 		t.Error("the page's field keeps the keyboard under the dialog")
+	}
+}
+
+// Return goes to the top layer only: the newest binding of a key wins, so a danger dialog or an overlay opened over a dialog that takes Return (the question before quitting over a page's confirmation) must take it too, or Return would confirm the dialog under it.
+func TestReturnNeverReachesALayerUnderTheTopOne(t *testing.T) {
+	confirms := 0
+	top := func(open *core.Signal[bool]) core.Node {
+		return kit.ConfirmDialog{Open: open.Get, Title: "正在清理", Danger: true, ConfirmLabel: "停止并退出", OnConfirm: func() {}, OnCancel: func() { open.Set(false) },
+			TestID: "top"}
+	}
+	overlay := func(open *core.Signal[bool]) core.Node {
+		return kit.Overlay{Open: open.Get, Title: "正在清理", TestID: "top"}
+	}
+	for name, layer := range map[string]func(open *core.Signal[bool]) core.Node{"a danger dialog": top, "an overlay": overlay} {
+		confirms = 0
+		var upper *core.Signal[bool]
+		a := dialogApp(t, "id:under >> id:confirm-ok", func(open *core.Signal[bool]) core.Node {
+			return core.Func(func(cx *core.Scope) core.Node {
+				upper = core.NewSignal(cx, false)
+				return core.Group{
+					kit.ConfirmDialog{Open: open.Get, Title: "确认清理", ConfirmLabel: "清理", OnConfirm: func() { confirms++ }, OnCancel: func() {}, TestID: "under"},
+					layer(upper),
+				}
+			})
+		})
+		a.Post(func() { upper.Set(true) })
+		a.WaitFor("id:top", 5*time.Second)
+		a.Key("enter")
+		if confirms != 0 {
+			t.Errorf("Return under %s confirmed the dialog below it %d times", name, confirms)
+		}
 	}
 }
