@@ -1,6 +1,8 @@
 package shell
 
 import (
+	"time"
+
 	"github.com/nsgo-dev/nsgo/core"
 
 	"spruce/apps/spruce/internal/ui/kit"
@@ -11,14 +13,17 @@ import (
 // titleStrip is the height of the sidebar's top strip, where the traffic lights sit on macOS; it drags the window. The design's is max(the window controls' bottom, 30): the controls of the platform's title bar end above 30 points on macOS (about 23) and are on the right on Windows, so it is 30, while desktop.TitleBar reports the whole bar's height (32 on macOS), which would push the sidebar down.
 const titleStrip core.Points = 30
 
-// Sidebar is the app's sidebar: one entry per page in its group, the current one lit, the footer's two as bare glyphs. It shows disabled and out of reach of assistive technology while an overlay is open.
+// Sidebar is the app's sidebar: one entry per page in its group, the current one lit, the footer's two as bare glyphs. While an overlay or a dialog is open it fades to blockedOpacity, its entries disabled, and goes out of reach of assistive technology, so it does not look live while it takes no clicks.
 type Sidebar struct {
 	Nav   *nav.Navigator
 	Block *store.Block
 }
 
+// blockedOpacity is how far the sidebar fades while an overlay or a dialog blocks it.
+const blockedOpacity = 0.45
+
 // Render implements core.Node.
-func (s Sidebar) Render(*core.Scope) core.Node {
+func (s Sidebar) Render(cx *core.Scope) core.Node {
 	strip := core.View{Desktop: core.DesktopViewProps{WindowDrag: core.WindowDragOn}, Style: core.Style{FlexShrink: 0, Height: core.Pt(titleStrip)}}
 	children := []core.Node{strip}
 	var group []core.Node
@@ -52,8 +57,17 @@ func (s Sidebar) Render(*core.Scope) core.Node {
 		Borders: core.Edges{Top: 1}, BorderColor: kit.BorderSubtle}, Children: footer})
 	return core.View{Role: core.RoleNavigation, Label: "Spruce", TestID: "sidebar",
 		AccessibilityElementsHidden: s.Block.Blocked,
-		Style: core.Style{Width: core.Pt(kit.SidebarWidth), FlexShrink: 0, Gap: 22, Padding: core.Edges{Left: 14, Right: 14, Bottom: 20},
-			Background: kit.SurfaceSidebar, Borders: core.Edges{Right: 1}, BorderColor: kit.BorderSubtle},
+		StyleFunc: func() core.Style {
+			st := core.Style{Width: core.Pt(kit.SidebarWidth), FlexShrink: 0, Gap: 22, Padding: core.Edges{Left: 14, Right: 14, Bottom: 20},
+				Background: kit.SurfaceSidebar, Borders: core.Edges{Right: 1}, BorderColor: kit.BorderSubtle}
+			if !cx.Env().ReduceMotion() {
+				st.Transition = core.Transition{Duration: 200 * time.Millisecond, Easing: core.Ease, Properties: core.TransitionOpacity}
+			}
+			if s.Block.Blocked() {
+				st.Opacity = core.Alpha(blockedOpacity)
+			}
+			return st
+		},
 		Children: children}
 }
 
@@ -73,9 +87,12 @@ func (s Sidebar) item(r nav.Route, footer bool) core.Node {
 		StyleFunc: func() core.Style {
 			st := core.Style{Direction: core.Row, AlignItems: core.AlignCenter, Gap: 12, MinHeight: core.Pt(height), Padding: core.Symmetric(0, 10),
 				CornerRadius: kit.RadiusNavItem, FontFamily: kit.FontSans, FontSize: size, Color: color, Cursor: core.CursorPointer,
-				FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText}}
+				FocusVisible: &core.Style{OutlineWidth: 2, OutlineOffset: 2, OutlineColor: kit.ColorText},
+				Disabled:     &core.Style{Cursor: core.CursorDefault}}
 			if current() {
 				st.FontFamily, st.FontWeight, st.Color, st.Background = kit.FontFace(kit.Semibold), kit.FaceWeight(kit.Semibold), kit.ColorText, kit.SurfaceNavActive
+			} else {
+				st.Hover = kit.HoverEntry()
 			}
 			// The highlight fades from the page left to the page opened, and the entry gives a little under a press.
 			return kit.Pressable(st, 0.98)

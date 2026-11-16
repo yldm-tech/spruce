@@ -71,8 +71,8 @@ var glyphs = map[string]glyph{
 	"chevron-right": {round: true, paths: `<path d="M9 6l6 6-6 6"/>`},
 	// Put back where it was (放回原处).
 	"undo": {round: true, paths: `<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/> <path d="M3 4v4h4"/>`},
-	// Show in Finder or Explorer.
-	"reveal": {round: true, paths: `<circle cx="11" cy="11" r="7"/> <path d="M20 20l-4-4"/>`},
+	// Show in Finder or Explorer: a folder with an arrow out of it, not a magnifier, which reads as search.
+	"reveal": {round: true, paths: `<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/> <path d="M9.5 15.5l5-5M10.5 10.5h4v4"/>`},
 	// Move to the Trash.
 	"trash": {round: true, paths: `<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>`},
 	// A folder row.

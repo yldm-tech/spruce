@@ -98,3 +98,40 @@ func TestToastEscapeWithoutFocusDoesNothing(t *testing.T) {
 		t.Error("Escape closed a toast without the focus")
 	}
 }
+
+// The time runs only while the app is active: a toast that comes while the user is in another app waits for them, and one they leave keeps what it had left.
+func TestToastPausesWhileTheAppIsInactive(t *testing.T) {
+	a, closes, _ := toastApp(t)
+	a.Advance(2 * time.Second)
+	a.SetEnvironment(core.Environment{Lifecycle: core.LifecycleInactive})
+	a.Advance(30 * time.Second)
+	if !a.Exists("id:toast") || *closes != 0 {
+		t.Fatal("closed while the app was inactive")
+	}
+	a.SetEnvironment(core.Environment{Lifecycle: core.LifecycleActive})
+	a.Advance(3500 * time.Millisecond)
+	if !a.Exists("id:toast") {
+		t.Fatal("the pause lost the time left")
+	}
+	a.Advance(time.Second)
+	if a.Exists("id:toast") || *closes != 1 {
+		t.Errorf("did not close once the time left ran out (closes %d)", *closes)
+	}
+}
+
+func TestToastShownInTheBackgroundWaitsForTheApp(t *testing.T) {
+	a, closes, _ := toastApp(t, nsgotest.Environment(core.Environment{Lifecycle: core.LifecycleBackground}))
+	a.Advance(time.Minute)
+	if !a.Exists("id:toast") || *closes != 0 {
+		t.Fatal("closed while the app was in the background")
+	}
+	a.SetEnvironment(core.Environment{Lifecycle: core.LifecycleActive})
+	a.Advance(5 * time.Second)
+	if !a.Exists("id:toast") {
+		t.Fatal("did not get its whole time once the app came back")
+	}
+	a.Advance(2 * time.Second)
+	if a.Exists("id:toast") || *closes != 1 {
+		t.Errorf("did not close after its time (closes %d)", *closes)
+	}
+}

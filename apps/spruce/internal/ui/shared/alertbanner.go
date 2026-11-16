@@ -45,7 +45,7 @@ func AlertSub(others int, m SystemMonitor) string {
 	return s + m.Unit + "如果不是你正在用它，可以在" + m.Name + "里看看。Spruce 不会结束进程，只提醒你。"
 }
 
-// AlertBanner warns about a process that has kept the CPU busy for a long time. It only informs: Spruce never ends processes. It is absent while there is no alert; screen readers hear it appear.
+// AlertBanner warns about a process that has kept the CPU busy for a long time. It only informs: Spruce never ends processes. Its close button hides that process until the app quits (Alerts.Ignore), so the next alert shows, or none. It is absent while there is no alert; screen readers hear it appear.
 type AlertBanner struct{}
 
 // Render implements core.Node.
@@ -54,7 +54,13 @@ func (AlertBanner) Render(cx *core.Scope) core.Node {
 	failed := core.NewSignal(cx, false)
 	m := Monitor()
 	return core.Show{When: func() bool { return len(alerts.List()) > 0 }, Then: func(*core.Scope) core.Node {
-		top := func() health.Alert { return alerts.List()[0] }
+		// The texts update once more as the last alert goes, before the Show takes the banner away (NSGo issue pending: a Show's branch reruns its text functions after When turned false).
+		top := func() health.Alert {
+			if list := alerts.List(); len(list) > 0 {
+				return list[0]
+			}
+			return health.Alert{}
+		}
 		return core.View{Role: core.RoleRegion, Label: "CPU 占用提醒", LiveRegion: core.LiveRegionPolite, TestID: "alert-banner",
 			Style: core.Style{Direction: core.Row, Wrap: core.Wrap, AlignItems: core.AlignCenter, Gap: 16, Padding: core.Symmetric(16, 20),
 				CornerRadius: kit.RadiusCard, Background: kit.SurfaceBanner, BorderWidth: 1, BorderColor: kit.BorderBanner},
@@ -75,6 +81,10 @@ func (AlertBanner) Render(cx *core.Scope) core.Node {
 				kit.Button{Text: "查看详情", Variant: kit.ButtonGhost, TestID: "alert-open-monitor", OnPress: func() {
 					failed.Set(false)
 					alerts.OpenSystemMonitor(func(err error) { failed.Set(err != nil) })
+				}},
+				kit.IconButton{Glyph: "close", Label: "忽略此进程", TestID: "alert-ignore", OnPress: func() {
+					failed.Set(false)
+					alerts.Ignore(top().Name)
 				}},
 			}}
 	}}

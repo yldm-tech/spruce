@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"time"
 
@@ -235,16 +236,19 @@ func (h *History) Restorable(cx *core.Scope, ctx context.Context, runs []history
 		func(ids map[string]bool, _ error) { done(ids) })
 }
 
-// Alerts holds the current CPU alerts, most CPU first.
+// Alerts holds the current CPU alerts, most CPU first, without the processes the user chose to ignore for this session.
 type Alerts struct {
 	cx   *core.Scope
 	ctx  context.Context
 	svc  AlertService
 	list *core.Signal[[]health.Alert]
+	// ignored are the names of the processes Ignore hid.
+	ignored *core.Signal[map[string]bool]
 }
 
 func newAlerts(cx *core.Scope, ctx context.Context, svc AlertService) *Alerts {
-	a := &Alerts{cx: cx, ctx: ctx, svc: svc, list: core.NewSignalFunc[[]health.Alert](cx, nil, nil)}
+	a := &Alerts{cx: cx, ctx: ctx, svc: svc, list: core.NewSignalFunc[[]health.Alert](cx, nil, nil),
+		ignored: core.NewSignalFunc[map[string]bool](cx, nil, nil)}
 	// The subscription starts first, and a broadcast always wins over the first answer, which may be older.
 	broadcast := false
 	ch, unsubscribe := svc.Subscribe()
@@ -260,8 +264,26 @@ func newAlerts(cx *core.Scope, ctx context.Context, svc AlertService) *Alerts {
 	return a
 }
 
-// List returns the current alerts; reading it subscribes.
-func (a *Alerts) List() []health.Alert { return a.list.Get() }
+// List returns the current alerts but those of the ignored processes; reading it subscribes.
+func (a *Alerts) List() []health.Alert {
+	list, ignored := a.list.Get(), a.ignored.Get()
+	if len(ignored) == 0 {
+		return list
+	}
+	return slices.DeleteFunc(slices.Clone(list), func(x health.Alert) bool { return ignored[x.Name] })
+}
+
+// Ignore hides the alerts of the process named name until the app quits, also after it restarts under another PID.
+func (a *Alerts) Ignore(name string) {
+	a.ignored.Update(func(m map[string]bool) map[string]bool {
+		next := maps.Clone(m)
+		if next == nil {
+			next = map[string]bool{}
+		}
+		next[name] = true
+		return next
+	})
+}
 
 // OpenSystemMonitor opens Activity Monitor or Task Manager and calls done with the error, if any.
 func (a *Alerts) OpenSystemMonitor(done func(error)) {

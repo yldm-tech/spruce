@@ -140,6 +140,14 @@ func Breathing(cx *core.Scope, on func() bool) *core.AnimatedStyle {
 var pressTransition = core.Transition{Duration: 150 * time.Millisecond, Easing: core.Ease,
 	Properties: core.TransitionBackground | core.TransitionBorder | core.TransitionShadow | core.TransitionOpacity | core.TransitionTransform}
 
+// HoverEntry is the one look an unselected entry of a list of places takes under the pointer (the sidebar's, a tab list's): a faint fill and the full text color. Give it to the unselected entries only, since Hover merges over Selected; a disabled entry shows none (Disabled replaces it).
+func HoverEntry() *core.Style { return &core.Style{Background: SurfaceRowHover, Color: ColorText} }
+
+// hoverFilled is the look a filled button takes under the pointer: its brightness times f, above 1 to light a colored one, below 1 to dim the white one, which cannot get brighter.
+func hoverFilled(f float32) *core.Style {
+	return &core.Style{Filters: []core.Filter{core.Brightness(f)}}
+}
+
 // Pressable returns st with the feel of a press: while the pointer holds it, it shrinks to scale (0.97 for a button, less for a small round one), and its look changes smoothly between its states. A disabled view keeps still (Disabled replaces Active).
 func Pressable(st core.Style, scale float32) core.Style {
 	st.Transition = pressTransition

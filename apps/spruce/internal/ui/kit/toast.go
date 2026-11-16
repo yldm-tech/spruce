@@ -15,7 +15,7 @@ type ToastAction struct {
 	Busy func() bool
 }
 
-// Toast is the short message at the bottom of the main area after an action, such as 「已移到废纸篓 3.1 GB · 撤销」: a pill with the text, its actions and a close button. It is a pure view: whoever mounts it decides what it says and where it sits; it calls OnClose when Duration has run out, counting only while the pointer is not over it and the keyboard focus not in it, and when Escape is pressed while the focus is in it. Mount a new one (a new scope) for every message, so the time starts again. Screen readers hear the text as it appears (polite); NSGo has no status role, so it is a group with a live text.
+// Toast is the short message at the bottom of the main area after an action, such as 「已移到废纸篓 3.1 GB · 撤销」: a pill with the text, its actions and a close button. It is a pure view: whoever mounts it decides what it says and where it sits; it calls OnClose when Duration has run out, counting only while the app is active (one that comes while the user is in another app waits for them with its whole time), the pointer is not over it and the keyboard focus not in it, and when Escape is pressed while the focus is in it. Mount a new one (a new scope) for every message, so the time starts again. Screen readers hear the text as it appears (polite); NSGo has no status role, so it is a group with a live text.
 type Toast struct {
 	Text     func() string
 	Actions  []ToastAction
@@ -75,14 +75,18 @@ func (t Toast) Render(cx *core.Scope) core.Node {
 		stop = nil
 		left = max(0, deadline.Sub(cx.Now()))
 	}
+	inactive := false
 	sync := func() {
-		if hovered || focused.GetUntracked() {
+		if hovered || inactive || focused.GetUntracked() {
 			pause()
 		} else {
 			start()
 		}
 	}
-	start()
+	cx.Effect(func() {
+		inactive = cx.Env().Lifecycle() != core.LifecycleActive
+		cx.Untrack(sync)
+	})
 	// Escape is bound only while the focus is in the toast, so it never takes the key from a page or a dialog.
 	escape := core.Show{When: focused.Get, Then: func(cx *core.Scope) core.Node {
 		if t.OnClose != nil {
