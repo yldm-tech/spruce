@@ -62,10 +62,10 @@ func TestPlatformChildEnv(t *testing.T) {
 	}
 	defer os.RemoveAll(d)
 	if err := env.checkDir(d); (err == nil) == windows.GetCurrentProcessToken().IsElevated() {
-		t.Errorf("checkDir(%q) = %v with an elevated token %v", d, err, windows.GetCurrentProcessToken().IsElevated())
+		t.Errorf("checkDir(%q) = %v with an elevated token %v; the directory's owner is %s, the token's default owner %s, its elevation type %s", d, err, windows.GetCurrentProcessToken().IsElevated(), ownerOf(d), tokenOwner(), elevationType())
 	}
-	if err := env.checkDir(os.Getenv("SystemRoot")); err == nil {
-		t.Errorf("checkDir accepted the Windows directory")
+	if sys := os.Getenv("SystemRoot"); env.checkDir(sys) == nil {
+		t.Errorf("checkDir accepted the Windows directory %q, owned by %s", sys, ownerOf(sys))
 	}
 	if env.elevated() != windows.GetCurrentProcessToken().IsElevated() {
 		t.Error("elevated does not follow the process token")
@@ -102,4 +102,49 @@ func TestPrivilegedOwner(t *testing.T) {
 	if privilegedOwner(user) {
 		t.Error("an ordinary user account is treated as privileged")
 	}
+}
+
+// ownerOf names the owner of path, for failure messages.
+func ownerOf(path string) string {
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return err.Error()
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err.Error()
+	}
+	return accountName(owner)
+}
+
+// tokenOwner names the default owner of the objects this process creates (TokenOwner).
+func tokenOwner() string {
+	n := uint32(256)
+	for {
+		b := make([]byte, n)
+		err := windows.GetTokenInformation(windows.GetCurrentProcessToken(), windows.TokenOwner, &b[0], n, &n)
+		if err == nil {
+			return accountName((*struct{ Owner *windows.SID })(unsafe.Pointer(&b[0])).Owner)
+		}
+		if err != windows.ERROR_INSUFFICIENT_BUFFER || n <= uint32(len(b)) {
+			return err.Error()
+		}
+	}
+}
+
+// elevationType is the process token's TokenElevationType: default (no split token, as with UAC off), full or limited.
+func elevationType() string {
+	var v, n uint32
+	if err := windows.GetTokenInformation(windows.GetCurrentProcessToken(), windows.TokenElevationType, (*byte)(unsafe.Pointer(&v)), 4, &n); err != nil {
+		return err.Error()
+	}
+	return map[uint32]string{1: "default", 2: "full", 3: "limited"}[v]
+}
+
+func accountName(sid *windows.SID) string {
+	account, domain, _, err := sid.LookupAccount("")
+	if err != nil {
+		return sid.String()
+	}
+	return domain + `\` + account + " (" + sid.String() + ")"
 }
